@@ -354,7 +354,10 @@ export function useObjectRenderer(deps: {
     if (!currentLayer) return;
     const list = objects.forPage(editor.currentPage);
     const seen = new Set<string>();
-    const onReady = (): void => redraw();
+    // Когда догрузился асинхронный ресурс (битмап картинки, метрики шрифта),
+    // пересобираем узлы: просто перерисовать недостаточно — у Konva.Image
+    // битмап хранится в атрибуте узла, а не разрешается при отрисовке.
+    const onReady = (): void => sync();
     /** Тексты с автовысотой: подгоняем высоту объекта под содержимое. */
     const autoHeightFixes: { id: string; patch: { height: number } }[] = [];
 

@@ -48,6 +48,34 @@ const SIGNATURE_ATTR = 'structureSignature';
 
 const imageCache = new Map<string, HTMLImageElement>();
 const pendingImageLoads = new Map<string, Promise<HTMLImageElement>>();
+/** Картинки, которые не удалось загрузить (чтобы не пытаться бесконечно). */
+const failedImages = new Set<string>();
+
+/**
+ * Готовность битмапов объекта.
+ *
+ * Входит в подпись структуры: когда изображение догрузилось, подпись меняется,
+ * узел пересобирается и битмап подставляется. Без этого `Konva.Image`
+ * создавался с `image: undefined` и оставался пустым — пользователь видел
+ * только рамку выделения вместо картинки.
+ */
+function resourcesSignature(obj: EditorObject): string {
+  const sources: string[] = [];
+  if (obj.type === 'image') sources.push(obj.payload.src);
+  if (obj.type === 'stamp' && obj.payload.template.logo?.src) {
+    sources.push(obj.payload.template.logo.src);
+  }
+  if (obj.type === 'signature' && obj.payload.png) sources.push(obj.payload.png);
+  const list = sources.filter(Boolean);
+  if (list.length === 0) return '';
+  return list
+    .map((src) => {
+      if (failedImages.has(src)) return 'fail';
+      const cached = imageCache.get(src);
+      return cached && cached.complete && cached.naturalWidth > 0 ? 'ok' : 'load';
+    })
+    .join(',');
+}
 
 /** Получение (и при необходимости загрузка) изображения по data:URL. */
 export function ensureImage(src: string, options: ObjectBuildOptions = {}): HTMLImageElement | null {
@@ -73,6 +101,7 @@ export function ensureImage(src: string, options: ObjectBuildOptions = {}): HTML
     .catch(() => {
       const empty = new Image();
       imageCache.set(src, empty);
+      failedImages.add(src);
       return empty;
     })
     .finally(() => {
@@ -459,7 +488,7 @@ export function syncObjectNode(
   group.setAttr('objectId', obj.id);
   group.setAttr('objectLocked', obj.locked);
 
-  const signature = objectStructureSignature(obj);
+  const signature = `${objectStructureSignature(obj)}|${resourcesSignature(obj)}`;
   if (group.getAttr(SIGNATURE_ATTR) !== signature) {
     group.destroyChildren();
     buildChildren(group, obj, options);
@@ -481,6 +510,7 @@ export function findNodeByObjectId(root: Konva.Container, objectId: string): Kon
 export function clearImageCache(): void {
   imageCache.clear();
   pendingImageLoads.clear();
+  failedImages.clear();
 }
 
 /** Предзагрузка ресурсов всех объектов страницы (нужно для экспорта). */

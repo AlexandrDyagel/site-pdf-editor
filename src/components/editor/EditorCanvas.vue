@@ -42,8 +42,60 @@ const cursorClass = computed(() => {
   if (editor.isPanTool) return tools.isPanning.value ? 'canvas-pan-active' : 'canvas-pan';
   if (editor.tool === 'select') return 'cursor-default';
   if (editor.tool === 'text') return 'canvas-text';
+  // Для кисти, маркера и корректора курсор рисуем сами — кружком по размеру.
+  if (BRUSH_TOOLS.has(editor.tool)) return 'canvas-brush';
   return 'canvas-draw';
 });
+
+/* ======================== Курсор-кружок кисти ======================== */
+
+/** Инструменты, у которых есть размер кисти. */
+const BRUSH_TOOLS = new Set(['brush', 'marker', 'eraser']);
+
+/** Положение указателя внутри рабочей области (в пикселях экрана). */
+const pointer = ref<{ x: number; y: number } | null>(null);
+
+/** Текущий размер кисти в точках страницы. */
+const brushWidth = computed(() => {
+  const options = editor.toolOptions;
+  // У инструмента «Кисть» настройки лежат в разделе draw.
+  if (editor.tool === 'brush') return options.draw.width;
+  if (editor.tool === 'marker') return options.marker.width;
+  if (editor.tool === 'eraser') return options.eraser.width;
+  return 0;
+});
+
+/** Показывать ли кружок вместо системного курсора. */
+const showBrushCursor = computed(
+  () =>
+    BRUSH_TOOLS.has(editor.tool) &&
+    !editor.viewOnly &&
+    !editor.spacePressed &&
+    !tools.isPanning.value &&
+    pointer.value !== null,
+);
+
+/** Кружок соответствует размеру кисти с учётом масштаба. */
+const brushCursorStyle = computed(() => {
+  const diameter = Math.max(4, brushWidth.value * editor.zoom);
+  return {
+    width: `${diameter}px`,
+    height: `${diameter}px`,
+    left: `${pointer.value?.x ?? 0}px`,
+    top: `${pointer.value?.y ?? 0}px`,
+  };
+});
+
+function onPointerMove(event: PointerEvent): void {
+  const element = event.currentTarget as HTMLElement | null;
+  if (!element) return;
+  const rect = element.getBoundingClientRect();
+  pointer.value = { x: event.clientX - rect.left, y: event.clientY - rect.top };
+}
+
+function onPointerLeave(): void {
+  pointer.value = null;
+}
 
 /** Фон рабочей области. */
 const backgroundClass = computed(() => {
@@ -107,8 +159,21 @@ watch(
     class="relative h-full w-full overflow-hidden"
     :class="[backgroundClass, cursorClass]"
     data-testid="editor-canvas"
+    @pointermove="onPointerMove"
+    @pointerdown="onPointerMove"
+    @pointerleave="onPointerLeave"
   >
     <div ref="container" class="absolute inset-0" />
+
+    <!-- Курсор кисти: кружок по размеру выбранного инструмента -->
+    <div
+      v-if="showBrushCursor"
+      class="brush-cursor pointer-events-none absolute z-10 rounded-full"
+      :style="brushCursorStyle"
+      data-testid="brush-cursor"
+    >
+      <span class="brush-cursor-dot" />
+    </div>
 
     <!-- Индикатор отрисовки страницы -->
     <div

@@ -280,6 +280,36 @@
   cursor: text;
 }
 
+/* Кисть, маркер, корректор: системный курсор скрыт, вместо него кружок */
+.canvas-brush {
+  cursor: none;
+}
+
+.brush-cursor {
+  transform: translate(-50%, -50%);
+  border: 1.5px solid rgba(15, 23, 42, 0.85);
+  background: rgba(255, 255, 255, 0.1);
+  box-shadow:
+    0 0 0 1px rgba(255, 255, 255, 0.9),
+    0 0 6px rgba(0, 0, 0, 0.28);
+  pointer-events: none;
+  transition:
+    width 80ms ease-out,
+    height 80ms ease-out;
+}
+
+.brush-cursor-dot {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 3px;
+  height: 3px;
+  border-radius: 9999px;
+  background: rgba(15, 23, 42, 0.75);
+  box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.85);
+  transform: translate(-50%, -50%);
+}
+
 /* Плавное появление страниц */
 .fade-page-enter-active,
 .fade-page-leave-active {
