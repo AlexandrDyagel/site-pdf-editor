@@ -10,6 +10,7 @@ import { useEditorStore } from '@/stores/editor';
 import { useObjectsStore } from '@/stores/objects';
 import { useExportStore } from '@/stores/export';
 import { usePdfDocument } from '@/composables/usePdfDocument';
+import { usePanelLayout } from '@/composables/usePanelLayout';
 import EditorToolbar from '@/components/editor/EditorToolbar.vue';
 import EditorCanvas from '@/components/editor/EditorCanvas.vue';
 import StatusBar from '@/components/editor/StatusBar.vue';
@@ -66,6 +67,9 @@ const rightTab = computed({
   set: (value: string) => ui.setRightTab(value as typeof ui.rightTab),
 });
 
+// Ширина панелей: перетаскивание за границу, сохранение между сессиями.
+const { leftWidth, rightWidth, startResize, resetWidth, nudgeWidth } = usePanelLayout();
+
 async function onFiles(files: File[]): Promise<void> {
   const file = files[0];
   if (!file) return;
@@ -116,13 +120,32 @@ watch(
       <!-- Левая панель -->
       <aside
         v-if="ui.leftPanelOpen"
-        class="hidden w-[252px] shrink-0 flex-col border-r border-slate-200 bg-white dark:border-slate-800 dark:bg-slate-900 md:flex"
+        class="relative hidden shrink-0 flex-col border-r border-slate-200 bg-white dark:border-slate-800 dark:bg-slate-900 md:flex"
+        :style="{ width: `${leftWidth}px` }"
       >
         <AppTabs v-model="leftTab" :items="leftTabs" size="sm" class="m-2" />
         <div class="min-h-0 flex-1 overflow-hidden">
           <PageThumbnails v-if="leftTab === 'pages'" />
           <LibraryPanel v-else-if="leftTab === 'library'" />
           <TextLayerPanel v-else />
+        </div>
+
+        <!-- Граница: тянем вправо, панель расширяется -->
+        <div
+          class="group absolute inset-y-0 -right-1 z-20 w-2 cursor-col-resize"
+          role="separator"
+          aria-orientation="vertical"
+          aria-label="Изменить ширину левой панели"
+          title="Потяните, чтобы изменить ширину. Двойной клик — вернуть исходную"
+          tabindex="0"
+          @pointerdown="startResize('left', $event)"
+          @dblclick="resetWidth('left')"
+          @keydown.left.prevent="nudgeWidth('left', -16)"
+          @keydown.right.prevent="nudgeWidth('left', 16)"
+        >
+          <span
+            class="absolute inset-y-0 left-1/2 w-px -translate-x-1/2 bg-slate-200 transition-all group-hover:w-1 group-hover:bg-brand-500 dark:bg-slate-700"
+          />
         </div>
       </aside>
 
@@ -184,7 +207,8 @@ watch(
       <!-- Правая панель -->
       <aside
         v-if="ui.rightPanelOpen"
-        class="hidden w-[304px] shrink-0 flex-col border-l border-slate-200 bg-white dark:border-slate-800 dark:bg-slate-900 lg:flex"
+        class="relative hidden shrink-0 flex-col border-l border-slate-200 bg-white dark:border-slate-800 dark:bg-slate-900 lg:flex"
+        :style="{ width: `${rightWidth}px` }"
       >
         <AppTabs v-model="rightTab" :items="rightTabs" size="sm" class="m-2" />
         <div class="min-h-0 flex-1 overflow-hidden">
@@ -192,6 +216,24 @@ watch(
           <PropertiesPanel v-else-if="rightTab === 'properties'" />
           <LayersPanel v-else-if="rightTab === 'layers'" />
           <PagePropertiesPanel v-else />
+        </div>
+
+        <!-- Граница: тянем влево, панель расширяется -->
+        <div
+          class="group absolute inset-y-0 -left-1 z-20 w-2 cursor-col-resize"
+          role="separator"
+          aria-orientation="vertical"
+          aria-label="Изменить ширину правой панели"
+          title="Потяните, чтобы изменить ширину. Двойной клик — вернуть исходную"
+          tabindex="0"
+          @pointerdown="startResize('right', $event)"
+          @dblclick="resetWidth('right')"
+          @keydown.left.prevent="nudgeWidth('right', 16)"
+          @keydown.right.prevent="nudgeWidth('right', -16)"
+        >
+          <span
+            class="absolute inset-y-0 left-1/2 w-px -translate-x-1/2 bg-slate-200 transition-all group-hover:w-1 group-hover:bg-brand-500 dark:bg-slate-700"
+          />
         </div>
       </aside>
 

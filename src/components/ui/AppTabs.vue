@@ -15,8 +15,15 @@ withDefaults(defineProps<{ items: TabItem[]; size?: 'sm' | 'md' }>(), { size: 'm
 </script>
 
 <template>
+  <!--
+    flex-wrap: если кнопки разделов не помещаются в ширину панели, они
+    переносятся на следующую строку целиком, а не обрезаются. Как только
+    места становится достаточно — снова выстраиваются в один ряд.
+    grow + shrink-0 + basis-auto: кнопки занимают всю строку, но не сжимаются
+    настолько, чтобы текст обрезался.
+  -->
   <div
-    class="flex items-center gap-0.5 rounded-lg bg-slate-100 p-0.5 dark:bg-slate-800/80"
+    class="flex flex-wrap items-center gap-0.5 rounded-lg bg-slate-100 p-0.5 dark:bg-slate-800/80"
     role="tablist"
   >
     <button
@@ -25,7 +32,8 @@ withDefaults(defineProps<{ items: TabItem[]; size?: 'sm' | 'md' }>(), { size: 'm
       type="button"
       role="tab"
       :aria-selected="model === item.id"
-      class="inline-flex flex-1 items-center justify-center gap-1.5 rounded-md font-medium transition-colors"
+      :title="item.label"
+      class="inline-flex grow shrink-0 basis-auto items-center justify-center gap-1.5 whitespace-nowrap rounded-md font-medium transition-colors"
       :class="[
         size === 'sm' ? 'h-7 px-2 text-[11px]' : 'h-8 px-3 text-xs',
         model === item.id
@@ -34,8 +42,8 @@ withDefaults(defineProps<{ items: TabItem[]; size?: 'sm' | 'md' }>(), { size: 'm
       ]"
       @click="model = item.id"
     >
-      <AppIcon v-if="item.icon" :name="item.icon" :size="14" />
-      <span class="truncate">{{ item.label }}</span>
+      <AppIcon v-if="item.icon" :name="item.icon" :size="14" class="shrink-0" />
+      <span>{{ item.label }}</span>
       <span
         v-if="item.badge !== undefined"
         class="rounded bg-slate-200 px-1 text-[10px] font-mono text-slate-600 dark:bg-slate-700 dark:text-slate-300"

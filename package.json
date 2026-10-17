@@ -26,8 +26,9 @@
     "check:rotation": "node scripts/make-test-pdf.mjs && node scripts/check-rotation.mjs",
     "check:user-font": "node scripts/make-test-pdf.mjs && node scripts/check-user-font.mjs",
     "check:font-ui": "node scripts/make-test-pdf.mjs && node scripts/check-font-ui.mjs",
+    "check:layout": "node scripts/make-test-pdf.mjs && node scripts/check-layout.mjs",
     "check:fonts": "node scripts/check-font-subsets.mjs",
-    "check:all": "pnpm typecheck && pnpm verify && pnpm check:components && pnpm check:workflow && pnpm check:interaction && pnpm check:corrector && pnpm check:rotation && pnpm check:user-font && pnpm check:font-ui"
+    "check:all": "pnpm typecheck && pnpm verify && pnpm check:components && pnpm check:workflow && pnpm check:interaction && pnpm check:corrector && pnpm check:rotation && pnpm check:user-font && pnpm check:font-ui && pnpm check:layout"
   },
   "pnpm": {
     "onlyBuiltDependencies": ["esbuild"]
