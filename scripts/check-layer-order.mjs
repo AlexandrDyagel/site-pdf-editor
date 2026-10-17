@@ -294,6 +294,45 @@ try {
   const afterUp = await topColor();
   check('кнопка «Поднять» работает', upClicked.found === true && afterUp !== 'none', afterUp);
 
+  console.log('\n8. Одинаковые z-index (как в старом проекте)');
+  const equalized = await cdp.evaluate(`(() => {
+    const app = window.__PDF_EDITOR__;
+    // Имитируем проект, сохранённый старой версией: у всех объектов z=1.
+    for (const object of app.objects.objects) app.objects.patchSilent(object.id, { zIndex: 1 });
+    app.objects.select([]);
+    return app.objects.forPage(app.editor.currentPage).map((object) => ({ name: object.name, z: object.zIndex }));
+  })()`);
+  await sleep(1000);
+  console.log('  z-index у всех:', JSON.stringify(equalized));
+  check('у всех объектов одинаковый z-index', equalized.every((item) => item.z === 1), JSON.stringify(equalized));
+
+  const flatRows = await layersState();
+  const flatTarget = flatRows.rows[1];
+  const flatColorMap = { 'Красный': 'red', 'Зелёный': 'green', 'Синий': 'blue' };
+  const flatTargetColor = flatColorMap[flatRows.store.find((obj) => obj.id === flatTarget.id)?.name ?? ''];
+  const flatUp = await cdp.evaluate(`(() => {
+    const row = document.querySelector('[data-layer-id=' + ${JSON.stringify(JSON.stringify(flatTarget.id))} + ']');
+    const button = Array.from(row.querySelectorAll('button')).find((element) => element.getAttribute('title') === 'Выше');
+    if (!button) return false;
+    button.click();
+    return true;
+  })()`);
+  await sleep(1200);
+  const flatAfter = await layersState();
+  const flatColor = await topColor();
+  console.log('  после «Выше»:', JSON.stringify(flatAfter.rows), 'цвет сверху:', flatColor);
+  check('«Выше» работает при одинаковых z-index', flatUp === true);
+  check(
+    'слой поднялся наверх и виден на холсте',
+    flatAfter.rows[0].id === flatTarget.id && flatColor === flatTargetColor,
+    `строки ${JSON.stringify(flatAfter.rows)}, цвет ${flatColor} (ожидался ${flatTargetColor})`,
+  );
+  check(
+    'после сдвига z-index стали уникальными',
+    new Set(flatAfter.rows.map((row) => row.z)).size === flatAfter.rows.length,
+    JSON.stringify(flatAfter.rows.map((row) => row.z)),
+  );
+
   await cdp.screenshot(resolvePath(TMP, 'layers-order.png'));
 
   console.log('\nОшибки консоли:', cdp.errors.length ? cdp.errors.join('\n') : '(нет)');

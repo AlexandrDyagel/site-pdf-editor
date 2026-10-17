@@ -332,6 +332,64 @@ try {
     JSON.stringify(selectState),
   );
 
+  console.log('\n7. Нанесение инструмента на холст открывает «Свойства»');
+  // После перезагрузки из шага 4 документа нет — загружаем его снова.
+  await cdp.evaluate(`(() => {
+    const binary = atob(${JSON.stringify(base64)});
+    const bytes = new Uint8Array(binary.length);
+    for (let i = 0; i < binary.length; i += 1) bytes[i] = binary.charCodeAt(i);
+    const file = new File([bytes], 'тест.pdf', { type: 'application/pdf' });
+    const input = document.querySelector('input[type=file]');
+    if (!input) return 'нет поля файла';
+    const transfer = new DataTransfer();
+    transfer.items.add(file);
+    input.files = transfer.files;
+    input.dispatchEvent(new Event('change', { bubbles: true }));
+    return 'ok';
+  })()`);
+  await sleep(5000);
+  await cdp.evaluate(`location.hash = '#/editor'; 'ok'`);
+  await sleep(6000);
+  await cdp.evaluate(`window.__PDF_EDITOR__.editor.fitToWidth(); document.activeElement?.blur?.(); 'ok'`);
+  await sleep(1200);
+  check('документ снова загружен', (await cdp.evaluate(`window.__PDF_EDITOR__.pdf.isLoaded`)) === true);
+
+  // Выбираем «Прямоугольник», панель уходит на «Инструмент», рисуем рамкой —
+  // после создания объекта должна открыться вкладка «Свойства».
+  await pressKey('r', 'KeyR', 82);
+  const toolTab = await rightPanel();
+  check('перед рисованием открыта вкладка «Инструмент»', toolTab.tab === 'tool', toolTab.tab);
+
+  const canvasCenter = await cdp.evaluate(`(() => {
+    const rect = document.querySelector('[data-testid=editor-canvas]').getBoundingClientRect();
+    return { x: Math.round(rect.left + rect.width * 0.45), y: Math.round(rect.top + rect.height * 0.45) };
+  })()`);
+  await cdp.send('Input.dispatchMouseEvent', { type: 'mouseMoved', x: canvasCenter.x, y: canvasCenter.y, button: 'none', buttons: 0, pointerType: 'mouse' });
+  await cdp.send('Input.dispatchMouseEvent', { type: 'mousePressed', x: canvasCenter.x, y: canvasCenter.y, button: 'left', buttons: 1, clickCount: 1, pointerType: 'mouse' });
+  for (let step = 1; step <= 8; step += 1) {
+    await cdp.send('Input.dispatchMouseEvent', {
+      type: 'mouseMoved',
+      x: canvasCenter.x + step * 12,
+      y: canvasCenter.y + step * 8,
+      button: 'left',
+      buttons: 1,
+      pointerType: 'mouse',
+    });
+    await sleep(20);
+  }
+  await cdp.send('Input.dispatchMouseEvent', { type: 'mouseReleased', x: canvasCenter.x + 96, y: canvasCenter.y + 64, button: 'left', buttons: 0, clickCount: 1, pointerType: 'mouse' });
+  await sleep(1200);
+
+  const afterDraw = await rightPanel();
+  const drawnObjects = await cdp.evaluate(`window.__PDF_EDITOR__.objects.objects.map((object) => object.type)`);
+  console.log('  после рисования:', JSON.stringify(afterDraw), 'объекты:', JSON.stringify(drawnObjects));
+  check('объект создан на холсте', drawnObjects.includes('shape'), JSON.stringify(drawnObjects));
+  check(
+    'после нанесения инструмента открылась вкладка «Свойства»',
+    afterDraw.tab === 'properties' && afterDraw.visible,
+    JSON.stringify(afterDraw),
+  );
+
   await cdp.screenshot(resolvePath(TMP, 'layout-panels.png'));
   console.log('\nОшибки консоли:', cdp.errors.length ? cdp.errors.join('\n') : '(нет)');
 } catch (error) {

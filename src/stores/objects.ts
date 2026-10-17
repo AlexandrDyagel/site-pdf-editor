@@ -243,101 +243,86 @@ export const useObjectsStore = defineStore('objects', () => {
 
   /* ======================== Z-index ======================== */
 
-  function bringToFront(ids: readonly string[] = selectedIds.value): void {
-    if (ids.length === 0) return;
-    commit('Поверх всех');
-    const pages = new Set(
+  /** Страницы, на которых есть указанные объекты. */
+  function pagesOf(ids: readonly string[]): Set<number> {
+    return new Set(
       objects.value.filter((obj) => ids.includes(obj.id)).map((obj) => obj.page),
     );
-    for (const page of pages) {
-      const max = objects.value.reduce(
-        (value, obj) => (obj.page === page ? Math.max(value, obj.zIndex) : value),
-        0,
-      );
-      let cursor = max;
-      objects.value = objects.value.map((obj) => {
-        if (obj.page === page && ids.includes(obj.id)) {
-          cursor += 1;
-          return { ...obj, zIndex: cursor };
-        }
-        return obj;
-      });
-    }
+  }
+
+  /** Объекты страницы в порядке отрисовки: снизу вверх. */
+  function orderedPageObjects(page: number): EditorObject[] {
+    return objects.value
+      .filter((obj) => obj.page === page)
+      .sort((a, b) => a.zIndex - b.zIndex);
   }
 
   /**
-   * Отправить объекты под остальные — на их собственной странице.
+   * Перенумерация слоёв страницы (1…N) по переданному порядку.
    *
-   * Раньше минимум z-index брался по всему документу: объекты другой страницы
-   * «сбивали» расчёт, и порядок на текущей странице не менялся.
+   * Нумерация обязательна: старые проекты могли сохранить одинаковые zIndex
+   * (например, у всех объектов z=1), и тогда обмен значениями «Выше/Ниже»
+   * ничего не менял — порядок на экране оставался прежним.
    */
-  function sendToBack(ids: readonly string[] = selectedIds.value): void {
-    if (ids.length === 0) return;
-    commit('Позади всех');
-
-    const pages = new Set(
-      objects.value.filter((obj) => ids.includes(obj.id)).map((obj) => obj.page),
-    );
-    const patches = new Map<string, number>();
-
-    for (const page of pages) {
-      const pageObjects = objects.value.filter((obj) => obj.page === page);
-      const targets = pageObjects.filter((obj) => ids.includes(obj.id));
-      if (targets.length === 0) continue;
-      const min = pageObjects.reduce(
-        (value, obj) => Math.min(value, obj.zIndex),
-        Number.POSITIVE_INFINITY,
-      );
-      let cursor = (Number.isFinite(min) ? min : 1) - targets.length - 1;
-      for (const obj of targets) {
-        cursor += 1;
-        patches.set(obj.id, cursor);
-      }
-    }
-
-    if (patches.size === 0) return;
+  function applyLayerOrder(page: number, ordered: readonly EditorObject[]): void {
+    const positions = new Map(ordered.map((obj, index) => [obj.id, index + 1]));
     objects.value = objects.value.map((obj) => {
-      const zIndex = patches.get(obj.id);
-      return typeof zIndex === 'number' ? { ...obj, zIndex } : obj;
+      const zIndex = positions.get(obj.id);
+      return typeof zIndex === 'number' && zIndex !== obj.zIndex ? { ...obj, zIndex } : obj;
     });
   }
 
+  function bringToFront(ids: readonly string[] = selectedIds.value): void {
+    if (ids.length === 0) return;
+    commit('Поверх всех');
+    for (const page of pagesOf(ids)) {
+      const list = orderedPageObjects(page);
+      const targets = list.filter((obj) => ids.includes(obj.id));
+      if (targets.length === 0) continue;
+      const rest = list.filter((obj) => !ids.includes(obj.id));
+      applyLayerOrder(page, [...rest, ...targets]);
+    }
+  }
+
+  function sendToBack(ids: readonly string[] = selectedIds.value): void {
+    if (ids.length === 0) return;
+    commit('Позади всех');
+    for (const page of pagesOf(ids)) {
+      const list = orderedPageObjects(page);
+      const targets = list.filter((obj) => ids.includes(obj.id));
+      if (targets.length === 0) continue;
+      const rest = list.filter((obj) => !ids.includes(obj.id));
+      applyLayerOrder(page, [...targets, ...rest]);
+    }
+  }
+
   /**
-   * Сдвиг объектов на один слой — в пределах их страницы.
-   *
-   * Сортировать весь документ нельзя: сосед по z-index мог оказаться объектом
-   * другой страницы, обмен z-index между страницами визуально ничего не менял.
+   * Сдвиг объектов на один слой в пределах страницы.
+   * Работает с упорядоченным списком, а не со значениями zIndex.
    */
   function stepZIndex(ids: readonly string[], direction: 1 | -1): void {
     if (ids.length === 0) return;
     commit(direction > 0 ? 'Выше' : 'Ниже');
 
-    const patches = new Map<string, number>();
-    const pages = new Set(
-      objects.value.filter((obj) => ids.includes(obj.id)).map((obj) => obj.page),
-    );
-
-    for (const page of pages) {
-      const pageObjects = objects.value
-        .filter((obj) => obj.page === page)
-        .sort((a, b) => a.zIndex - b.zIndex);
-      if (pageObjects.length < 2) continue;
-      const ordered = direction > 0 ? pageObjects : [...pageObjects].reverse();
-      for (let i = 0; i < ordered.length - 1; i += 1) {
-        const current = ordered[i];
-        const neighbor = ordered[i + 1];
-        if (ids.includes(current.id) && !ids.includes(neighbor.id)) {
-          patches.set(current.id, neighbor.zIndex);
-          patches.set(neighbor.id, current.zIndex);
+    for (const page of pagesOf(ids)) {
+      const list = orderedPageObjects(page);
+      if (list.length < 2) continue;
+      if (direction > 0) {
+        // Сверху вниз: поднимаем самый верхний из выделенных первым.
+        for (let i = list.length - 2; i >= 0; i -= 1) {
+          if (ids.includes(list[i].id) && !ids.includes(list[i + 1].id)) {
+            [list[i], list[i + 1]] = [list[i + 1], list[i]];
+          }
+        }
+      } else {
+        for (let i = 1; i < list.length; i += 1) {
+          if (ids.includes(list[i].id) && !ids.includes(list[i - 1].id)) {
+            [list[i], list[i - 1]] = [list[i - 1], list[i]];
+          }
         }
       }
+      applyLayerOrder(page, list);
     }
-
-    if (patches.size === 0) return;
-    objects.value = objects.value.map((obj) => {
-      const zIndex = patches.get(obj.id);
-      return typeof zIndex === 'number' ? { ...obj, zIndex } : obj;
-    });
   }
 
   function bringForward(ids: readonly string[] = selectedIds.value): void {
