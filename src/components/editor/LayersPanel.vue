@@ -86,8 +86,9 @@ async function removeSelected(objectId: string): Promise<void> {
 
     <div v-else class="flex-1 overflow-y-auto">
       <div
-        v-for="layer in layers"
+        v-for="(layer, index) in layers"
         :key="layer.id"
+        :data-layer-id="layer.id"
         class="group flex items-center gap-1.5 border-b border-slate-100 px-2 py-1.5 transition-colors dark:border-slate-800/60"
         :class="
           objects.selectedIds.includes(layer.id)
@@ -120,6 +121,27 @@ async function removeSelected(objectId: string): Promise<void> {
         </button>
 
         <div class="flex items-center gap-0.5 opacity-60 transition-opacity group-hover:opacity-100">
+          <!-- Порядок слоя: сразу из списка, без выделения объекта -->
+          <AppTooltip text="Выше (ближе к зрителю)">
+            <AppButton
+              icon="moveUp"
+              size="xs"
+              variant="ghost"
+              title="Выше"
+              :disabled="index === 0"
+              @click="objects.bringForward([layer.id])"
+            />
+          </AppTooltip>
+          <AppTooltip text="Ниже (дальше от зрителя)">
+            <AppButton
+              icon="moveDown"
+              size="xs"
+              variant="ghost"
+              title="Ниже"
+              :disabled="index === layers.length - 1"
+              @click="objects.sendBackward([layer.id])"
+            />
+          </AppTooltip>
           <AppTooltip :text="layer.visible ? 'Скрыть' : 'Показать'">
             <AppButton
               :icon="layer.visible ? 'eye' : 'eyeOff'"
@@ -152,11 +174,22 @@ async function removeSelected(objectId: string): Promise<void> {
       v-if="layers.length > 0"
       class="flex items-center gap-1 border-t border-slate-200 px-2 py-1.5 dark:border-slate-800"
     >
+      <AppTooltip text="Поверх всех выделенных" shortcut="]">
+        <AppButton
+          icon="front"
+          size="sm"
+          variant="ghost"
+          title="Поверх всех"
+          :disabled="!objects.hasSelection"
+          @click="objects.bringToFront()"
+        />
+      </AppTooltip>
       <AppTooltip text="Поднять выделенные">
         <AppButton
           icon="moveUp"
           size="sm"
           variant="ghost"
+          title="Поднять"
           :disabled="!objects.hasSelection"
           @click="objects.bringForward()"
         />
@@ -166,8 +199,19 @@ async function removeSelected(objectId: string): Promise<void> {
           icon="moveDown"
           size="sm"
           variant="ghost"
+          title="Опустить"
           :disabled="!objects.hasSelection"
           @click="objects.sendBackward()"
+        />
+      </AppTooltip>
+      <AppTooltip text="Позади всех выделенных" shortcut="[">
+        <AppButton
+          icon="back"
+          size="sm"
+          variant="ghost"
+          title="Позади всех"
+          :disabled="!objects.hasSelection"
+          @click="objects.sendToBack()"
         />
       </AppTooltip>
       <div class="flex-1" />

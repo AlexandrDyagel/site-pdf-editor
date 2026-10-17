@@ -391,6 +391,16 @@ export function useObjectRenderer(deps: {
       }
     }
 
+    // Порядок слоёв: узлы Konva рисуются в порядке добавления, поэтому после
+    // изменения z-index («Поверх», «Вниз», «Выше», «Ниже», [ и ]) их нужно
+    // переставить, иначе на экране ничего не меняется.
+    const ordered = list
+      .map((obj) => nodes.get(obj.id))
+      .filter((node): node is Konva.Group => Boolean(node && node.getParent()));
+    ordered.forEach((node, index) => {
+      if (node.zIndex() !== index) node.zIndex(index);
+    });
+
     // Тихая правка: не засоряет историю, но синхронизирует высоту объекта.
     for (const fix of autoHeightFixes) objects.patchSilent(fix.id, fix.patch);
 
