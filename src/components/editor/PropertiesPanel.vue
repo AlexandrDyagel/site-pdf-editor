@@ -2,7 +2,7 @@
 /**
  * Панель свойств выделенного объекта (или группы объектов).
  */
-import { computed, nextTick, ref, watch } from 'vue';
+import { computed, nextTick, onMounted, ref, watch } from 'vue';
 import type {
   DrawingPayload,
   EditorObject,
@@ -322,7 +322,12 @@ const alignActions: { kind: 'left' | 'center' | 'right' | 'top' | 'middle' | 'bo
   { kind: 'bottom', icon: 'moveDown', label: 'По низу' },
 ];
 
-/** Фокус в поле текста при редактировании. */
+/**
+ * Фокус в поле текста при редактировании.
+ *
+ * flush: 'post' — ждём, пока панель отрисуется. Если панель смонтировалась уже
+ * после начала редактирования (переключили вкладку), фокус ставим в onMounted.
+ */
 watch(
   () => editor.editingTextId,
   async (id) => {
@@ -331,7 +336,15 @@ watch(
     textArea.value?.focus();
     textArea.value?.select();
   },
+  { flush: 'post' },
 );
+
+onMounted(async () => {
+  if (!editor.editingTextId) return;
+  await nextTick();
+  textArea.value?.focus();
+  textArea.value?.select();
+});
 
 /**
  * Фокус в поле текста — только при явном редактировании.

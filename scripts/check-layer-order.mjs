@@ -214,34 +214,85 @@ try {
   console.log('  подсказка:', JSON.stringify(tooltip));
   check('у кнопки «Выше» появляется подсказка', Boolean(tooltip && /Выше/.test(tooltip)), String(tooltip));
 
-  console.log('\n6. Кнопки порядка внизу панели слоёв');
+  console.log('\n6. Без выделения: кнопки в строках работают и понятно отвечают');
+  await cdp.evaluate(`window.__PDF_EDITOR__.objects.select([]); 'ok'`);
+  await sleep(900);
+  const noSelection = await layersState();
+  const selectedCount = await cdp.evaluate(`window.__PDF_EDITOR__.objects.selectedIds.length`);
+  console.log('  строки без выделения:', JSON.stringify(noSelection.rows), 'выделено:', selectedCount);
+  check('выделения нет', selectedCount === 0);
+
+  const readToasts = () =>
+    cdp.evaluate(`(() => (window.__PDF_EDITOR__.ui.toasts ?? []).map((item) => item.title ?? item.text ?? '').join(' | '))()`);
+
+  // Средняя строка: «Выше» работает без выделения объекта.
+  const middleId = noSelection.rows[1].id;
+  const middleZ = noSelection.rows[1].z;
+  const middleUp = await cdp.evaluate(`(() => {
+    const row = document.querySelector('[data-layer-id=' + ${JSON.stringify(JSON.stringify(noSelection.rows[1].id))} + ']');
+    const button = Array.from(row.querySelectorAll('button')).find((element) => element.getAttribute('title') === 'Выше');
+    if (!button) return { found: false };
+    button.click();
+    return { found: true, disabled: button.disabled };
+  })()`);
+  await sleep(1000);
+  const movedWithoutSelection = await cdp.evaluate(`window.__PDF_EDITOR__.objects.byId(${JSON.stringify(middleId)}).zIndex`);
+  console.log(`  z-index без выделения: ${middleZ} → ${movedWithoutSelection}`);
+  check('кнопка «Выше» не отключена без выделения', middleUp.found === true && middleUp.disabled === false, JSON.stringify(middleUp));
+  check('«Выше» работает без выделения объекта', movedWithoutSelection > middleZ, `${middleZ} → ${movedWithoutSelection}`);
+
+  // Верхняя строка: кнопка нажимается и объясняет, что слой уже наверху.
+  const topRowId = (await layersState()).rows[0].id;
+  const topUp = await cdp.evaluate(`(() => {
+    const row = document.querySelector('[data-layer-id=' + ${JSON.stringify(JSON.stringify(topRowId))} + ']');
+    const button = Array.from(row.querySelectorAll('button')).find((element) => element.getAttribute('title') === 'Выше');
+    if (!button) return { found: false };
+    button.click();
+    return { found: true, disabled: button.disabled };
+  })()`);
+  await sleep(900);
+  const topToast = await readToasts();
+  console.log('  уведомление:', JSON.stringify(topToast));
+  check('кнопка на верхнем слое не отключена', topUp.found === true && topUp.disabled === false, JSON.stringify(topUp));
+  check('на верхнем слое показывается пояснение', /наверху/i.test(topToast), topToast);
+
+  console.log('\n7. Кнопки порядка внизу панели слоёв');
+  const clickByTitle = async (title) => cdp.evaluate(`(() => {
+    const button = Array.from(document.querySelectorAll('aside button')).find((element) => element.getAttribute('title') === ${JSON.stringify(title)});
+    if (!button) return { found: false };
+    button.click();
+    return { found: true, disabled: button.disabled };
+  })()`);
+
+  // Без выделения кнопка не «мертва»: подсказывает, что нужно выделить слой.
+  const emptyFront = await clickByTitle('Поверх всех');
+  await sleep(700);
+  const hintToast = await readToasts();
+  console.log('  подсказка без выделения:', JSON.stringify(hintToast));
+  check('нижняя кнопка не отключена без выделения', emptyFront.found === true && emptyFront.disabled === false, JSON.stringify(emptyFront));
+  check('нижняя кнопка просит выделить слой', /не выбран/i.test(hintToast), hintToast);
+
+  // С выделением — работает.
   await cdp.evaluate(`(async () => {
     const app = window.__PDF_EDITOR__;
     app.objects.select([${JSON.stringify(created.red)}]);
     return 'ok';
   })()`);
-  await sleep(700);
-  const clickByTitle = async (title) => cdp.evaluate(`(() => {
-    const button = Array.from(document.querySelectorAll('aside button')).find((element) => element.getAttribute('title') === ${JSON.stringify(title)});
-    if (!button) return false;
-    button.click();
-    return true;
-  })()`);
-
+  await sleep(800);
   const frontClicked = await clickByTitle('Поверх всех');
   await sleep(1000);
   const afterFront = await topColor();
-  check('кнопка «Поверх всех» работает', frontClicked === true && afterFront === 'red', afterFront);
+  check('кнопка «Поверх всех» работает', frontClicked.found === true && afterFront === 'red', afterFront);
 
   const backClicked = await clickByTitle('Позади всех');
   await sleep(1000);
   const afterBack = await topColor();
-  check('кнопка «Позади всех» работает', backClicked === true && afterBack !== 'red', afterBack);
+  check('кнопка «Позади всех» работает', backClicked.found === true && afterBack !== 'red', afterBack);
 
   const upClicked = await clickByTitle('Поднять');
   await sleep(1000);
   const afterUp = await topColor();
-  check('кнопка «Поднять» работает', upClicked === true && afterUp !== 'none', afterUp);
+  check('кнопка «Поднять» работает', upClicked.found === true && afterUp !== 'none', afterUp);
 
   await cdp.screenshot(resolvePath(TMP, 'layers-order.png'));
 

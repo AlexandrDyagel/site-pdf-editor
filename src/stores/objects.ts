@@ -246,7 +246,9 @@ export const useObjectsStore = defineStore('objects', () => {
   function bringToFront(ids: readonly string[] = selectedIds.value): void {
     if (ids.length === 0) return;
     commit('Поверх всех');
-    const pages = new Set(objects.value.filter((o) => ids.includes(o.id)).map((o) => o.page));
+    const pages = new Set(
+      objects.value.filter((obj) => ids.includes(obj.id)).map((obj) => obj.page),
+    );
     for (const page of pages) {
       const max = objects.value.reduce(
         (value, obj) => (obj.page === page ? Math.max(value, obj.zIndex) : value),
@@ -263,37 +265,79 @@ export const useObjectsStore = defineStore('objects', () => {
     }
   }
 
+  /**
+   * Отправить объекты под остальные — на их собственной странице.
+   *
+   * Раньше минимум z-index брался по всему документу: объекты другой страницы
+   * «сбивали» расчёт, и порядок на текущей странице не менялся.
+   */
   function sendToBack(ids: readonly string[] = selectedIds.value): void {
     if (ids.length === 0) return;
     commit('Позади всех');
-    const min = objects.value.reduce((value, obj) => Math.min(value, obj.zIndex), 0);
-    let cursor = min - ids.length;
-    objects.value = objects.value.map((obj) => {
-      if (ids.includes(obj.id)) {
+
+    const pages = new Set(
+      objects.value.filter((obj) => ids.includes(obj.id)).map((obj) => obj.page),
+    );
+    const patches = new Map<string, number>();
+
+    for (const page of pages) {
+      const pageObjects = objects.value.filter((obj) => obj.page === page);
+      const targets = pageObjects.filter((obj) => ids.includes(obj.id));
+      if (targets.length === 0) continue;
+      const min = pageObjects.reduce(
+        (value, obj) => Math.min(value, obj.zIndex),
+        Number.POSITIVE_INFINITY,
+      );
+      let cursor = (Number.isFinite(min) ? min : 1) - targets.length - 1;
+      for (const obj of targets) {
         cursor += 1;
-        return { ...obj, zIndex: cursor };
+        patches.set(obj.id, cursor);
       }
-      return obj;
+    }
+
+    if (patches.size === 0) return;
+    objects.value = objects.value.map((obj) => {
+      const zIndex = patches.get(obj.id);
+      return typeof zIndex === 'number' ? { ...obj, zIndex } : obj;
     });
   }
 
+  /**
+   * Сдвиг объектов на один слой — в пределах их страницы.
+   *
+   * Сортировать весь документ нельзя: сосед по z-index мог оказаться объектом
+   * другой страницы, обмен z-index между страницами визуально ничего не менял.
+   */
   function stepZIndex(ids: readonly string[], direction: 1 | -1): void {
     if (ids.length === 0) return;
     commit(direction > 0 ? 'Выше' : 'Ниже');
-    const sorted = [...objects.value].sort((a, b) => a.zIndex - b.zIndex);
-    const list = direction > 0 ? sorted : [...sorted].reverse();
-    for (let i = 0; i < list.length - 1; i += 1) {
-      const current = list[i];
-      const next = list[i + 1];
-      if (ids.includes(current.id) && !ids.includes(next.id)) {
-        const swap = current.zIndex;
-        objects.value = objects.value.map((obj) => {
-          if (obj.id === current.id) return { ...obj, zIndex: next.zIndex };
-          if (obj.id === next.id) return { ...obj, zIndex: swap };
-          return obj;
-        });
+
+    const patches = new Map<string, number>();
+    const pages = new Set(
+      objects.value.filter((obj) => ids.includes(obj.id)).map((obj) => obj.page),
+    );
+
+    for (const page of pages) {
+      const pageObjects = objects.value
+        .filter((obj) => obj.page === page)
+        .sort((a, b) => a.zIndex - b.zIndex);
+      if (pageObjects.length < 2) continue;
+      const ordered = direction > 0 ? pageObjects : [...pageObjects].reverse();
+      for (let i = 0; i < ordered.length - 1; i += 1) {
+        const current = ordered[i];
+        const neighbor = ordered[i + 1];
+        if (ids.includes(current.id) && !ids.includes(neighbor.id)) {
+          patches.set(current.id, neighbor.zIndex);
+          patches.set(neighbor.id, current.zIndex);
+        }
       }
     }
+
+    if (patches.size === 0) return;
+    objects.value = objects.value.map((obj) => {
+      const zIndex = patches.get(obj.id);
+      return typeof zIndex === 'number' ? { ...obj, zIndex } : obj;
+    });
   }
 
   function bringForward(ids: readonly string[] = selectedIds.value): void {

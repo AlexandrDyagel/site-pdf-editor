@@ -243,6 +243,95 @@ try {
     `${beforeKey} → ${afterKey.right.width} px`,
   );
 
+  console.log('\n6. Выбор инструмента сразу открывает его настройки');
+  /** Состояние правой панели. */
+  const rightPanel = () =>
+    cdp.evaluate(`(() => {
+      const app = window.__PDF_EDITOR__;
+      const aside = Array.from(document.querySelectorAll('aside')).find((element) =>
+        element.querySelector('[aria-label="Изменить ширину правой панели"]'),
+      );
+      return {
+        tab: app.ui.rightTab,
+        open: Boolean(app.ui.rightPanelOpen),
+        visible: Boolean(aside) && aside.getBoundingClientRect().width > 10,
+        tool: app.editor.tool,
+      };
+    })()`);
+
+  /** Нажатие клавиши (латинская раскладка). */
+  const pressKey = async (key, code, vk) => {
+    await cdp.send('Input.dispatchKeyEvent', { type: 'keyDown', key, code, windowsVirtualKeyCode: vk, nativeVirtualKeyCode: vk });
+    await cdp.send('Input.dispatchKeyEvent', { type: 'keyUp', key, code, windowsVirtualKeyCode: vk, nativeVirtualKeyCode: vk });
+    await sleep(450);
+  };
+
+  // Панель открыта на «Свойствах» — как у пользователя, который работает с объектом.
+  await cdp.evaluate(`(() => {
+    const app = window.__PDF_EDITOR__;
+    app.ui.setRightTab('properties');
+    app.editor.setTool('select');
+    document.activeElement?.blur?.();
+    return 'ok';
+  })()`);
+  await sleep(600);
+  const beforeTools = await rightPanel();
+  console.log('  до выбора инструмента:', JSON.stringify(beforeTools));
+  check('исходно открыта вкладка «Свойства»', beforeTools.tab === 'properties', beforeTools.tab);
+
+  const tools = [
+    { key: 't', code: 'KeyT', vk: 84, tool: 'text', label: 'Текст' },
+    { key: 'e', code: 'KeyE', vk: 69, tool: 'eraser', label: 'Корректор' },
+    { key: 'p', code: 'KeyP', vk: 80, tool: 'stamp', label: 'Штамп' },
+    { key: 'r', code: 'KeyR', vk: 82, tool: 'rect', label: 'Прямоугольник' },
+  ];
+  for (const item of tools) {
+    await pressKey(item.key, item.code, item.vk);
+    const state = await rightPanel();
+    check(
+      `инструмент «${item.label}» открывает свои настройки`,
+      state.tool === item.tool && state.tab === 'tool' && state.visible,
+      JSON.stringify(state),
+    );
+  }
+
+  // Закрытая панель должна открыться при выборе инструмента.
+  await cdp.evaluate(`(() => {
+    const app = window.__PDF_EDITOR__;
+    app.ui.setRightTab('properties');
+    app.ui.rightPanelOpen = false;
+    app.editor.setTool('select');
+    document.activeElement?.blur?.();
+    return 'ok';
+  })()`);
+  await sleep(700);
+  const closedState = await rightPanel();
+  check('панель закрыта перед проверкой', closedState.open === false && closedState.visible === false, JSON.stringify(closedState));
+  await pressKey('b', 'KeyB', 66);
+  const openedState = await rightPanel();
+  console.log('  после выбора «Кисти» при закрытой панели:', JSON.stringify(openedState));
+  check(
+    'выбор инструмента открывает закрытую панель',
+    openedState.open === true && openedState.visible === true && openedState.tab === 'tool',
+    JSON.stringify(openedState),
+  );
+
+  // «Выбор» — единственный инструмент без автопереключения: свойства важнее.
+  await cdp.evaluate(`(() => {
+    const app = window.__PDF_EDITOR__;
+    app.ui.setRightTab('properties');
+    document.activeElement?.blur?.();
+    return 'ok';
+  })()`);
+  await sleep(500);
+  await pressKey('v', 'KeyV', 86);
+  const selectState = await rightPanel();
+  check(
+    'инструмент «Выбор» не переключает вкладку',
+    selectState.tool === 'select' && selectState.tab === 'properties',
+    JSON.stringify(selectState),
+  );
+
   await cdp.screenshot(resolvePath(TMP, 'layout-panels.png'));
   console.log('\nОшибки консоли:', cdp.errors.length ? cdp.errors.join('\n') : '(нет)');
 } catch (error) {

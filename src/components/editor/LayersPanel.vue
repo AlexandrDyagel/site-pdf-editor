@@ -60,6 +60,47 @@ async function removeSelected(objectId: string): Promise<void> {
   });
   if (confirmed) objects.remove([objectId]);
 }
+
+/**
+ * Сдвиг слоя на одну позицию.
+ *
+ * Кнопки всегда активны: если слой уже на самом верху или в самом низу,
+ * пользователь получает понятное сообщение, а не «мёртвую» кнопку без
+ * подсказки (у отключённых кнопок подсказка не показывается и клик не
+ * срабатывает — именно это выглядело как «не работает»).
+ */
+function moveLayer(objectId: string, direction: 1 | -1, index: number): void {
+  if (direction > 0 && index === 0) {
+    ui.notify.info('Слой уже наверху', 'Выше на этой странице слоёв нет.');
+    return;
+  }
+  if (direction < 0 && index === layers.value.length - 1) {
+    ui.notify.info('Слой уже внизу', 'Ниже на этой странице слоёв нет.');
+    return;
+  }
+  if (direction > 0) objects.bringForward([objectId]);
+  else objects.sendBackward([objectId]);
+}
+
+/** Сдвиг выделенных слоёв (кнопки внизу панели). */
+function moveSelected(direction: 1 | -1): void {
+  if (!objects.hasSelection) {
+    ui.notify.info('Слой не выбран', 'Нажмите на строку слоя — или на объект на странице.');
+    return;
+  }
+  if (direction > 0) objects.bringForward();
+  else objects.sendBackward();
+}
+
+/** Перенос выделенных на самый верх / в самый низ. */
+function moveSelectedToEdge(edge: 'front' | 'back'): void {
+  if (!objects.hasSelection) {
+    ui.notify.info('Слой не выбран', 'Нажмите на строку слоя — или на объект на странице.');
+    return;
+  }
+  if (edge === 'front') objects.bringToFront();
+  else objects.sendToBack();
+}
 </script>
 
 <template>
@@ -128,8 +169,8 @@ async function removeSelected(objectId: string): Promise<void> {
               size="xs"
               variant="ghost"
               title="Выше"
-              :disabled="index === 0"
-              @click="objects.bringForward([layer.id])"
+              :class="{ 'opacity-40': index === 0 }"
+              @click="moveLayer(layer.id, 1, index)"
             />
           </AppTooltip>
           <AppTooltip text="Ниже (дальше от зрителя)">
@@ -138,8 +179,8 @@ async function removeSelected(objectId: string): Promise<void> {
               size="xs"
               variant="ghost"
               title="Ниже"
-              :disabled="index === layers.length - 1"
-              @click="objects.sendBackward([layer.id])"
+              :class="{ 'opacity-40': index === layers.length - 1 }"
+              @click="moveLayer(layer.id, -1, index)"
             />
           </AppTooltip>
           <AppTooltip :text="layer.visible ? 'Скрыть' : 'Показать'">
@@ -180,8 +221,7 @@ async function removeSelected(objectId: string): Promise<void> {
           size="sm"
           variant="ghost"
           title="Поверх всех"
-          :disabled="!objects.hasSelection"
-          @click="objects.bringToFront()"
+          @click="moveSelectedToEdge('front')"
         />
       </AppTooltip>
       <AppTooltip text="Поднять выделенные">
@@ -190,8 +230,7 @@ async function removeSelected(objectId: string): Promise<void> {
           size="sm"
           variant="ghost"
           title="Поднять"
-          :disabled="!objects.hasSelection"
-          @click="objects.bringForward()"
+          @click="moveSelected(1)"
         />
       </AppTooltip>
       <AppTooltip text="Опустить выделенные">
@@ -200,8 +239,7 @@ async function removeSelected(objectId: string): Promise<void> {
           size="sm"
           variant="ghost"
           title="Опустить"
-          :disabled="!objects.hasSelection"
-          @click="objects.sendBackward()"
+          @click="moveSelected(-1)"
         />
       </AppTooltip>
       <AppTooltip text="Позади всех выделенных" shortcut="[">
@@ -210,8 +248,7 @@ async function removeSelected(objectId: string): Promise<void> {
           size="sm"
           variant="ghost"
           title="Позади всех"
-          :disabled="!objects.hasSelection"
-          @click="objects.sendToBack()"
+          @click="moveSelectedToEdge('back')"
         />
       </AppTooltip>
       <div class="flex-1" />
