@@ -26,6 +26,41 @@ function isEditingTarget(target: EventTarget | null): boolean {
   );
 }
 
+/**
+ * Логическая клавиша горячего сочетания, не зависящая от раскладки.
+ *
+ * `event.key` при русской раскладке для физической клавиши Z возвращает «я»,
+ * поэтому Ctrl+Z (а также буквенные сокращения инструментов и «[» / «]») не
+ * срабатывал. Берём латинскую букву или цифру из `event.key`, а если раскладка
+ * не латинская — переводим физический код клавиши (`event.code`).
+ * Стрелки, Escape, Delete, Home, End, PageUp/PageDown от раскладки не зависят,
+ * их оставляем как есть.
+ */
+export function logicalKey(event: KeyboardEvent): string {
+  const key = event.key;
+
+  // Латинская буква, цифра или символ из раскладки — берём как есть:
+  // это верно и для нестандартных латинских раскладок (например, Dvorak).
+  if (/^[a-z0-9]$/i.test(key)) return key.toLowerCase();
+  if (key === '[' || key === ']' || key === '+' || key === '=' || key === '-' || key === '/') {
+    return key;
+  }
+
+  const code = event.code ?? '';
+  const letter = /^Key([A-Z])$/.exec(code);
+  if (letter) return letter[1].toLowerCase();
+  const digit = /^(?:Digit|Numpad)([0-9])$/.exec(code);
+  if (digit) return digit[1];
+  if (code === 'BracketLeft') return '[';
+  if (code === 'BracketRight') return ']';
+  if (code === 'Minus' || code === 'NumpadSubtract') return '-';
+  if (code === 'Equal') return '=';
+  if (code === 'NumpadAdd') return '+';
+  if (code === 'Slash') return '/';
+
+  return key.toLowerCase();
+}
+
 export function useHotkeys(): { dispose: () => void } {
   const editor = useEditorStore();
   const objects = useObjectsStore();
@@ -50,7 +85,8 @@ export function useHotkeys(): { dispose: () => void } {
   async function onKeyDown(event: KeyboardEvent): Promise<void> {
     const target = isEditingTarget(event.target);
     const mod = event.ctrlKey || event.metaKey;
-    const key = event.key.toLowerCase();
+    // Клавиша с учётом раскладки: Ctrl+Z работает и на русской раскладке.
+    const key = logicalKey(event);
 
     // Escape работает всегда: отмена черновиков и снятие выделения.
     if (event.key === 'Escape') {
@@ -234,11 +270,11 @@ export function useHotkeys(): { dispose: () => void } {
     }
 
     // Z-index.
-    if (event.key === ']') {
+    if (key === ']') {
       objects.bringForward();
       return;
     }
-    if (event.key === '[') {
+    if (key === '[') {
       objects.sendBackward();
       return;
     }
@@ -252,7 +288,7 @@ export function useHotkeys(): { dispose: () => void } {
     }
 
     // Масштаб по "=" без Ctrl.
-    if (event.key === '+' || event.key === '=') {
+    if (key === '+' || key === '=') {
       editor.setZoom(editor.zoom * ZOOM_STEP);
     }
   }

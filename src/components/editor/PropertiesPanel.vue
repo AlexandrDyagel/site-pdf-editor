@@ -333,10 +333,23 @@ watch(
   },
 );
 
+/**
+ * Фокус в поле текста — только при явном редактировании.
+ *
+ * Раньше фокус ставился на любом выделении текстового объекта, и тогда все
+ * горячие клавиши (Ctrl+Z, Ctrl+C, буквы инструментов) переставали работать:
+ * обработчик намеренно игнорирует клавиши в полях ввода. Явные способы
+ * редактирования (двойной клик по объекту, кнопка в панели слоёв, создание
+ * текста) ставят `editor.editingTextId` сами.
+ */
 watch(
-  () => single.value?.id,
+  () => [single.value?.id, single.value?.type] as const,
   () => {
-    editor.editingTextId = single.value?.type === 'text' ? single.value.id : null;
+    const id = single.value?.id;
+    // Прекращаем редактирование, если выделен другой объект.
+    if (editor.editingTextId && editor.editingTextId !== id) {
+      editor.editingTextId = null;
+    }
   },
 );
 
