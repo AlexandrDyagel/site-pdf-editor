@@ -1,0 +1,102 @@
+{
+  "version": 1,
+  "note": "Встроенные шрифты с поддержкой кириллицы. Файлы лежат в public/fonts и встраиваются в PDF через fontkit. Лицензии: PT Sans/PT Mono — ParaType (OFL 1.1), Roboto — Google (Apache 2.0), Inter — rsms (OFL 1.1), Noto Sans — Google (OFL 1.1), DejaVu — Bitstream Vera (свободная лицензия).",
+  "subsetNote": "Поле subsetSafe показывает, можно ли встраивать шрифт подмножеством. Значения получены автоматической проверкой scripts/check-font-subsets.mjs: подмножества pdf-lib повреждают Inter, Noto Sans и PT Mono (глифы частично пропадают), поэтому для них выполняется полное встраивание.",
+  "fonts": [
+    {
+      "id": "pt-sans",
+      "name": "PT Sans",
+      "family": "PT Sans",
+      "source": "bundled",
+      "supportsCyrillic": true,
+      "subsetSafe": true,
+      "license": "OFL 1.1 (ParaType)",
+      "faces": {
+        "400-normal": { "weight": 400, "style": "normal", "url": "PT_Sans-Web-Regular.ttf" },
+        "700-normal": { "weight": 700, "style": "normal", "url": "PT_Sans-Web-Bold.ttf" },
+        "400-italic": { "weight": 400, "style": "italic", "url": "PT_Sans-Web-Italic.ttf" },
+        "700-italic": { "weight": 700, "style": "italic", "url": "PT_Sans-Web-BoldItalic.ttf" }
+      }
+    },
+    {
+      "id": "roboto",
+      "name": "Roboto",
+      "family": "Roboto",
+      "source": "bundled",
+      "supportsCyrillic": true,
+      "subsetSafe": true,
+      "license": "Apache 2.0 (Google)",
+      "faces": {
+        "400-normal": { "weight": 400, "style": "normal", "url": "Roboto-Regular.ttf" },
+        "500-normal": { "weight": 500, "style": "normal", "url": "Roboto-Medium.ttf" },
+        "700-normal": { "weight": 700, "style": "normal", "url": "Roboto-Bold.ttf" },
+        "400-italic": { "weight": 400, "style": "italic", "url": "Roboto-Italic.ttf" },
+        "700-italic": { "weight": 700, "style": "italic", "url": "Roboto-BoldItalic.ttf" }
+      }
+    },
+    {
+      "id": "inter",
+      "name": "Inter",
+      "family": "Inter",
+      "source": "bundled",
+      "supportsCyrillic": true,
+      "subsetSafe": false,
+      "license": "OFL 1.1 (rsms)",
+      "faces": {
+        "400-normal": { "weight": 400, "style": "normal", "url": "Inter-Regular.ttf" },
+        "700-normal": { "weight": 700, "style": "normal", "url": "Inter-Bold.ttf" }
+      }
+    },
+    {
+      "id": "noto-sans",
+      "name": "Noto Sans",
+      "family": "Noto Sans",
+      "source": "bundled",
+      "supportsCyrillic": true,
+      "subsetSafe": false,
+      "license": "OFL 1.1 (Google)",
+      "faces": {
+        "400-normal": { "weight": 400, "style": "normal", "url": "NotoSans-Regular.ttf" },
+        "700-normal": { "weight": 700, "style": "normal", "url": "NotoSans-Bold.ttf" }
+      }
+    },
+    {
+      "id": "dejavu-sans",
+      "name": "DejaVu Sans",
+      "family": "DejaVu Sans",
+      "source": "bundled",
+      "supportsCyrillic": true,
+      "subsetSafe": true,
+      "license": "Bitstream Vera / Public domain",
+      "faces": {
+        "400-normal": { "weight": 400, "style": "normal", "url": "DejaVuSans.ttf" },
+        "700-normal": { "weight": 700, "style": "normal", "url": "DejaVuSans-Bold.ttf" },
+        "400-italic": { "weight": 400, "style": "italic", "url": "DejaVuSans-Oblique.ttf" }
+      }
+    },
+    {
+      "id": "dejavu-serif",
+      "name": "DejaVu Serif",
+      "family": "DejaVu Serif",
+      "source": "bundled",
+      "supportsCyrillic": true,
+      "subsetSafe": true,
+      "license": "Bitstream Vera / Public domain",
+      "faces": {
+        "400-normal": { "weight": 400, "style": "normal", "url": "DejaVuSerif.ttf" }
+      }
+    },
+    {
+      "id": "pt-mono",
+      "name": "PT Mono",
+      "family": "PT Mono",
+      "source": "bundled",
+      "supportsCyrillic": true,
+      "subsetSafe": false,
+      "license": "OFL 1.1 (ParaType)",
+      "faces": {
+        "400-normal": { "weight": 400, "style": "normal", "url": "PT_Mono-Regular.ttf" }
+      }
+    }
+  ]
+}

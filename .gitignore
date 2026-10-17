@@ -1,0 +1,12 @@
+node_modules
+dist
+dist-ssr
+.tmp
+public/pdfjs
+*.local
+.DS_Store
+.vite
+*.log
+.env
+.env.*
+!.env.example

@@ -1,0 +1,731 @@
+/**
+ * ============================================================================
+ *  Инструменты редактора: обработка указателя и создание объектов.
+ * ============================================================================
+ *
+ *  Здесь сосредоточена вся «рабочая» логика инструментов:
+ *   - рисование от руки (мышь, палец, стилус) и корректор;
+ *   - фигуры, текст, штампы, печати, подписи, изображения;
+ *   - выделение рамкой;
+ *   - панорамирование и зум колесом.
+ */
+
+import Konva from 'konva';
+import { onBeforeUnmount, onMounted, ref } from 'vue';
+import type { SignatureTemplate, StampTemplate, StrokePoint, TextAlign } from '@/types';
+import type { Point } from '@/utils/geometry';
+import { boundsOfTransforms, normalizeRect, rectFromPoints } from '@/utils/geometry';
+import {
+  createDrawingObject,
+  createHighlightObject,
+  createImageObject,
+  createShapeObject,
+  createSignatureObject,
+  createStampObject,
+  createTextObject,
+  createWhiteoutObject,
+} from '@/services/objectFactory';
+import { ACCEPT, openFileDialog, readImageFile } from '@/services/fileService';
+import { pdfService } from '@/services/pdfService';
+import { useEditorStore } from '@/stores/editor';
+import { useObjectsStore } from '@/stores/objects';
+import { usePdfStore } from '@/stores/pdf';
+import { useSettingsStore } from '@/stores/settings';
+import { useLibraryStore } from '@/stores/library';
+import { useUiStore } from '@/stores/ui';
+import { useFontsStore } from '@/stores/fonts';
+import type { ObjectRendererApi } from '@/composables/useObjectRenderer';
+
+/** Обработчики указателя для сцены. */
+export interface EditorToolsApi {
+  onPointerDown: (event: Konva.KonvaEventObject<PointerEvent>) => void;
+  onPointerMove: (event: Konva.KonvaEventObject<PointerEvent>) => void;
+  onPointerUp: (event: Konva.KonvaEventObject<PointerEvent>) => void;
+  onDoubleClick: (event: Konva.KonvaEventObject<MouseEvent>) => void;
+  onWheel: (event: Konva.KonvaEventObject<WheelEvent>) => void;
+  isPanning: ReturnType<typeof ref<boolean>>;
+}
+
+interface PanState {
+  pointer: Point;
+  pan: Point;
+}
+
+export function useEditorTools(deps: {
+  screenToPage: (clientX: number, clientY: number) => Point;
+  renderer: ObjectRendererApi;
+}): EditorToolsApi {
+  const editor = useEditorStore();
+  const objects = useObjectsStore();
+  const pdf = usePdfStore();
+  const settings = useSettingsStore();
+  const library = useLibraryStore();
+  const ui = useUiStore();
+  const fonts = useFontsStore();
+
+  const isPanning = ref(false);
+  let panState: PanState | null = null;
+  let marqueeStart: Point | null = null;
+  let pointerDown: Point | null = null;
+  let movedDuringGesture = false;
+  /** Элемент, на котором захвачен указатель (для рисования за пределами холста). */
+  let capturedElement: HTMLElement | null = null;
+  let capturedPointerId: number | null = null;
+
+  /* ======================== Захват указателя ======================== */
+
+  /**
+   * Захватываем указатель на элементе Konva (`.konvajs-content`).
+   *
+   * Зачем: без захвата Konva получает события только пока курсор находится
+   * над холстом. Если вести мышь за пределы холста (в панель, на панель
+   * инструментов, за окно), штрих обрывался, а при отпускании кнопки вне
+   * холста — вообще терялся: следующее нажатие перезаписывало незавершённый
+   * штрих. Именно так «корректор не всё обрабатывал».
+   */
+  function capturePointer(event: Konva.KonvaEventObject<PointerEvent>): void {
+    const stage = event.target.getStage();
+    const element = (stage?.content as HTMLElement | undefined) ?? stage?.container() ?? null;
+    if (!element) return;
+    try {
+      element.setPointerCapture?.(event.evt.pointerId);
+      capturedElement = element;
+      capturedPointerId = event.evt.pointerId;
+    } catch {
+      /* захват недоступен — сработает страховка на window */
+    }
+  }
+
+  function releasePointer(): void {
+    const element = capturedElement;
+    const pointerId = capturedPointerId;
+    capturedElement = null;
+    capturedPointerId = null;
+    if (!element || pointerId === null) return;
+    try {
+      element.releasePointerCapture?.(pointerId);
+    } catch {
+      /* уже отпущен */
+    }
+  }
+
+  /** Давление пера (0.5 для мыши). */
+  function pressureOf(event: PointerEvent): number {
+    const value = typeof event.pressure === 'number' ? event.pressure : 0;
+    if (value > 0 && Math.abs(value - 0.5) > 0.001) return Math.min(1, Math.max(0.05, value));
+    return 0.5;
+  }
+
+  function pointToStroke(point: Point, event: PointerEvent): StrokePoint {
+    return { x: point.x, y: point.y, pressure: pressureOf(event) };
+  }
+
+  /** Текущая позиция указателя в координатах страницы. */
+  function pointerPoint(event: Konva.KonvaEventObject<PointerEvent | WheelEvent | MouseEvent>): Point {
+    return deps.screenToPage(event.evt.clientX, event.evt.clientY);
+  }
+
+  /**
+   * Поиск объекта по цели события Konva.
+   * Событие приходит от дочернего узла (фигура, изображение, текст), поэтому
+   * поднимаемся по родителям до группы с идентификатором объекта.
+   */
+  function objectIdFromTarget(target: Konva.Node | null): string | null {
+    let node: Konva.Node | null = target;
+    while (node) {
+      const id = node.getAttr('objectId');
+      if (typeof id === 'string' && id.length > 0) return id;
+      node = node.getParent();
+    }
+    return null;
+  }
+
+  /** Служебные элементы сцены: ручки Transformer и фон — их клики игнорируем. */
+  function isStageChrome(target: Konva.Node | null): boolean {
+    let node: Konva.Node | null = target;
+    while (node) {
+      if (node.name() === 'transformer' || node.getParent()?.name() === 'transformer') return true;
+      if (node.getAttr('role') === 'transformer') return true;
+      node = node.getParent();
+    }
+    return false;
+  }
+
+  /* ======================== Создание объектов ======================== */
+
+  /** Вставка текста в точке. */
+  function insertText(at: Point, preset?: { text: string; fontSize: number; width: number }): void {
+    const defaults = { ...settings.textDefaults, ...editor.toolOptions.text };
+    const fontId = defaults.fontId || settings.settings.defaultFontId;
+    const font = fonts.byId(fontId);
+    const width = preset?.width ?? Math.min(280, Math.max(120, editor.pageSize.width * 0.35));
+    const object = createTextObject({
+      page: editor.currentPage,
+      x: at.x,
+      y: at.y,
+      width,
+      height: (preset?.fontSize ?? defaults.fontSize) * 1.4,
+      text: preset?.text ?? '',
+      autoHeight: true,
+      defaults: {
+        fontId,
+        fontFamily: font?.family ?? defaults.fontFamily,
+        fontSize: preset?.fontSize ?? defaults.fontSize,
+        color: defaults.color,
+        bold: defaults.bold ?? false,
+        italic: defaults.italic ?? false,
+        align: defaults.align ?? ('left' as TextAlign),
+        lineHeight: defaults.lineHeight ?? 1.25,
+        letterSpacing: defaults.letterSpacing ?? 0,
+      },
+    });
+    objects.add([object], 'Добавление текста');
+    editor.editingTextId = object.id;
+    ui.setRightTab('properties');
+    void fonts.ensureFontLoadedFor(fontId);
+  }
+
+  /** Вставка изображения из файла. */
+  async function insertImages(at: Point): Promise<void> {
+    const files = await openImageDialog();
+    if (files.length === 0) return;
+    const maxWidth = editor.pageSize.width * 0.5;
+    let offset = 0;
+    const created = [];
+    for (const file of files) {
+      try {
+        const image = await readImageFile(file);
+        const scale = Math.min(1, maxWidth / image.naturalWidth);
+        const width = Math.max(24, image.naturalWidth * scale);
+        const height = Math.max(24, image.naturalHeight * scale);
+        created.push(
+          createImageObject({
+            page: editor.currentPage,
+            x: at.x + offset,
+            y: at.y + offset,
+            width,
+            height,
+            src: image.src,
+            mimeType: image.mimeType,
+            naturalWidth: image.naturalWidth,
+            naturalHeight: image.naturalHeight,
+            alt: file.name,
+          }),
+        );
+        offset += 12;
+      } catch {
+        ui.notify.error('Не удалось загрузить изображение', file.name);
+      }
+    }
+    if (created.length > 0) {
+      objects.add(created, 'Добавление изображения');
+      ui.notify.success('Изображение добавлено', `${created.length} шт.`);
+    }
+  }
+
+  /** Создание изображения из библиотеки. */
+  function insertLibraryImage(src: string, naturalWidth: number, naturalHeight: number, mimeType: string, at: Point): void {
+    const maxWidth = editor.pageSize.width * 0.5;
+    const scale = Math.min(1, maxWidth / Math.max(1, naturalWidth));
+    objects.add(
+      [
+        createImageObject({
+          page: editor.currentPage,
+          x: at.x,
+          y: at.y,
+          width: Math.max(24, naturalWidth * scale),
+          height: Math.max(24, naturalHeight * scale),
+          src,
+          mimeType,
+          naturalWidth,
+          naturalHeight,
+        }),
+      ],
+      'Добавление изображения',
+    );
+  }
+
+  /** Вставка штампа/печати. */
+  function insertStamp(template: StampTemplate, at: Point): void {
+    const object = createStampObject(template, {
+      page: editor.currentPage,
+      x: at.x - template.width / 2,
+      y: at.y - template.height / 2,
+      templateId: template.id,
+    });
+    objects.add([object], template.kind === 'seal' ? 'Добавление печати' : 'Добавление штампа');
+  }
+
+  /** Вставка подписи из библиотеки. */
+  function insertSignature(template: SignatureTemplate, at: Point): void {
+    const object = createSignatureObject({
+      page: editor.currentPage,
+      x: at.x - template.designWidth / 2,
+      y: at.y - template.designHeight / 2,
+      width: template.designWidth,
+      height: template.designHeight,
+      strokes: template.strokes,
+      color: template.color,
+      strokeWidth: template.strokeWidth,
+      svg: template.svg ?? null,
+      png: template.png ?? null,
+      modelId: template.id,
+      source: 'library',
+    });
+    objects.add([object], 'Добавление подписи');
+  }
+
+  /* ======================== Обработчики ======================== */
+
+  function onPointerDown(event: Konva.KonvaEventObject<PointerEvent>): void {
+    const point = pointerPoint(event);
+    editor.cursorPosition = point;
+    movedDuringGesture = false;
+
+    // Незавершённый жест (например, кнопку отпустили вне окна) сначала
+    // доводим до конца, чтобы нарисованное не пропадало.
+    if (editor.activeStroke || editor.shapeDraft || marqueeStart) {
+      finishGesture(point);
+    }
+
+    pointerDown = point;
+    capturePointer(event);
+
+    // Средняя кнопка мыши или инструмент «панорама» — перемещение холста.
+    if (event.evt.button === 1 || editor.isPanTool || editor.tool === 'pan') {
+      isPanning.value = true;
+      panState = { pointer: { x: event.evt.clientX, y: event.evt.clientY }, pan: { ...editor.pan } };
+      return;
+    }
+    if (event.evt.button !== 0) return;
+    if (editor.viewOnly) return;
+
+    switch (editor.tool) {
+      case 'select': {
+        // Клик по объекту обрабатывается узлом; клик по пустому месту — рамка.
+        const isObject = objectIdFromTarget(event.target) !== null;
+        if (!isObject && !isStageChrome(event.target)) {
+          if (!event.evt.shiftKey) objects.clearSelection();
+          marqueeStart = point;
+          editor.setMarquee({ x: point.x, y: point.y, width: 0, height: 0 });
+        }
+        break;
+      }
+      case 'marquee': {
+        marqueeStart = point;
+        editor.setMarquee({ x: point.x, y: point.y, width: 0, height: 0 });
+        break;
+      }
+      case 'text': {
+        if (event.evt.altKey) {
+          void replacePdfTextAt(point, event.evt.ctrlKey || event.evt.metaKey);
+        } else {
+          insertText(point);
+        }
+        break;
+      }
+      case 'image':
+        void insertImages(point);
+        break;
+      case 'brush':
+      case 'marker':
+      case 'eraser':
+        editor.startStroke(pointToStroke(point, event.evt));
+        break;
+      case 'rect':
+      case 'ellipse':
+      case 'line':
+      case 'arrow':
+      case 'whiteout':
+        editor.startShapeDraft(point);
+        break;
+      case 'highlight':
+        editor.startShapeDraft(point);
+        break;
+      case 'stamp':
+      case 'seal': {
+        const wanted = editor.tool === 'seal' ? library.seals : library.stamps;
+        const template = wanted.find((item) => item.id === editor.toolOptions.lastStampId) ?? wanted[0];
+        if (template) {
+          insertStamp(template, point);
+        } else {
+          ui.setLeftTab('library');
+          library.activeType = editor.tool === 'seal' ? 'seal' : 'stamp';
+          ui.notify.info(
+            editor.tool === 'seal' ? 'В библиотеке нет печатей' : 'В библиотеке нет штампов',
+            'Создайте новый в редакторе штампов.',
+          );
+        }
+        break;
+      }
+      case 'signature': {
+        const template = library.signatureById(editor.toolOptions.lastSignatureId) ?? library.signatures[0];
+        if (template) {
+          insertSignature(template, point);
+        } else {
+          ui.openModal('signatureEditor');
+        }
+        break;
+      }
+      default:
+        break;
+    }
+  }
+
+  function onPointerMove(event: Konva.KonvaEventObject<PointerEvent>): void {
+    const point = pointerPoint(event);
+    editor.cursorPosition = point;
+    if (pointerDown && (Math.abs(point.x - pointerDown.x) > 1 || Math.abs(point.y - pointerDown.y) > 1)) {
+      movedDuringGesture = true;
+    }
+
+    if (isPanning.value && panState) {
+      editor.setPan({
+        x: panState.pan.x + (event.evt.clientX - panState.pointer.x),
+        y: panState.pan.y + (event.evt.clientY - panState.pointer.y),
+      });
+      return;
+    }
+
+    if (editor.activeStroke) {
+      editor.appendStrokePoint(pointToStroke(point, event.evt));
+      return;
+    }
+
+    if (editor.shapeDraft) {
+      editor.updateShapeDraft(point, event.evt.shiftKey);
+      return;
+    }
+
+    if (marqueeStart) {
+      const rect = normalizeRect(rectFromPoints(marqueeStart, point));
+      editor.setMarquee(rect);
+    }
+  }
+
+  /**
+   * Завершение текущего жеста: штрих, фигура или выделение рамкой.
+   * Вызывается и по отпусканию кнопки, и при отмене указателя, и перед
+   * началом нового жеста — поэтому нарисованное не теряется.
+   */
+  function finishGesture(point: Point | null): void {
+    if (isPanning.value) {
+      isPanning.value = false;
+      panState = null;
+    }
+
+    // Рисование.
+    if (editor.activeStroke) {
+      const stroke = editor.takeStroke();
+      if (stroke && stroke.points.length > 0) {
+        const drawing = createDrawingObject([stroke], {
+          page: editor.currentPage,
+          eraser: stroke.tool === 'eraser',
+          name: stroke.tool === 'eraser' ? 'Корректор' : 'Рисунок',
+        });
+        if (drawing) objects.add([drawing], stroke.tool === 'eraser' ? 'Стирание' : 'Рисование');
+      }
+      return;
+    }
+
+    // Фигуры.
+    if (editor.shapeDraft) {
+      const draft = editor.takeShapeDraft();
+      if (draft) {
+        const end = point ?? draft.end;
+        const rect = normalizeRect(rectFromPoints(draft.start, end));
+        const tiny = rect.width < 3 && rect.height < 3;
+        if (!tiny) {
+          createShapeFromDraft(draft.start, end, rect, draft.constrained);
+        } else if (editor.tool === 'whiteout' && point) {
+          objects.add(
+            [
+              createWhiteoutObject({
+                page: editor.currentPage,
+                x: point.x,
+                y: point.y,
+                width: 120,
+                height: 24,
+                color: editor.toolOptions.whiteout.color,
+              }),
+            ],
+            'Закрашивание',
+          );
+        }
+      }
+      return;
+    }
+
+    // Выделение рамкой.
+    if (marqueeStart) {
+      const end = point ?? marqueeStart;
+      const rect = normalizeRect(rectFromPoints(marqueeStart, end));
+      marqueeStart = null;
+      editor.setMarquee(null);
+      if (rect.width > 2 || rect.height > 2) {
+        const inside = objects
+          .forPage(editor.currentPage)
+          .filter((obj) => obj.visible)
+          .filter((obj) => {
+            const bounds = boundsOfTransforms([obj]);
+            return (
+              bounds.x < rect.x + rect.width &&
+              bounds.x + bounds.width > rect.x &&
+              bounds.y < rect.y + rect.height &&
+              bounds.y + bounds.height > rect.y
+            );
+          })
+          .map((obj) => obj.id);
+        objects.select(inside);
+      }
+    }
+  }
+
+  function onPointerUp(event: Konva.KonvaEventObject<PointerEvent>): void {
+    finishGesture(pointerPoint(event));
+    releasePointer();
+    pointerDown = null;
+  }
+
+  /**
+   * Страховка: отпускание кнопки или отмена указателя в любом месте окна.
+   * Нужна, если указатель ушёл за пределы холста и события Konva не пришли.
+   */
+  function onWindowPointerEnd(event: PointerEvent): void {
+    if (!editor.activeStroke && !editor.shapeDraft && !marqueeStart && !isPanning.value) return;
+    finishGesture(deps.screenToPage(event.clientX, event.clientY));
+    releasePointer();
+    pointerDown = null;
+  }
+
+  function onWindowKeyBlur(): void {
+    // Потеря фокуса окна (например, Alt+Tab во время рисования) —
+    // доводим жест до конца, чтобы штрих не остался «висящим».
+    if (editor.activeStroke || editor.shapeDraft) finishGesture(null);
+    isPanning.value = false;
+    panState = null;
+  }
+
+  onMounted(() => {
+    window.addEventListener('pointerup', onWindowPointerEnd);
+    window.addEventListener('pointercancel', onWindowPointerEnd);
+    window.addEventListener('blur', onWindowKeyBlur);
+  });
+
+  onBeforeUnmount(() => {
+    window.removeEventListener('pointerup', onWindowPointerEnd);
+    window.removeEventListener('pointercancel', onWindowPointerEnd);
+    window.removeEventListener('blur', onWindowKeyBlur);
+  });
+
+  function onDoubleClick(event: Konva.KonvaEventObject<MouseEvent>): void {
+    const id = objectIdFromTarget(event.target);
+    if (!id) return;
+    const obj = objects.byId(id);
+    if (!obj) return;
+    objects.select([id]);
+    if (obj.type === 'text') {
+      editor.editingTextId = id;
+      ui.setRightTab('properties');
+    } else if (obj.type === 'stamp') {
+      ui.openModal('stampEditor', { templateId: obj.payload.templateId, objectId: id });
+    } else if (obj.type === 'signature') {
+      ui.openModal('signatureEditor', { signatureId: obj.payload.modelId, objectId: id });
+    } else if (obj.type === 'drawing') {
+      ui.openModal('drawingEditor', { objectId: id });
+    }
+  }
+
+  function onWheel(event: Konva.KonvaEventObject<WheelEvent>): void {
+    event.evt.preventDefault();
+    const { deltaY, ctrlKey, metaKey, shiftKey, clientX, clientY } = event.evt;
+    if (ctrlKey || metaKey) {
+      // Зум колесом с Ctrl (как в браузере) — вокруг курсора.
+      const stage = event.target.getStage();
+      const rect = stage?.container().getBoundingClientRect();
+      const focus = rect
+        ? { x: clientX - rect.left, y: clientY - rect.top }
+        : { x: clientX, y: clientY };
+      if (deltaY < 0) editor.zoomIn(focus);
+      else editor.zoomOut(focus);
+      return;
+    }
+    // Обычное колесо — прокрутка, Shift — по горизонтали.
+    if (shiftKey) editor.panBy(-deltaY, 0);
+    else editor.panBy(-event.evt.deltaX, -deltaY);
+  }
+
+  /** Создание фигуры по нарисованной рамке. */
+  function createShapeFromDraft(
+    start: Point,
+    end: Point,
+    rect: { x: number; y: number; width: number; height: number },
+    constrained: boolean,
+  ): void {
+    const tool = editor.tool;
+    const defaultStyle = settings.shapeDefaults;
+    const style = {
+      stroke: editor.toolOptions.shape.stroke || defaultStyle.stroke,
+      strokeWidth: editor.toolOptions.shape.strokeWidth || defaultStyle.strokeWidth,
+      fill: editor.toolOptions.shape.fill,
+    };
+    const page = editor.currentPage;
+
+    if (tool === 'whiteout') {
+      objects.add(
+        [
+          createWhiteoutObject({
+            page,
+            x: rect.x,
+            y: rect.y,
+            width: Math.max(4, rect.width),
+            height: Math.max(4, rect.height),
+            color: editor.toolOptions.whiteout.color || settings.settings.defaultWhiteoutColor,
+          }),
+        ],
+        'Закрашивание',
+      );
+      return;
+    }
+
+    if (tool === 'highlight') {
+      objects.add(
+        [
+          createHighlightObject({
+            page,
+            x: rect.x,
+            y: rect.y,
+            width: Math.max(4, rect.width),
+            height: Math.max(4, rect.height),
+            color: editor.toolOptions.highlight.color || settings.settings.defaultHighlightColor,
+          }),
+        ],
+        'Выделение',
+      );
+      return;
+    }
+
+    if (tool === 'line' || tool === 'arrow') {
+      let target = end;
+      if (constrained) {
+        // Привязка к углам, кратным 45°.
+        const dx = end.x - start.x;
+        const dy = end.y - start.y;
+        const angle = Math.round(Math.atan2(dy, dx) / (Math.PI / 4)) * (Math.PI / 4);
+        const length = Math.hypot(dx, dy);
+        target = { x: start.x + Math.cos(angle) * length, y: start.y + Math.sin(angle) * length };
+      }
+      const bounds = normalizeRect(rectFromPoints(start, target));
+      const width = Math.max(1, bounds.width);
+      const height = Math.max(1, bounds.height);
+      const points: [number, number, number, number] = [
+        (start.x - bounds.x) / width,
+        (start.y - bounds.y) / height,
+        (target.x - bounds.x) / width,
+        (target.y - bounds.y) / height,
+      ];
+      objects.add(
+        [
+          createShapeObject(tool, {
+            page,
+            x: bounds.x,
+            y: bounds.y,
+            width,
+            height,
+            defaults: style,
+            points,
+          }),
+        ],
+        'Добавление линии',
+      );
+      return;
+    }
+
+    objects.add(
+      [
+        createShapeObject(tool === 'ellipse' ? 'ellipse' : 'rect', {
+          page,
+          x: rect.x,
+          y: rect.y,
+          width: Math.max(4, rect.width),
+          height: Math.max(4, rect.height),
+          defaults: style,
+          cornerRadius: tool === 'rect' ? editor.toolOptions.shape.cornerRadius : 0,
+        }),
+      ],
+      'Добавление фигуры',
+    );
+  }
+
+  /**
+   * «Корректурный слой»: замена текста из исходного PDF.
+   * Старый текст закрывается закрашиванием, новый добавляется сверху.
+   */
+  async function replacePdfTextAt(point: Point, keepStyle: boolean): Promise<void> {
+    if (!pdfService.getDocument()) {
+      insertText(point);
+      return;
+    }
+    try {
+      const blocks = await pdfService.getTextBlocks(editor.currentPage);
+      const block = blocks.find(
+        (item) =>
+          point.x >= item.x &&
+          point.x <= item.x + item.width &&
+          point.y >= item.y &&
+          point.y <= item.y + item.height,
+      );
+      if (!block) {
+        insertText(point);
+        return;
+      }
+      const whiteout = createWhiteoutObject({
+        page: editor.currentPage,
+        x: block.x - 1,
+        y: block.y - 1,
+        width: block.width + 2,
+        height: block.height + 2,
+        color: editor.toolOptions.whiteout.color || '#ffffff',
+      });
+      const textObject = createTextObject({
+        page: editor.currentPage,
+        x: block.x,
+        y: block.y,
+        width: Math.max(block.width + 24, 120),
+        height: block.fontSize * 1.4,
+        text: block.text,
+        autoHeight: true,
+        defaults: {
+          fontId: settings.settings.defaultFontId,
+          fontFamily: fonts.familyOf(settings.settings.defaultFontId),
+          fontSize: keepStyle ? Math.max(6, Math.round(block.fontSize)) : settings.settings.defaultTextSize,
+          color: settings.settings.defaultTextColor,
+          align: 'left',
+        },
+      });
+      objects.add([whiteout, textObject], 'Замена текста PDF');
+      editor.editingTextId = textObject.id;
+      ui.setRightTab('properties');
+      ui.notify.info(
+        'Режим корректурного слоя',
+        'Исходный текст закрыт закрашиванием — измените текст в панели свойств.',
+      );
+    } catch {
+      insertText(point);
+    }
+  }
+
+  /** Диалог выбора изображений. */
+  async function openImageDialog(): Promise<File[]> {
+    return openFileDialog({ accept: ACCEPT.images, multiple: true });
+  }
+
+  return {
+    onPointerDown,
+    onPointerMove,
+    onPointerUp,
+    onDoubleClick,
+    onWheel,
+    isPanning,
+  };
+}
