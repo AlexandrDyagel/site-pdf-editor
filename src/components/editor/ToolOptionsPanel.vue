@@ -174,13 +174,22 @@ const documentFontsUsed = computed(() => {
       <template v-if="editor.tool === 'highlight'">
         <AppColorPicker v-model="editor.toolOptions.highlight.color" label="Цвет выделения" />
       </template>
-      <template v-if="editor.tool === 'rect'">
+      <template v-if="editor.tool === 'rect' || editor.tool === 'triangle' || editor.tool === 'polygon'">
         <AppSlider
           v-model="editor.toolOptions.shape.cornerRadius"
           label="Скругление углов"
           unit="pt"
           :min="0"
           :max="40"
+          :step="1"
+        />
+      </template>
+      <template v-if="editor.tool === 'polygon'">
+        <AppSlider
+          v-model="editor.toolOptions.shape.sides"
+          label="Количество углов"
+          :min="3"
+          :max="12"
           :step="1"
         />
       </template>

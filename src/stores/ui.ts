@@ -24,7 +24,7 @@ export type ModalName =
 /** Вкладки левой панели. */
 export type LeftTab = 'pages' | 'library' | 'text';
 /** Вкладки правой панели. */
-export type RightTab = 'tool' | 'properties' | 'layers' | 'page';
+export type RightTab = 'tool' | 'properties' | 'layers' | 'history' | 'page';
 
 /** Диалог подтверждения. */
 export interface ConfirmState {

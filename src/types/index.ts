@@ -34,6 +34,8 @@ export type ToolType =
   | 'highlight'
   | 'rect'
   | 'ellipse'
+  | 'triangle'
+  | 'polygon'
   | 'line'
   | 'arrow'
   | 'signature'
@@ -47,7 +49,7 @@ export type DrawTool = 'brush' | 'marker' | 'eraser';
 /** Инструменты, создающие объект перетаскиванием рамки. */
 export type BoxToolType = Extract<
   ToolType,
-  'rect' | 'ellipse' | 'line' | 'arrow' | 'whiteout' | 'highlight' | 'marquee'
+  'rect' | 'ellipse' | 'triangle' | 'polygon' | 'line' | 'arrow' | 'whiteout' | 'highlight' | 'marquee'
 >;
 
 /** Тип объекта редактора (объекты, которые можно двигать/масштабировать). */
@@ -71,7 +73,7 @@ export type TextAlign = 'left' | 'center' | 'right' | 'justify';
 export type VerticalAlign = 'top' | 'middle' | 'bottom';
 
 /** Вид фигуры. */
-export type ShapeKind = 'rect' | 'ellipse' | 'line' | 'arrow';
+export type ShapeKind = 'rect' | 'ellipse' | 'triangle' | 'polygon' | 'line' | 'arrow';
 
 /** Наконечники стрелки. */
 export type ArrowHead = 'none' | 'end' | 'both';
@@ -192,6 +194,8 @@ export interface ShapePayload {
   /** Штриховая линия (в pt). */
   dash: number[];
   cornerRadius: number;
+  /** Число сторон многоугольника (только для kind: 'polygon', по умолчанию 5). */
+  sides?: number;
   arrowHead: ArrowHead;
   /** Для line/arrow: нормализованные точки начала и конца внутри bbox (0..1). */
   points: [number, number, number, number];

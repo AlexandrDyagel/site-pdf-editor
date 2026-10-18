@@ -37,6 +37,7 @@ import {
 import { decodeAuto, detectEncoding, encodeUtf8, buildCsv, sanitizeFileName } from '@/utils/encoding';
 import { wrapText } from '@/utils/textLayout';
 import { layerAccentColor, layerBaseName, layerLabels, layerName } from '@/utils/layers';
+import { normalizeSides, polygonPath, polygonVertices } from '@/utils/shapePath';
 import { getStrokeOutline, outlineToPath, strokesToSvg } from '@/services/strokeService';
 import type { EditorObject, ShapeKind, StrokeData } from '@/types';
 
@@ -631,6 +632,72 @@ check(
     renamedLabels.get(renamedPair[1].id) === 'Схема 2' &&
     renamedLabels.get(renamedPair[2].id) === 'Прямоугольник',
   [...renamedLabels.values()].join(' / '),
+);
+
+/* ==========================================================================
+ *  10. Многоугольники и треугольники
+ * ========================================================================== */
+
+console.log('\n10. Путь многоугольника');
+
+check('треугольник — три вершины', polygonVertices(100, 80, 3).length === 3);
+check('шестиугольник — шесть вершин', polygonVertices(100, 80, 6).length === 6);
+check('сторон не бывает меньше трёх', polygonVertices(100, 80, 1).length === 3);
+check('слишком большое число сторон ограничено', normalizeSides(999) === 24);
+check('число сторон округляется', normalizeSides(5.4) === 5);
+check('по умолчанию пять сторон', normalizeSides(undefined) === 5);
+
+const triangleVertices = polygonVertices(100, 100, 3);
+check(
+  'первая вершина треугольника — сверху по центру',
+  Math.abs(triangleVertices[0].x - 50) < 0.01 && Math.abs(triangleVertices[0].y) < 0.01,
+  JSON.stringify(triangleVertices[0]),
+);
+check(
+  'вершины не выходят за рамку',
+  polygonVertices(100, 60, 7).every(
+    (point) => point.x >= -0.01 && point.x <= 100.01 && point.y >= -0.01 && point.y <= 60.01,
+  ),
+);
+
+const plainPolygon = polygonPath(100, 80, 6, 0);
+check('путь без скругления начинается с M', plainPolygon.startsWith('M '));
+check('путь без скругления замыкается', plainPolygon.trim().endsWith('Z'));
+check('без скругления нет кривых', !plainPolygon.includes('Q'), plainPolygon);
+check(
+  'у шестиугольника без скругления пять отрезков',
+  (plainPolygon.match(/ L /g) ?? []).length === 5,
+  String((plainPolygon.match(/ L /g) ?? []).length),
+);
+
+const roundedPolygon = polygonPath(100, 80, 6, 10);
+check(
+  'скругление добавляет по кривой на угол',
+  (roundedPolygon.match(/ Q /g) ?? []).length === 6,
+  String((roundedPolygon.match(/ Q /g) ?? []).length),
+);
+check(
+  'скругление треугольника тоже работает',
+  (polygonPath(100, 80, 3, 8).match(/ Q /g) ?? []).length === 3,
+);
+
+const flippedPolygon = polygonPath(100, 80, 3, 0, true);
+const uprightPolygon = polygonPath(100, 80, 3, 0, false);
+check(
+  'flipY переворачивает путь для системы PDF',
+  flippedPolygon !== uprightPolygon && flippedPolygon.includes('80'),
+  flippedPolygon,
+);
+check(
+  'flipY сохраняет форму (те же расстояния по X)',
+  polygonVertices(100, 80, 3, true).every(
+    (point, index) => Math.abs(point.x - polygonVertices(100, 80, 3)[index].x) < 0.01,
+  ),
+);
+check(
+  'без скругления путь состоит из чисел и команд',
+  /^M [\d.]+ [\d.]+( L [\d.]+ [\d.]+)* Z$/.test(plainPolygon),
+  plainPolygon,
 );
 
 /* ==========================================================================

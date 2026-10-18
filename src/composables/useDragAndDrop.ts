@@ -48,6 +48,14 @@ export function useDragAndDrop(): {
   }
 
   function onDrop(event: DragEvent): void {
+    // Если файл уже принял конкретный компонент (зона загрузки), повторно
+    // открывать его нельзя: иначе документ открывался дважды и появлялись
+    // два тоста «Документ открыт».
+    if (event.defaultPrevented) {
+      dragCounter = 0;
+      isDragging.value = false;
+      return;
+    }
     event.preventDefault();
     dragCounter = 0;
     isDragging.value = false;

@@ -57,6 +57,7 @@ import { fitStampTemplate } from '@/services/stampRenderService';
 import { drawStampToPdfPage } from '@/services/stampPdfRenderer';
 import { computeTextBlockLayout } from '@/services/textRenderService';
 import { justifyOffsets, measureTextWidth } from '@/utils/textLayout';
+import { normalizeSides, polygonPath } from '@/utils/shapePath';
 import { renderPageCanvas } from '@/services/imageExportService';
 
 /** Наклон синтетического курсива (когда в шрифте нет italic-начертания). */
@@ -414,6 +415,24 @@ function drawShapeObject(
       y: center.y,
       xScale: obj.width / 2,
       yScale: obj.height / 2,
+      rotate: degrees(frame.rotate),
+      color: fill ? rgb(fill.r, fill.g, fill.b) : undefined,
+      opacity: fill ? opacity : undefined,
+      borderColor: hasStroke && stroke ? rgb(stroke.r, stroke.g, stroke.b) : undefined,
+      borderWidth: hasStroke ? payload.strokeWidth : 0,
+      borderOpacity: opacity,
+      borderDashArray: hasStroke ? dash : undefined,
+    });
+    return;
+  }
+
+  if (payload.kind === 'triangle' || payload.kind === 'polygon') {
+    // Путь строим в системе PDF (y вверх), как у прямоугольника со скруглением.
+    const sides = payload.kind === 'triangle' ? 3 : normalizeSides(payload.sides);
+    const path = polygonPath(obj.width, obj.height, sides, payload.cornerRadius, true);
+    page.drawSvgPath(path, {
+      x: frame.anchor.x,
+      y: frame.anchor.y,
       rotate: degrees(frame.rotate),
       color: fill ? rgb(fill.r, fill.g, fill.b) : undefined,
       opacity: fill ? opacity : undefined,

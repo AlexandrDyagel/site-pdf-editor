@@ -35,6 +35,8 @@ export interface EditorToolOptions {
     fill: string | null;
     dash: number[];
     cornerRadius: number;
+    /** Число сторон многоугольника (инструмент «Многоугольник»). */
+    sides: number;
     arrowHead: ArrowHead;
   };
   text: TextDefaults & { align: TextAlign; bold: boolean; italic: boolean };
@@ -89,6 +91,7 @@ export const useEditorStore = defineStore('editor', () => {
       fill: null,
       dash: [],
       cornerRadius: 0,
+      sides: 5,
       arrowHead: 'end',
     },
     text: {
@@ -116,7 +119,7 @@ export const useEditorStore = defineStore('editor', () => {
     ['brush', 'marker', 'eraser'].includes(tool.value),
   );
   const isShapeTool = computed(() =>
-    ['rect', 'ellipse', 'line', 'arrow', 'whiteout'].includes(tool.value),
+    ['rect', 'ellipse', 'triangle', 'polygon', 'line', 'arrow', 'whiteout'].includes(tool.value),
   );
   const isSelectTool = computed(() => tool.value === 'select');
   const isPanTool = computed(() => tool.value === 'pan' || spacePressed.value);

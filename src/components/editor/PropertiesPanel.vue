@@ -111,9 +111,17 @@ const fontOptions = computed(() =>
 const shapeKindLabels: Record<string, string> = {
   rect: 'Прямоугольник',
   ellipse: 'Эллипс',
+  triangle: 'Треугольник',
+  polygon: 'Многоугольник',
   line: 'Линия',
   arrow: 'Стрелка',
 };
+
+/** У каких фигур есть скругление углов. */
+const supportsCornerRadius = computed(() => {
+  const kind = shapePayload.value?.kind;
+  return kind === 'rect' || kind === 'triangle' || kind === 'polygon';
+});
 
 /**
  * Заголовок объекта — так же, как в панели «Слои»: имя из «Служебного», иначе
@@ -725,13 +733,23 @@ void scaleStrokes;
           @update:model-value="single && edit('Заливка', () => patch(single!.id, { payload: { fill: $event || null } }))"
         />
         <AppInput
-          v-if="shapePayload.kind === 'rect'"
+          v-if="supportsCornerRadius"
           label="Скругление, pt"
           type="number"
           size="sm"
           :min="0"
           :model-value="shapePayload.cornerRadius"
-          @update:model-value="single && edit('Скругление', () => patch(single!.id, { payload: { cornerRadius: Number($event) || 0 } }))"
+          @update:model-value="single && edit('Скругление', () => patch(single!.id, { payload: { cornerRadius: Math.max(0, Number($event) || 0) } }))"
+        />
+        <AppInput
+          v-if="shapePayload.kind === 'polygon'"
+          label="Количество углов"
+          type="number"
+          size="sm"
+          :min="3"
+          :max="24"
+          :model-value="shapePayload.sides ?? 5"
+          @update:model-value="single && edit('Количество углов', () => patch(single!.id, { payload: { sides: Math.min(24, Math.max(3, Math.round(Number($event) || 5))) } }))"
         />
         <AppSelect
           label="Штриховая линия"

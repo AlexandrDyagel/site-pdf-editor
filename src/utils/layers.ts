@@ -18,6 +18,8 @@ import type { EditorObject, ShapeKind } from '@/types';
 const SHAPE_LABELS: Record<ShapeKind, string> = {
   rect: 'Прямоугольник',
   ellipse: 'Эллипс',
+  triangle: 'Треугольник',
+  polygon: 'Многоугольник',
   line: 'Линия',
   arrow: 'Стрелка',
 };

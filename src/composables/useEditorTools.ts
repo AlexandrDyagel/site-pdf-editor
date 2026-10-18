@@ -12,7 +12,14 @@
 
 import Konva from 'konva';
 import { onBeforeUnmount, onMounted, ref } from 'vue';
-import type { EditorObject, SignatureTemplate, StampTemplate, StrokePoint, TextAlign } from '@/types';
+import type {
+  EditorObject,
+  ShapeKind,
+  SignatureTemplate,
+  StampTemplate,
+  StrokePoint,
+  TextAlign,
+} from '@/types';
 import type { Point } from '@/utils/geometry';
 import { boundsOfTransforms, normalizeRect, rectFromPoints } from '@/utils/geometry';
 import {
@@ -348,6 +355,8 @@ export function useEditorTools(deps: {
         break;
       case 'rect':
       case 'ellipse':
+      case 'triangle':
+      case 'polygon':
       case 'line':
       case 'arrow':
       case 'whiteout':
@@ -662,16 +671,28 @@ export function useEditorTools(deps: {
       return;
     }
 
+    // Прямоугольник, эллипс, треугольник и многоугольник — одинаково рисуются
+    // рамкой, отличаются только видом и параметрами.
+    const kind: ShapeKind =
+      tool === 'ellipse'
+        ? 'ellipse'
+        : tool === 'triangle'
+          ? 'triangle'
+          : tool === 'polygon'
+            ? 'polygon'
+            : 'rect';
+
     addFromCanvas(
       [
-        createShapeObject(tool === 'ellipse' ? 'ellipse' : 'rect', {
+        createShapeObject(kind, {
           page,
           x: rect.x,
           y: rect.y,
           width: Math.max(4, rect.width),
           height: Math.max(4, rect.height),
           defaults: style,
-          cornerRadius: tool === 'rect' ? editor.toolOptions.shape.cornerRadius : 0,
+          cornerRadius: editor.toolOptions.shape.cornerRadius,
+          sides: kind === 'polygon' ? editor.toolOptions.shape.sides : undefined,
         }),
       ],
       'Добавление фигуры',

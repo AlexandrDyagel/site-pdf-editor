@@ -29,6 +29,7 @@ import type {
 } from '@/types';
 import { loadImage } from '@/utils/image';
 import { hashString } from '@/utils/id';
+import { normalizeSides, polygonPath } from '@/utils/shapePath';
 import { computeStampLayout, fitStampTemplate, paintStampLayout } from '@/services/stampRenderService';
 import { getStrokeOutline, paintStrokes } from '@/services/strokeService';
 import { ensureTextMetrics, hasTextMetrics, paintTextObject } from '@/services/textRenderService';
@@ -167,7 +168,7 @@ export function objectStructureSignature(obj: EditorObject): string {
     }
     case 'shape': {
       const p = obj.payload;
-      body = `${p.kind}|${p.stroke}|${p.strokeWidth}|${p.fill}|${p.dash.join(',')}|${p.cornerRadius}|${p.arrowHead}|${p.points.join(',')}`;
+      body = `${p.kind}|${p.stroke}|${p.strokeWidth}|${p.fill}|${p.dash.join(',')}|${p.cornerRadius}|${p.sides ?? ''}|${p.arrowHead}|${p.points.join(',')}`;
       break;
     }
     case 'whiteout': {
@@ -348,6 +349,23 @@ function buildChildren(group: Konva.Group, obj: EditorObject, options: ObjectBui
             stroke,
             strokeWidth,
             dash,
+          }),
+        );
+      } else if (payload.kind === 'triangle' || payload.kind === 'polygon') {
+        // Треугольник и многоугольник рисуем SVG-путём: тот же путь уходит
+        // в PDF, поэтому форма в редакторе и в файле совпадает.
+        const sides = payload.kind === 'triangle' ? 3 : normalizeSides(payload.sides);
+        group.add(
+          new Konva.Path({
+            x: 0,
+            y: 0,
+            data: polygonPath(obj.width, obj.height, sides, payload.cornerRadius),
+            fill,
+            stroke,
+            strokeWidth: effectiveWidth,
+            dash,
+            lineJoin: 'round',
+            hitStrokeWidth: 14,
           }),
         );
       } else {

@@ -203,6 +203,22 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
     hint: 'Эллипс или круг',
   },
   {
+    id: 'triangle',
+    label: 'Треугольник',
+    icon: 'triangle',
+    shortcut: 'Y',
+    group: 'markup',
+    hint: 'Треугольник с настраиваемым скруглением углов',
+  },
+  {
+    id: 'polygon',
+    label: 'Многоугольник',
+    icon: 'polygon',
+    shortcut: 'N',
+    group: 'markup',
+    hint: 'Многоугольник: число углов и скругление',
+  },
+  {
     id: 'line',
     label: 'Линия',
     icon: 'line',

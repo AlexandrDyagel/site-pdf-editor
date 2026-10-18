@@ -32,6 +32,7 @@ import { createId } from '@/utils/id';
 import { normalizeStrokePoints } from '@/services/strokeService';
 import { cloneStampTemplate } from '@/services/stampRenderService';
 import { round2 } from '@/utils/geometry';
+import { normalizeSides } from '@/utils/shapePath';
 
 /** Базовые параметры создания объекта. */
 export interface BaseCreateOptions {
@@ -179,6 +180,8 @@ export function createShapeObject(
     arrowHead?: ArrowHead;
     dash?: number[];
     cornerRadius?: number;
+    /** Число сторон многоугольника (kind: 'polygon'). */
+    sides?: number;
     points?: [number, number, number, number];
   },
 ): ShapeObject {
@@ -192,6 +195,7 @@ export function createShapeObject(
       fill: options.defaults.fill ?? null,
       dash: options.dash ?? [],
       cornerRadius: options.cornerRadius ?? 0,
+      ...(kind === 'polygon' ? { sides: normalizeSides(options.sides) } : {}),
       arrowHead: options.arrowHead ?? (kind === 'arrow' ? 'end' : 'none'),
       points: options.points ?? [0, 0, 1, 1],
     },

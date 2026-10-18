@@ -17,6 +17,7 @@ import StatusBar from '@/components/editor/StatusBar.vue';
 import PageThumbnails from '@/components/editor/PageThumbnails.vue';
 import PropertiesPanel from '@/components/editor/PropertiesPanel.vue';
 import LayersPanel from '@/components/editor/LayersPanel.vue';
+import HistoryPanel from '@/components/editor/HistoryPanel.vue';
 import ToolOptionsPanel from '@/components/editor/ToolOptionsPanel.vue';
 import PagePropertiesPanel from '@/components/editor/PagePropertiesPanel.vue';
 import TextLayerPanel from '@/components/editor/TextLayerPanel.vue';
@@ -54,6 +55,7 @@ const rightTabs = computed(() => [
   { id: 'tool', label: 'Инструмент', icon: 'sliders' },
   { id: 'properties', label: 'Свойства', icon: 'settings' },
   { id: 'layers', label: 'Слои', icon: 'layers' },
+  { id: 'history', label: 'История', icon: 'history' },
   { id: 'page', label: 'Страница', icon: 'file' },
 ]);
 
@@ -247,6 +249,7 @@ watch(
           <ToolOptionsPanel v-if="rightTab === 'tool'" />
           <PropertiesPanel v-else-if="rightTab === 'properties'" />
           <LayersPanel v-else-if="rightTab === 'layers'" />
+          <HistoryPanel v-else-if="rightTab === 'history'" />
           <PagePropertiesPanel v-else />
         </div>
 
@@ -307,6 +310,7 @@ watch(
                 <ToolOptionsPanel v-if="rightTab === 'tool'" />
                 <PropertiesPanel v-else-if="rightTab === 'properties'" />
                 <LayersPanel v-else-if="rightTab === 'layers'" />
+                <HistoryPanel v-else-if="rightTab === 'history'" />
                 <PagePropertiesPanel v-else />
               </template>
             </div>
