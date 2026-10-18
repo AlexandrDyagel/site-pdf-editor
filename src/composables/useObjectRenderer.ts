@@ -100,17 +100,15 @@ export function useObjectRenderer(deps: {
     }
     const obj = objects.byId(id);
     if (!obj) return null;
-    // Объекты одной группы выделяются вместе.
-    const ids = obj.groupId ? objects.groupMembers(id) : [id];
+    // Клик по объекту выделяет именно его: группу целиком можно выделить
+    // кликом по строке группы в «Слоях» или рамкой на холсте.
     if (additive) {
       const next = new Set(objects.selectedIds);
-      for (const item of ids) {
-        if (next.has(item)) next.delete(item);
-        else next.add(item);
-      }
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
       objects.select(Array.from(next));
     } else {
-      objects.select(ids);
+      objects.select([id]);
     }
     return id;
   }
@@ -120,12 +118,9 @@ export function useObjectRenderer(deps: {
   function bindNodeEvents(node: Konva.Group, objectId: string): void {
     node.on('pointerdown', () => {
       if (editor.tool !== 'select' || editor.viewOnly) return;
-      // При клике вне текущего выделения — выделяем этот объект.
+      // При клике вне текущего выделения — выделяем этот объект (не всю группу).
       if (!objects.selectedIds.includes(objectId)) {
-        const obj = objects.byId(objectId);
-        if (!obj) return;
-        const ids = obj.groupId ? objects.groupMembers(objectId) : [objectId];
-        objects.select(ids);
+        objects.select([objectId]);
       }
     });
 

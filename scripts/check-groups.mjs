@@ -189,25 +189,31 @@ try {
   );
 
   console.log('\n3. Клик по группе выделяет все объекты');
+
+  /** Клик по строке панели (по её подписи). */
+  async function clickRow(selector) {
+    const clicked = await cdp.evaluate(`(() => {
+      const right = Array.from(document.querySelectorAll('aside')).pop();
+      const row = right.querySelector(${JSON.stringify(selector)});
+      if (!row) return { ok: false, reason: 'нет строки' };
+      const label = row.querySelector('[data-layer-label]');
+      const button = label ? label.closest('button') : null;
+      if (!button) return { ok: false, reason: 'нет кнопки в строке' };
+      const rect = row.getBoundingClientRect();
+      button.dispatchEvent(new MouseEvent('click', { bubbles: true, clientX: rect.left + 30, clientY: rect.top + 10 }));
+      return { ok: true };
+    })()`);
+    await sleep(700);
+    return clicked;
+  }
+
   await cdp.evaluate(`(() => {
     const app = window.__PDF_EDITOR__;
     app.objects.clearSelection();
     return 'ok';
   })()`);
   await sleep(400);
-  // Клик по подписи группы в панели (кнопка внутри строки группы).
-  const groupClicked = await cdp.evaluate(`(() => {
-    const right = Array.from(document.querySelectorAll('aside')).pop();
-    const row = right.querySelector('[data-group-id]');
-    if (!row) return { ok: false, reason: 'нет строки группы' };
-    const label = row.querySelector('[data-layer-label]');
-    const button = label ? label.closest('button') : null;
-    if (!button) return { ok: false, reason: 'нет кнопки в строке' };
-    const rect = row.getBoundingClientRect();
-    button.dispatchEvent(new MouseEvent('click', { bubbles: true, clientX: rect.left + 30, clientY: rect.top + 10 }));
-    return { ok: true };
-  })()`);
-  await sleep(700);
+  const groupClicked = await clickRow('[data-group-id]');
   check('строка группы доступна для клика', groupClicked.ok === true, JSON.stringify(groupClicked));
   const afterGroupClick = await state();
   console.log('  выделено после клика по группе:', JSON.stringify(afterGroupClick.selected));
@@ -217,6 +223,43 @@ try {
       afterGroupClick.selected.includes(created.first) &&
       afterGroupClick.selected.includes(created.second),
     JSON.stringify(afterGroupClick.selected),
+  );
+
+  console.log('\n3б. Клик по объекту группы выделяет только его');
+  await cdp.evaluate(`(() => {
+    window.__PDF_EDITOR__.objects.clearSelection();
+    return 'ok';
+  })()`);
+  await sleep(400);
+  const memberClicked = await clickRow('[data-layer-id]');
+  const afterMemberClick = await state();
+  console.log('  выделено после клика по объекту:', JSON.stringify(afterMemberClick.selected));
+  check('строка объекта доступна для клика', memberClicked.ok === true, JSON.stringify(memberClicked));
+  check(
+    'в списке выделен только один объект',
+    afterMemberClick.selected.length === 1,
+    JSON.stringify(afterMemberClick.selected),
+  );
+
+  // Клик по объекту группы на холсте — тоже только он.
+  await cdp.evaluate(`(() => {
+    const app = window.__PDF_EDITOR__;
+    app.editor.setTool('select');
+    app.objects.clearSelection();
+    return 'ok';
+  })()`);
+  await sleep(400);
+  const firstPoint = await screenPoint(200, 160);
+  await cdp.send('Input.dispatchMouseEvent', { type: 'mouseMoved', x: firstPoint.x, y: firstPoint.y, button: 'none', buttons: 0, pointerType: 'mouse' });
+  await cdp.send('Input.dispatchMouseEvent', { type: 'mousePressed', x: firstPoint.x, y: firstPoint.y, button: 'left', buttons: 1, clickCount: 1, pointerType: 'mouse' });
+  await cdp.send('Input.dispatchMouseEvent', { type: 'mouseReleased', x: firstPoint.x, y: firstPoint.y, button: 'left', buttons: 0, clickCount: 1, pointerType: 'mouse' });
+  await sleep(700);
+  const afterCanvasClick = await state();
+  console.log('  выделено после клика по холсту:', JSON.stringify(afterCanvasClick.selected));
+  check(
+    'на холсте клик по объекту группы выделяет только его',
+    afterCanvasClick.selected.length === 1,
+    JSON.stringify(afterCanvasClick.selected),
   );
 
   console.log('\n4. Сворачивание и разворачивание');
@@ -287,23 +330,64 @@ try {
     JSON.stringify(afterUngroup.groups),
   );
 
-  console.log('\n6. Клик по одному объекту группы выделяет всю группу');
+  console.log('\n6. Двойной клик по группе сворачивает и разворачивает её');
   const regrouped = await cdp.evaluate(`(() => {
     const app = window.__PDF_EDITOR__;
     app.objects.select([${JSON.stringify(created.first)}, ${JSON.stringify(created.second)}]);
     app.objects.group();
     app.objects.clearSelection();
-    app.objects.selectOne(${JSON.stringify(created.second)});
-    return { selected: [...app.objects.selectedIds], count: app.objects.objects.length };
+    app.ui.setRightTab('layers');
+    return { count: app.objects.objects.length };
   })()`);
-  console.log('  выделение после клика по объекту группы:', JSON.stringify(regrouped.selected));
+  await sleep(900);
+
+  /** Двойной клик по строке панели. */
+  async function dblClickRow(selector) {
+    const clicked = await cdp.evaluate(`(() => {
+      const right = Array.from(document.querySelectorAll('aside')).pop();
+      const row = right.querySelector(${JSON.stringify(selector)});
+      if (!row) return { ok: false };
+      const label = row.querySelector('[data-layer-label]');
+      const button = label ? label.closest('button') : null;
+      if (!button) return { ok: false };
+      const rect = row.getBoundingClientRect();
+      const init = { bubbles: true, clientX: rect.left + 30, clientY: rect.top + 10 };
+      button.dispatchEvent(new MouseEvent('dblclick', init));
+      return { ok: true };
+    })()`);
+    await sleep(700);
+    return clicked;
+  }
+
+  const rowsBefore = await cdp.evaluate(`(() => {
+    const right = Array.from(document.querySelectorAll('aside')).pop();
+    return right.querySelectorAll('[data-layer-id]').length;
+  })()`);
+  const dblGroup = await dblClickRow('[data-group-id]');
+  const rowsAfterDbl = await cdp.evaluate(`(() => {
+    const right = Array.from(document.querySelectorAll('aside')).pop();
+    return {
+      objects: right.querySelectorAll('[data-layer-id]').length,
+      groups: right.querySelectorAll('[data-group-id]').length,
+      tab: window.__PDF_EDITOR__.ui.rightTab,
+    };
+  })()`);
+  console.log('  до:', rowsBefore, 'после двойного клика по группе:', JSON.stringify(rowsAfterDbl));
+  check('двойной клик по группе доступен', dblGroup.ok === true);
   check(
-    'выделены оба объекта группы',
-    regrouped.selected.length === 2 &&
-      regrouped.selected.includes(created.first) &&
-      regrouped.selected.includes(created.second),
-    JSON.stringify(regrouped.selected),
+    'двойной клик свернул группу',
+    rowsAfterDbl.objects === 1 && rowsAfterDbl.groups === 1,
+    JSON.stringify(rowsAfterDbl),
   );
+  check('вкладка не переключилась на «Свойства»', rowsAfterDbl.tab === 'layers', rowsAfterDbl.tab);
+
+  await dblClickRow('[data-group-id]');
+  const rowsAfterSecondDbl = await cdp.evaluate(`(() => {
+    const right = Array.from(document.querySelectorAll('aside')).pop();
+    return right.querySelectorAll('[data-layer-id]').length;
+  })()`);
+  console.log('  после повторного двойного клика объектов:', rowsAfterSecondDbl);
+  check('повторный двойной клик развернул группу', rowsAfterSecondDbl === 3, String(rowsAfterSecondDbl));
 
   console.log('\n7. «Удалить» из контекстного меню удаляет группу');
   await cdp.evaluate(`(() => {

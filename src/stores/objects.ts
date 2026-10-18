@@ -218,47 +218,24 @@ export const useObjectsStore = defineStore('objects', () => {
   /* ======================== Выделение ======================== */
 
   /**
-   * Расширяет набор до целых групп: клик по одному объекту группы выделяет
-   * всю группу, как в графических редакторах.
+   * Выделение ровно переданных объектов.
+   *
+   * Группа целиком выделяется только явно — кликом по строке группы в
+   * «Слоях» (там передаётся весь список объектов). Клик по одному объекту
+   * группы (на холсте или в списке) выделяет именно его.
    */
-  function expandGroups(ids: readonly string[]): string[] {
-    const groupIds = new Set(
-      objects.value
-        .filter((obj) => ids.includes(obj.id) && obj.groupId)
-        .map((obj) => obj.groupId as string),
-    );
-    if (groupIds.size === 0) return Array.from(new Set(ids));
-    const result = new Set(ids);
-    for (const obj of objects.value) {
-      if (obj.groupId && groupIds.has(obj.groupId)) result.add(obj.id);
-    }
-    return Array.from(result);
-  }
-
   function select(ids: readonly string[]): void {
-    selectedIds.value = expandGroups(ids);
+    selectedIds.value = Array.from(new Set(ids));
   }
 
   function selectOne(id: string, additive = false): void {
     if (!additive) {
-      selectedIds.value = expandGroups([id]);
+      selectedIds.value = [id];
       return;
     }
-    // Переключение группы: если она уже выделена целиком — снимаем выделение
-    // со всех её объектов, иначе добавляем всю группу.
-    const target = byId(id);
-    const members = target?.groupId
-      ? objects.value.filter((obj) => obj.groupId === target.groupId).map((obj) => obj.id)
-      : [id];
-    const selected = new Set(selectedIds.value);
-    const allSelected = members.every((member) => selected.has(member));
-    if (allSelected) {
-      for (const member of members) selected.delete(member);
-      selectedIds.value = Array.from(selected);
-      return;
-    }
-    for (const member of members) selected.add(member);
-    selectedIds.value = Array.from(selected);
+    selectedIds.value = selectedIds.value.includes(id)
+      ? selectedIds.value.filter((value) => value !== id)
+      : [...selectedIds.value, id];
   }
 
   function selectAll(page?: number): void {

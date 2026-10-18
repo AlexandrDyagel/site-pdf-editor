@@ -166,6 +166,7 @@ function toggleGroup(row: LayerRow): void {
 }
 
 function onClickRow(row: LayerRow, event: MouseEvent): void {
+  // Клик по группе выделяет все её объекты, клик по объекту — только его.
   if (row.kind === 'group') {
     objects.select(row.objects.map((obj) => obj.id));
     return;
@@ -173,11 +174,18 @@ function onClickRow(row: LayerRow, event: MouseEvent): void {
   objects.selectOne(row.objects[0].id, event.shiftKey);
 }
 
+/**
+ * Двойной клик: у группы — свернуть/развернуть (как в Photoshop), у объекта —
+ * перейти к его свойствам (и открыть правку текста).
+ */
 function onDblClickRow(row: LayerRow): void {
-  const ids = row.objects.map((obj) => obj.id);
-  objects.select(ids);
+  if (row.kind === 'group') {
+    toggleGroup(row);
+    return;
+  }
   const first = row.objects[0];
-  if (row.kind === 'object' && first.type === 'text') editor.startTextEditing(first.id);
+  objects.select([first.id]);
+  if (first.type === 'text') editor.startTextEditing(first.id);
   ui.setRightTab('properties');
 }
 
