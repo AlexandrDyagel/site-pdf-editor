@@ -150,6 +150,109 @@ try {
   console.log('  треугольник:', JSON.stringify(triangle));
   check('инструмент «Треугольник» создаёт фигуру нужного вида', triangle?.kind === 'triangle', JSON.stringify(triangle));
 
+  console.log('\n1а. Контур черновика повторяет фигуру');
+  /** Черновой контур при зажатой мыши: точки у верхнего угла и у вершины. */
+  async function draftInk(tool, shotName = '') {
+    await cdp.evaluate(`(() => {
+      const app = window.__PDF_EDITOR__;
+      app.objects.clearAll(false);
+      app.objects.select([]);
+      app.editor.setTool(${JSON.stringify(tool)});
+      document.activeElement?.blur?.();
+      return 'ok';
+    })()`);
+    await sleep(600);
+    const points = await cdp.evaluate(`(() => {
+      const app = window.__PDF_EDITOR__;
+      const rect = document.querySelector('[data-testid=editor-canvas]').getBoundingClientRect();
+      const toScreen = (x, y) => ({
+        x: Math.round(rect.left + app.editor.pan.x + x * app.editor.zoom),
+        y: Math.round(rect.top + app.editor.pan.y + y * app.editor.zoom),
+      });
+      return { from: toScreen(300, 90), to: toScreen(460, 200) };
+    })()`);
+    await cdp.send('Input.dispatchMouseEvent', { type: 'mouseMoved', x: points.from.x, y: points.from.y, button: 'none', buttons: 0, pointerType: 'mouse' });
+    await cdp.send('Input.dispatchMouseEvent', { type: 'mousePressed', x: points.from.x, y: points.from.y, button: 'left', buttons: 1, clickCount: 1, pointerType: 'mouse' });
+    for (let step = 1; step <= 6; step += 1) {
+      await cdp.send('Input.dispatchMouseEvent', {
+        type: 'mouseMoved',
+        x: Math.round(points.from.x + ((points.to.x - points.from.x) * step) / 6),
+        y: Math.round(points.from.y + ((points.to.y - points.from.y) * step) / 6),
+        button: 'left',
+        buttons: 1,
+        pointerType: 'mouse',
+      });
+      await sleep(30);
+    }
+    await sleep(250);
+    if (shotName) await cdp.screenshot(resolvePath(TMP, shotName));
+    const ink = await cdp.evaluate(`(() => {
+      const app = window.__PDF_EDITOR__;
+      // Третий слой — оверлей с черновиками.
+      const ctx = document.querySelectorAll('canvas')[2].getContext('2d');
+      const local = (x, y) => ({
+        x: Math.round(app.editor.pan.x + x * app.editor.zoom),
+        y: Math.round(app.editor.pan.y + y * app.editor.zoom),
+      });
+      const area = (x, y, width, height) => {
+        const data = ctx.getImageData(x, y, Math.max(1, width), Math.max(1, height)).data;
+        let painted = 0;
+        for (let i = 3; i < data.length; i += 4) if (data[i] > 20) painted += 1;
+        return painted;
+      };
+      const left = local(300, 90);
+      const right = local(460, 90);
+      const bottom = local(300, 200);
+      const width = right.x - left.x;
+      return {
+        // Угол рамки: у прямоугольника там линия, у треугольника — пусто.
+        corner: area(left.x - 4, left.y - 4, 14, 14),
+        // Верхняя кромка (у треугольника в центре — вершина).
+        topEdge: area(left.x, left.y - 3, width, 7),
+        // Нижняя кромка: есть у всех фигур.
+        bottomEdge: area(bottom.x, bottom.y - 4, width, 9),
+      };
+    })()`);
+    await cdp.send('Input.dispatchMouseEvent', { type: 'mouseReleased', x: points.to.x, y: points.to.y, button: 'left', buttons: 0, clickCount: 1, pointerType: 'mouse' });
+    await sleep(600);
+    return ink;
+  }
+
+  const rectDraft = await draftInk('rect');
+  console.log('  черновик прямоугольника:', JSON.stringify(rectDraft));
+  check('у прямоугольника есть угол контура', rectDraft.corner > 0, JSON.stringify(rectDraft));
+  check(
+    'у прямоугольника есть верхняя и нижняя кромки',
+    rectDraft.topEdge > 0 && rectDraft.bottomEdge > 0,
+    JSON.stringify(rectDraft),
+  );
+
+  const triangleDraft = await draftInk('triangle', 'draft-triangle.png');
+  console.log('  черновик треугольника:', JSON.stringify(triangleDraft));
+  check(
+    'у треугольника нет угла рамки в левом верхнем углу',
+    triangleDraft.corner === 0,
+    JSON.stringify(triangleDraft),
+  );
+  check(
+    'контур треугольника проходит через вершину сверху и по низу',
+    triangleDraft.topEdge > 0 && triangleDraft.bottomEdge > 0,
+    JSON.stringify(triangleDraft),
+  );
+  check(
+    'верхняя кромка треугольника короче, чем у рамки',
+    triangleDraft.topEdge < rectDraft.topEdge,
+    `${triangleDraft.topEdge} против ${rectDraft.topEdge}`,
+  );
+
+  const polygonDraft = await draftInk('polygon');
+  console.log('  черновик многоугольника:', JSON.stringify(polygonDraft));
+  check(
+    'у многоугольника контур не совпадает с рамкой',
+    polygonDraft.bottomEdge > 0 && polygonDraft.corner === 0,
+    JSON.stringify(polygonDraft),
+  );
+
   const polygon = await drawWithTool('polygon', { x: 300, y: 220, width: 160, height: 110 });
   console.log('  многоугольник:', JSON.stringify(polygon));
   check('инструмент «Многоугольник» создаёт фигуру нужного вида', polygon?.kind === 'polygon', JSON.stringify(polygon));
@@ -234,10 +337,94 @@ try {
   console.log('  после ввода 6 углов:', JSON.stringify({ sides: afterSides.sides, radius: afterSides.radius }));
   check('поле «Количество углов» найдено', sidesInput === true);
   check('число углов меняется из свойств', afterSides.sides === 6, String(afterSides.sides));
+  check('путь перестроился под новое число углов', (afterSides.path?.match(/Q/g) ?? []).length === 6, String((afterSides.path?.match(/Q/g) ?? []).length));
+
+  // Набор «12» и «23»: нельзя подставлять минимум после первой цифры.
+  const typedSides = await cdp.evaluate(`(() => {
+    const aside = Array.from(document.querySelectorAll('aside')).pop();
+    const field = Array.from(aside.querySelectorAll('input[type=number]')).find((input) => {
+      const label = input.closest('label');
+      return label && (label.textContent || '').includes('Количество углов');
+    });
+    if (!field) return { ok: false };
+    field.focus();
+    field.value = '1';
+    field.dispatchEvent(new Event('input', { bubbles: true }));
+    const afterOne = field.value;
+    field.value = '12';
+    field.dispatchEvent(new Event('input', { bubbles: true }));
+    const afterTwo = field.value;
+    field.blur();
+    return { ok: true, afterOne, afterTwo, afterBlur: field.value };
+  })()`);
+  await sleep(900);
+  const sidesAfterTyping = await cdp.evaluate(`(() => {
+    const shape = window.__PDF_EDITOR__.objects.objects.find((object) => object.type === 'shape');
+    return shape ? shape.payload.sides : null;
+  })()`);
+  console.log('  набор «12»:', JSON.stringify(typedSides), '→ sides:', sidesAfterTyping);
+  check('поле найдено', typedSides.ok === true);
   check(
-    'путь перестроился под новое число углов',
-    (afterSides.path?.match(/Q/g) ?? []).length === 6,
-    String((afterSides.path?.match(/Q/g) ?? []).length),
+    'первая цифра не заменяется минимумом',
+    typedSides.afterOne === '1',
+    JSON.stringify(typedSides),
+  );
+  check('«12» набирается целиком', typedSides.afterTwo === '12', JSON.stringify(typedSides));
+  check('после потери фокуса в объекте 12 углов', sidesAfterTyping === 12, String(sidesAfterTyping));
+
+  // «23» — тоже валидное число и не превращается в 3.
+  const typed23 = await cdp.evaluate(`(() => {
+    const aside = Array.from(document.querySelectorAll('aside')).pop();
+    const field = Array.from(aside.querySelectorAll('input[type=number]')).find((input) => {
+      const label = input.closest('label');
+      return label && (label.textContent || '').includes('Количество углов');
+    });
+    if (!field) return { ok: false };
+    field.focus();
+    field.value = '2';
+    field.dispatchEvent(new Event('input', { bubbles: true }));
+    field.value = '23';
+    field.dispatchEvent(new Event('input', { bubbles: true }));
+    field.blur();
+    return { ok: true, afterBlur: field.value };
+  })()`);
+  await sleep(900);
+  const sidesAfter23 = await cdp.evaluate(`(() => {
+    const shape = window.__PDF_EDITOR__.objects.objects.find((object) => object.type === 'shape');
+    return shape ? shape.payload.sides : null;
+  })()`);
+  console.log('  набор «23»:', JSON.stringify(typed23), '→ sides:', sidesAfter23);
+  check('«23» сохраняется как 23', sidesAfter23 === 23 && typed23.afterBlur === '23', `${sidesAfter23} / ${typed23.afterBlur}`);
+
+  // Невалидное «2» всё же приводится к минимуму при потере фокуса.
+  await cdp.evaluate(`(() => {
+    const aside = Array.from(document.querySelectorAll('aside')).pop();
+    const field = Array.from(aside.querySelectorAll('input[type=number]')).find((input) => {
+      const label = input.closest('label');
+      return label && (label.textContent || '').includes('Количество углов');
+    });
+    if (!field) return 'нет поля';
+    field.focus();
+    field.value = '2';
+    field.dispatchEvent(new Event('input', { bubbles: true }));
+    field.blur();
+    return 'ok';
+  })()`);
+  await sleep(900);
+  const afterTwo = await cdp.evaluate(`(() => {
+    const aside = Array.from(document.querySelectorAll('aside')).pop();
+    const field = Array.from(aside.querySelectorAll('input[type=number]')).find((input) => {
+      const label = input.closest('label');
+      return label && (label.textContent || '').includes('Количество углов');
+    });
+    const shape = window.__PDF_EDITOR__.objects.objects.find((object) => object.type === 'shape');
+    return { sides: shape ? shape.payload.sides : null, display: field ? field.value : null };
+  })()`);
+  console.log('  набор «2»: →', JSON.stringify(afterTwo));
+  check(
+    '«2» после потери фокуса становится 3',
+    afterTwo.sides === 3 && afterTwo.display === '3',
+    JSON.stringify(afterTwo),
   );
 
   console.log('\n3. Названия слоёв');

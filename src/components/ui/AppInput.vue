@@ -1,6 +1,6 @@
 <script setup lang="ts">
 /** Текстовое или числовое поле ввода с подписью и подсказкой. */
-import { computed } from 'vue';
+import { computed, ref } from 'vue';
 
 const model = defineModel<string | number | null>({ default: '' });
 
@@ -38,29 +38,62 @@ const inputClass = computed(() => [
   props.monospace ? 'font-mono' : '',
 ]);
 
+/**
+ * Пока поле в фокусе, показываем ровно то, что набрал пользователь.
+ *
+ * Без этого нельзя было набрать, например, «12» в поле с `min="3"`: после
+ * первой цифры значение подставлялось к минимуму и получалось «3». Проверка
+ * min/max теперь выполняется при потере фокуса и по Enter.
+ */
+const draft = ref<string | null>(null);
+const displayValue = computed(() =>
+  draft.value !== null ? draft.value : (model.value ?? ''),
+);
+
+/** Приводит число к допустимым границам (min/max). */
+function clampNumber(value: number): number {
+  let result = value;
+  if (!Number.isFinite(result)) result = props.min ?? 0;
+  if (props.min !== undefined) result = Math.max(props.min, result);
+  if (props.max !== undefined) result = Math.min(props.max, result);
+  return result;
+}
+
+function onFocus(): void {
+  draft.value = String(model.value ?? '');
+}
+
 function onInput(event: Event): void {
   const target = event.target as HTMLInputElement;
+  draft.value = target.value;
   if (props.type === 'number') {
-    const value = target.value === '' ? null : Number(target.value);
-    model.value = value === null || Number.isNaN(value) ? null : value;
+    const parsed = target.value === '' ? null : Number(target.value);
+    model.value = parsed === null || Number.isNaN(parsed) ? null : parsed;
     return;
   }
   model.value = target.value;
 }
 
-function onBlur(): void {
+/** Завершение ввода: фиксируем окончательное (ограниченное) значение. */
+function commitValue(): void {
   if (props.type === 'number') {
-    // Пустое поле не должно превращать числовое свойство в null.
-    if (model.value === null || (typeof model.value === 'number' && Number.isNaN(model.value))) {
-      model.value = props.min ?? 0;
-    } else if (typeof model.value === 'number') {
-      let value = model.value;
-      if (props.min !== undefined) value = Math.max(props.min, value);
-      if (props.max !== undefined) value = Math.min(props.max, value);
-      model.value = value;
-    }
+    const raw = draft.value !== null ? Number(draft.value) : model.value;
+    const numeric = typeof raw === 'number' && Number.isFinite(raw) ? raw : (props.min ?? 0);
+    model.value = clampNumber(numeric);
+  } else if (draft.value !== null) {
+    model.value = draft.value;
   }
+  draft.value = null;
+}
+
+function onBlur(): void {
+  commitValue();
   emit('blur');
+}
+
+function onEnter(): void {
+  commitValue();
+  emit('enter');
 }
 </script>
 
@@ -75,7 +108,7 @@ function onBlur(): void {
     <span class="relative flex items-center">
       <input
         :type="type"
-        :value="model ?? ''"
+        :value="displayValue"
         :placeholder="placeholder"
         :min="min"
         :max="max"
@@ -83,9 +116,10 @@ function onBlur(): void {
         :disabled="disabled"
         :readonly="readonly"
         :class="inputClass"
+        @focus="onFocus"
         @input="onInput"
         @blur="onBlur"
-        @keydown.enter="emit('enter')"
+        @keydown.enter="onEnter"
       />
       <span
         v-if="suffix"

@@ -218,6 +218,92 @@ try {
   console.log('  после кнопки «Повторить»:', JSON.stringify(afterRedoButton));
   check('кнопка «Повторить» возвращает шаг', afterRedoButton.depth === 3 && afterRedoButton.fill === '#16a34a', JSON.stringify(afterRedoButton));
 
+  console.log('\n6. Переименование — один шаг истории');
+  await cdp.evaluate(`(async () => {
+    const app = window.__PDF_EDITOR__;
+    const factory = await import('/src/services/objectFactory.ts');
+    app.objects.clearAll(false);
+    app.history.clear();
+    const shape = factory.createShapeObject('rect', {
+      page: 0, x: 300, y: 90, width: 160, height: 80,
+      defaults: { stroke: '#dc2626', strokeWidth: 2, fill: null },
+    });
+    app.objects.add([shape], 'Добавление фигуры');
+    app.objects.select([shape.id]);
+    app.ui.setRightTab('properties');
+    document.activeElement?.blur?.();
+    return 'ok';
+  })()`);
+  await sleep(1200);
+  await cdp.evaluate(`(() => {
+    const aside = Array.from(document.querySelectorAll('aside')).pop();
+    const header = Array.from(aside.querySelectorAll('button')).find((button) =>
+      (button.textContent || '').includes('Служебное'),
+    );
+    if (header) header.click();
+    return 'ok';
+  })()`);
+  await sleep(700);
+
+  /** Печатает имя по буквам, как настоящий пользователь. */
+  async function typeName(text) {
+    return cdp.evaluate(`(() => {
+      const aside = Array.from(document.querySelectorAll('aside')).pop();
+      const field = Array.from(aside.querySelectorAll('input')).find((input) => {
+        const label = input.closest('label');
+        return label && (label.textContent || '').includes('Имя объекта');
+      });
+      if (!field) return { ok: false };
+      field.focus();
+      let typed = '';
+      for (const char of ${JSON.stringify(text)}) {
+        typed += char;
+        field.value = typed;
+        field.dispatchEvent(new Event('input', { bubbles: true }));
+      }
+      field.blur();
+      return { ok: true, typed, displayed: field.value };
+    })()`);
+  }
+
+  const typing = await typeName('Схема зала');
+  await sleep(1000);
+  const afterTyping = await cdp.evaluate(`(() => {
+    const app = window.__PDF_EDITOR__;
+    const shape = app.objects.objects[0];
+    return {
+      name: shape ? shape.name : null,
+      depth: app.history.past.length,
+      labels: app.history.past.map((entry) => entry.label),
+    };
+  })()`);
+  console.log('  набрано:', JSON.stringify(typing), '→', JSON.stringify(afterTyping));
+  check('поле найдено и текст набран', typing.ok === true && typing.typed === 'Схема зала');
+  check('имя сохранилось целиком', afterTyping.name === 'Схема зала', String(afterTyping.name));
+  check(
+    'десять букв дали один шаг истории',
+    afterTyping.depth === 2 && afterTyping.labels.filter((label) => label === 'Переименование').length === 1,
+    JSON.stringify(afterTyping),
+  );
+
+  await cdp.evaluate(`(() => {
+    const app = window.__PDF_EDITOR__;
+    app.objects.undo();
+    return 'ok';
+  })()`);
+  await sleep(900);
+  const afterRenameUndo = await cdp.evaluate(`(() => {
+    const shape = window.__PDF_EDITOR__.objects.objects[0];
+    return { name: shape ? shape.name : null, depth: window.__PDF_EDITOR__.history.past.length };
+  })()`);
+  console.log('  после одной отмены:', JSON.stringify(afterRenameUndo));
+  check(
+    'одна отмена возвращает имя до правки',
+    (afterRenameUndo.name === undefined || afterRenameUndo.name === null || afterRenameUndo.name === '') &&
+      afterRenameUndo.depth === 1,
+    JSON.stringify(afterRenameUndo),
+  );
+
   await cdp.screenshot(resolvePath(TMP, 'history-panel.png'));
   console.log('\nОшибки консоли:', cdp.errors.length ? cdp.errors.join('\n') : '(нет)');
 } catch (error) {

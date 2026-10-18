@@ -140,6 +140,39 @@ const defaultObjectName = computed(() => {
   return obj ? layerBaseName(obj) : '';
 });
 
+/**
+ * Переименование: один шаг истории на всю правку.
+ *
+ * Иначе каждая буква давала свой шаг («Переименование» × 20), и отмена
+ * возвращала по одной букве. Снимок состояния делаем один раз — перед первой
+ * правкой, а сами правки идут без записи в историю.
+ */
+let renameActive = false;
+
+function onRenameInput(value: string): void {
+  const obj = single.value;
+  if (!obj) return;
+  if (!renameActive) {
+    objects.commit('Переименование');
+    renameActive = true;
+  }
+  patch(obj.id, { name: value });
+}
+
+function onRenameBlur(): void {
+  const obj = single.value;
+  if (renameActive && obj) patch(obj.id, { name: String(obj.name ?? '').trim() });
+  renameActive = false;
+}
+
+// Смена выделенного объекта завершает правку имени.
+watch(
+  () => objects.selectedIds.join('|'),
+  () => {
+    renameActive = false;
+  },
+);
+
 /** Дополнительная строка под заголовком: текст объекта, название штампа. */
 const objectSubtitle = computed(() => {
   const obj = single.value;
@@ -936,7 +969,8 @@ void scaleStrokes;
           size="sm"
           :model-value="single?.name ?? ''"
           :placeholder="defaultObjectName"
-          @update:model-value="single && objects.rename(single.id, String($event).trim())"
+          @update:model-value="onRenameInput(String($event))"
+          @blur="onRenameBlur"
         />
         <p class="text-[11px] text-slate-400">
           Имя показывается в панели «Слои» и в заголовке свойств. Пустое поле —

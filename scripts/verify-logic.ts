@@ -660,6 +660,29 @@ check(
   ),
 );
 
+// Многоугольник должен занимать всю рамку, иначе треугольник «висит» сверху.
+const triangleBox = polygonVertices(120, 90, 3);
+check(
+  'треугольник занимает всю высоту рамки',
+  Math.abs(Math.min(...triangleBox.map((point) => point.y))) < 0.01 &&
+    Math.abs(Math.max(...triangleBox.map((point) => point.y)) - 90) < 0.01,
+  JSON.stringify(triangleBox.map((point) => Number(point.y.toFixed(2)))),
+);
+check(
+  'треугольник занимает всю ширину рамки',
+  Math.abs(Math.min(...triangleBox.map((point) => point.x))) < 0.01 &&
+    Math.abs(Math.max(...triangleBox.map((point) => point.x)) - 120) < 0.01,
+  JSON.stringify(triangleBox.map((point) => Number(point.x.toFixed(2)))),
+);
+const hexagonBox = polygonVertices(100, 80, 6);
+check(
+  'шестиугольник тоже заполняет рамку',
+  Math.abs(Math.min(...hexagonBox.map((point) => point.y))) < 0.01 &&
+    Math.abs(Math.max(...hexagonBox.map((point) => point.y)) - 80) < 0.01 &&
+    Math.abs(Math.max(...hexagonBox.map((point) => point.x)) - 100) < 0.01,
+  JSON.stringify(hexagonBox.map((point) => Number(point.x.toFixed(2)))),
+);
+
 const plainPolygon = polygonPath(100, 80, 6, 0);
 check('путь без скругления начинается с M', plainPolygon.startsWith('M '));
 check('путь без скругления замыкается', plainPolygon.trim().endsWith('Z'));

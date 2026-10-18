@@ -20,6 +20,7 @@ import { useSettingsStore } from '@/stores/settings';
 import type { Point } from '@/utils/geometry';
 import { normalizeRect, rectFromPoints } from '@/utils/geometry';
 import { ROTATE_CURSOR } from '@/utils/cursors';
+import { normalizeSides, polygonPath } from '@/utils/shapePath';
 import { paintStroke } from '@/services/strokeService';
 
 /** Публичный интерфейс сцены (все узлы — реактивные ссылки). */
@@ -297,6 +298,14 @@ export function useKonvaStage(containerRef: Ref<HTMLDivElement | null>): KonvaSt
             Math.PI * 2,
           );
           ctx.stroke();
+        } else if (tool === 'triangle' || tool === 'polygon') {
+          // Контур черновика совпадает с будущей фигурой, а не с рамкой.
+          const sides = tool === 'triangle' ? 3 : normalizeSides(editor.toolOptions.shape.sides);
+          const path = polygonPath(rect.width, rect.height, sides, editor.toolOptions.shape.cornerRadius);
+          ctx.save();
+          ctx.translate(rect.x, rect.y);
+          ctx.stroke(new Path2D(path));
+          ctx.restore();
         } else {
           ctx.strokeRect(rect.x, rect.y, rect.width, rect.height);
         }

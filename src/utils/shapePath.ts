@@ -31,8 +31,12 @@ export function normalizeSides(sides: number | undefined | null): number {
 /**
  * Вершины правильного многоугольника, вписанного в рамку `width × height`.
  *
- * Первая вершина — сверху по центру, дальше по часовой стрелке. Радиусы по
- * осям разные, поэтому многоугольник растягивается вместе с рамкой объекта.
+ * Многоугольник **заполняет рамку целиком**: берём единичную окружность,
+ * находим её собственные границы и растягиваем до размеров объекта. Без этого
+ * треугольник занимал бы только 75 % высоты, и низ рамки оставался пустым —
+ * выглядело так, будто фигура «не влезла» в свои размеры.
+ *
+ * Первая вершина — сверху по центру, дальше по часовой стрелке.
  * `flipY` переводит «y вниз» (холст) в «y вверх» (система PDF).
  */
 export function polygonVertices(
@@ -42,17 +46,25 @@ export function polygonVertices(
   flipY = false,
 ): PathPoint[] {
   const count = normalizeSides(sides);
-  const cx = width / 2;
-  const cy = height / 2;
-  const rx = width / 2;
-  const ry = height / 2;
-  const points: PathPoint[] = [];
+  const raw: { x: number; y: number }[] = [];
   for (let index = 0; index < count; index += 1) {
     const angle = -Math.PI / 2 + (index * 2 * Math.PI) / count;
-    const y = cy + ry * Math.sin(angle);
-    points.push({ x: cx + rx * Math.cos(angle), y: flipY ? height - y : y });
+    raw.push({ x: Math.cos(angle), y: Math.sin(angle) });
   }
-  return points;
+  const xs = raw.map((point) => point.x);
+  const ys = raw.map((point) => point.y);
+  const minX = Math.min(...xs);
+  const maxX = Math.max(...xs);
+  const minY = Math.min(...ys);
+  const maxY = Math.max(...ys);
+  const spanX = maxX - minX || 1;
+  const spanY = maxY - minY || 1;
+
+  return raw.map((point) => {
+    const x = ((point.x - minX) / spanX) * width;
+    const y = ((point.y - minY) / spanY) * height;
+    return { x, y: flipY ? height - y : y };
+  });
 }
 
 /**
