@@ -37,6 +37,13 @@ const objects = useObjectsStore();
 const field = ref<HTMLTextAreaElement | null>(null);
 /** Один шаг истории на всю правку, а не на каждый символ. */
 let editActive = false;
+/**
+ * Только что открыли правку: браузер сразу после клика может перевести фокус
+ * на холст, и это не повод закрывать ввод. Позднее смещение фокуса — уже
+ * осознанный уход из редактора.
+ */
+let justStarted = false;
+let startTimer: number | null = null;
 
 const object = computed(() => {
   const id = editor.editingTextId;
@@ -106,7 +113,14 @@ watch(
   () => object.value?.id ?? null,
   (id) => {
     editActive = false;
-    if (id) void focusField();
+    if (!id) return;
+    justStarted = true;
+    if (startTimer !== null) window.clearTimeout(startTimer);
+    startTimer = window.setTimeout(() => {
+      justStarted = false;
+      startTimer = null;
+    }, 400);
+    void focusField();
   },
   { immediate: true },
 );
@@ -140,16 +154,34 @@ function onInput(): void {
   objects.patchSilent(obj.id, { payload: { text }, width, height });
 }
 
+/** Удаляет текст, в котором нет символов (пробелы и переводы строк не считаются). */
+function removeIfBlank(id: string): void {
+  const obj = objects.byId(id);
+  if (!obj || obj.type !== 'text') return;
+  if ((obj.payload.text ?? '').trim().length > 0) return;
+  objects.remove([id], 'Удаление пустого текста');
+}
+
 function finish(): void {
-  const obj = object.value;
-  const id = obj?.id ?? null;
-  // Пустой текст на холсте не нужен: если ничего не ввели или всё стёрли,
-  // объект удаляется.
-  const empty = Boolean(obj) && (obj?.payload.text ?? '').trim().length === 0;
+  const id = object.value?.id ?? null;
   editActive = false;
   editor.stopTextEditing();
-  if (empty && id) objects.remove([id], 'Удаление пустого текста');
+  if (id) removeIfBlank(id);
 }
+
+/**
+ * Любой способ выйти из правки (Esc, клик по холсту, смена выделения,
+ * переключение инструмента) обязан убрать пустой объект. Раньше удаление жило
+ * только в `finish`, поэтому пустой текст оставался в «Слоях».
+ */
+watch(
+  () => editor.editingTextId,
+  (id, previous) => {
+    if (!previous || previous === id) return;
+    editActive = false;
+    removeIfBlank(previous);
+  },
+);
 
 /**
  * Потеря фокуса.
@@ -167,10 +199,15 @@ function onBlur(event: FocusEvent): void {
     finish();
     return;
   }
-  // Возвращаем фокус обратно, чтобы можно было продолжать печатать.
-  window.setTimeout(() => {
-    if (editor.editingTextId) field.value?.focus({ preventScroll: true });
-  }, 0);
+  if (justStarted) {
+    // Фокус «прыгнул» сразу после клика — возвращаем его в поле.
+    window.setTimeout(() => {
+      if (editor.editingTextId) field.value?.focus({ preventScroll: true });
+    }, 0);
+    return;
+  }
+  // Пользователь ушёл с холста — завершаем правку (пустой текст удалится).
+  finish();
 }
 
 function onKeydown(event: KeyboardEvent): void {

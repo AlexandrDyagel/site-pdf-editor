@@ -339,6 +339,65 @@ try {
     );
   }
 
+  console.log('\n9. Пустой текст не попадает в «Слои»');
+  /** Клик инструментом «Текст», ввод `value`, затем уход на холст. */
+  async function createTextAndLeave(value, point) {
+    await cdp.evaluate(`(() => {
+      const app = window.__PDF_EDITOR__;
+      app.objects.clearAll(false);
+      app.editor.setTool('text');
+      app.ui.setRightTab('layers');
+      document.activeElement?.blur?.();
+      return 'ok';
+    })()`);
+    await sleep(600);
+    await clickAt(await screenPoint(point.x, point.y));
+    if (value) {
+      await cdp.send('Input.insertText', { text: value });
+      await sleep(500);
+    }
+    // Уходим на холст инструментом «Выбор» — это и есть «клик мимо».
+    await cdp.evaluate(`window.__PDF_EDITOR__.editor.setTool('select'); 'ok'`);
+    await sleep(500);
+    await clickAt(await screenPoint(point.x + 220, point.y + 160));
+    await sleep(600);
+    // Открываем «Слои», чтобы проверить, что список совпадает с объектами.
+    await cdp.evaluate(`window.__PDF_EDITOR__.ui.setRightTab('layers'); 'ok'`);
+    await sleep(700);
+    return cdp.evaluate(`(() => {
+      const app = window.__PDF_EDITOR__;
+      return {
+        objects: app.objects.objects.map((object) => ({
+          type: object.type,
+          text: object.payload && 'text' in object.payload ? object.payload.text : null,
+        })),
+        layers: Array.from(document.querySelectorAll('[data-layer-label]')).map((el) => el.textContent.trim()),
+        editing: app.editor.editingTextId,
+      };
+    })()`);
+  }
+
+  const blankCreated = await createTextAndLeave('', { x: 300, y: 120 });
+  console.log('  пустой текст:', JSON.stringify(blankCreated));
+  check('пустой текст не остался на холсте', blankCreated.objects.length === 0, JSON.stringify(blankCreated.objects));
+  check('пустой текст не попал в «Слои»', blankCreated.layers.length === 0, JSON.stringify(blankCreated.layers));
+
+  const spacesOnly = await createTextAndLeave('   ', { x: 300, y: 120 });
+  console.log('  только пробелы:', JSON.stringify(spacesOnly));
+  check(
+    'текст из одних пробелов считается пустым',
+    spacesOnly.objects.length === 0 && spacesOnly.layers.length === 0,
+    JSON.stringify(spacesOnly),
+  );
+
+  const realText = await createTextAndLeave('Нормальный текст', { x: 300, y: 120 });
+  console.log('  настоящий текст:', JSON.stringify(realText));
+  check(
+    'текст с содержимым остаётся',
+    realText.objects.length === 1 && realText.layers.length === 1,
+    JSON.stringify(realText),
+  );
+
   await cdp.screenshot(resolvePath(TMP, 'text-inline.png'));
   console.log('\nОшибки консоли:', cdp.errors.length ? cdp.errors.join('\n') : '(нет)');
 } catch (error) {
