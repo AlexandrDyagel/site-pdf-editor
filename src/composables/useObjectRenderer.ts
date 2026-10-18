@@ -367,8 +367,10 @@ export function useObjectRenderer(deps: {
       selected.length > 0 &&
       selected.every((obj) => ['image', 'stamp', 'signature'].includes(obj.type));
     tr.keepRatio(keepRatio);
-    // Ручки трансформации не должны перехватывать события инструментов рисования.
-    tr.listening(editor.tool === 'select' && !editor.viewOnly);
+    // Ручки трансформации доступны при любом инструменте: сразу после создания
+    // фигуры или текста можно растянуть/повернуть объект, не переключаясь на
+    // «Выбор». Нажатия на ручки не запускают рисование (см. `isStageChrome`).
+    tr.listening(!editor.viewOnly);
     tr.forceUpdate();
   }
 

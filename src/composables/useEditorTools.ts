@@ -343,6 +343,11 @@ export function useEditorTools(deps: {
   /* ======================== Обработчики ======================== */
 
   function onPointerDown(event: Konva.KonvaEventObject<PointerEvent>): void {
+    // Ручки трансформера работают при любом инструменте (растянуть/повернуть
+    // выделенный объект, не переключаясь на «Выбор»). Их нажатия не должны
+    // запускать рисование.
+    if (isStageChrome(event.target)) return;
+
     const point = pointerPoint(event);
     editor.cursorPosition = point;
     movedDuringGesture = false;

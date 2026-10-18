@@ -37,8 +37,9 @@
     "check:drop-toast": "node scripts/make-test-pdf.mjs && node scripts/check-drop-toast.mjs",
     "check:export-pages": "node scripts/make-test-pdf.mjs && node scripts/check-export-pages.mjs",
     "check:text-inline": "node scripts/make-test-pdf.mjs && node scripts/check-text-inline.mjs",
+    "check:transform": "node scripts/make-test-pdf.mjs && node scripts/check-transform-any-tool.mjs",
     "check:fonts": "node scripts/check-font-subsets.mjs",
-    "check:all": "pnpm typecheck && pnpm verify && pnpm check:components && pnpm check:workflow && pnpm check:interaction && pnpm check:corrector && pnpm check:rotation && pnpm check:user-font && pnpm check:font-ui && pnpm check:layout && pnpm check:tooltips && pnpm check:hotkeys && pnpm check:canvas-tools && pnpm check:layer-order && pnpm check:shape-styles && pnpm check:shapes-extra && pnpm check:history && pnpm check:drop-toast && pnpm check:export-pages && pnpm check:text-inline"
+    "check:all": "pnpm typecheck && pnpm verify && pnpm check:components && pnpm check:workflow && pnpm check:interaction && pnpm check:corrector && pnpm check:rotation && pnpm check:user-font && pnpm check:font-ui && pnpm check:layout && pnpm check:tooltips && pnpm check:hotkeys && pnpm check:canvas-tools && pnpm check:layer-order && pnpm check:shape-styles && pnpm check:shapes-extra && pnpm check:history && pnpm check:drop-toast && pnpm check:export-pages && pnpm check:text-inline && pnpm check:transform"
   },
   "pnpm": {
     "onlyBuiltDependencies": ["esbuild"]
