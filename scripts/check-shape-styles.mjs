@@ -445,6 +445,126 @@ try {
     );
   }
 
+  console.log('\n5. Пунктир у замкнутых фигур — точки, а не риски');
+  const DASHED = {
+    rect: { x: 100, y: 60, width: 160, height: 70 },
+    ellipse: { x: 320, y: 60, width: 160, height: 70 },
+    triangle: { x: 100, y: 170, width: 160, height: 70 },
+    polygon: { x: 320, y: 170, width: 160, height: 70 },
+    line: { x: 100, y: 290, width: 160, height: 4 },
+  };
+
+  await cdp.evaluate(`(async () => {
+    const app = window.__PDF_EDITOR__;
+    const factory = await import('/src/services/objectFactory.ts');
+    app.objects.clearAll(false);
+    const make = (kind, box, extra = {}) => factory.createShapeObject(kind, {
+      page: 0,
+      x: box.x,
+      y: box.y,
+      width: box.width,
+      height: box.height,
+      defaults: { stroke: '#111827', strokeWidth: 4, fill: null },
+      dash: [1, 6],
+      ...extra,
+    });
+    app.objects.add([
+      make('rect', ${JSON.stringify(DASHED.rect)}),
+      make('ellipse', ${JSON.stringify(DASHED.ellipse)}),
+      make('triangle', ${JSON.stringify(DASHED.triangle)}),
+      make('polygon', ${JSON.stringify(DASHED.polygon)}, { sides: 6 }),
+      make('line', ${JSON.stringify(DASHED.line)}, { points: [0, 0.5, 1, 0.5] }),
+    ], 'тест');
+    app.objects.select([]);
+    return 'ok';
+  })()`);
+  await sleep(1400);
+
+  /**
+   * Самый длинный «штрих» вдоль верхней кромки фигуры.
+   * Точка с круглым концом шире риски: у риски длина ≈ толщина штриха по
+   * вертикали, а по горизонтали всего ~1 pt.
+   */
+  async function longestDotAlongTop(box) {
+    return cdp.evaluate(`(() => {
+      const app = window.__PDF_EDITOR__;
+      const ctx = document.querySelectorAll('canvas')[1].getContext('2d');
+      const zoom = app.editor.zoom;
+      const left = Math.round(app.editor.pan.x + ${box.x} * zoom);
+      const right = Math.round(app.editor.pan.x + (${box.x} + ${box.width}) * zoom);
+      const width = right - left;
+      const top = Math.round(app.editor.pan.y + ${box.y} * zoom);
+      let best = 0;
+      for (let offset = -2; offset <= 16; offset += 1) {
+        const data = ctx.getImageData(left, top + offset, width, 1).data;
+        let run = 0;
+        for (let x = 0; x < width; x += 1) {
+          const index = x * 4;
+          const ink = data[index + 3] > 25;
+          if (ink) {
+            run += 1;
+            if (run > best) best = run;
+          } else {
+            run = 0;
+          }
+        }
+      }
+      return best;
+    })()`);
+  }
+
+  const closedDotLengths = {};
+  for (const [key, box] of Object.entries(DASHED)) {
+    closedDotLengths[key] = await longestDotAlongTop(box);
+  }
+  console.log('  длина самой длинной точки (px):', JSON.stringify(closedDotLengths));
+  await cdp.screenshot(resolvePath(TMP, 'dashed-shapes.png'));
+  const lineDots = closedDotLengths.line;
+  check('у линии пунктир — точки', lineDots >= 5, String(lineDots));
+  for (const key of ['rect', 'ellipse', 'triangle', 'polygon']) {
+    check(
+      `у «${key}» пунктир — тоже точки (${closedDotLengths[key]} px против ${lineDots} px у линии)`,
+      closedDotLengths[key] >= 5 && closedDotLengths[key] >= lineDots * 0.6,
+      JSON.stringify(closedDotLengths),
+    );
+  }
+
+  // В PDF у замкнутых фигур тоже круглые концы штрихов (оператор «1 J»).
+  const dashedExport = await cdp.evaluate(`(async () => {
+    const app = window.__PDF_EDITOR__;
+    app.exporter.setFormat('pdf');
+    const result = await app.exporter.run({ download: false });
+    if (!result.ok) return { ok: false, error: result.error };
+    const bytes = new Uint8Array(await result.blob.arrayBuffer());
+    let binary = '';
+    const chunk = 0x8000;
+    for (let i = 0; i < bytes.length; i += chunk) binary += String.fromCharCode.apply(null, bytes.subarray(i, i + chunk));
+    return { ok: true, b64: btoa(binary) };
+  })()`);
+  if (dashedExport.ok) {
+    const doc = await PDFDocument.load(Buffer.from(dashedExport.b64, 'base64'));
+    const page = doc.getPage(0);
+    const streams = [];
+    const walk = (ref) => {
+      const value = ref && ref.constructor?.name === 'PDFRef' ? doc.context.lookup(ref) : ref;
+      if (value instanceof PDFRawStream) {
+        try {
+          streams.push(zlib.inflateSync(Buffer.from(value.contents)).toString('latin1'));
+        } catch {
+          streams.push(Buffer.from(value.contents).toString('latin1'));
+        }
+      } else if (value instanceof PDFArray) {
+        for (let i = 0; i < value.size(); i += 1) walk(value.get(i));
+      }
+    };
+    walk(page.node.get(PDFName.of('Contents')));
+    const roundCaps = (streams.join('\n').match(/^1 J$/gm) ?? []).length;
+    console.log(`  круглых концов штрихов в PDF: ${roundCaps}`);
+    check('в PDF у фигур круглые концы штрихов', roundCaps >= 5, `найдено ${roundCaps}`);
+  } else {
+    check('экспорт PDF для проверки пунктира', false, dashedExport.error ?? '');
+  }
+
   console.log('\nОшибки консоли:', cdp.errors.length ? cdp.errors.join('\n') : '(нет)');
 } catch (error) {
   failed += 1;

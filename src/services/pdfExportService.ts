@@ -404,6 +404,8 @@ function drawShapeObject(
       borderWidth: hasStroke ? payload.strokeWidth : 0,
       borderOpacity: opacity,
       borderDashArray: hasStroke ? dash : undefined,
+      // Круглые концы штрихов — чтобы «Пунктир» был точками, как у линии.
+      borderLineCap: LineCapStyle.Round,
     });
     return;
   }
@@ -422,6 +424,8 @@ function drawShapeObject(
       borderWidth: hasStroke ? payload.strokeWidth : 0,
       borderOpacity: opacity,
       borderDashArray: hasStroke ? dash : undefined,
+      // Круглые концы штрихов — чтобы «Пунктир» был точками, как у линии.
+      borderLineCap: LineCapStyle.Round,
     });
     return;
   }
@@ -440,6 +444,8 @@ function drawShapeObject(
       borderWidth: hasStroke ? payload.strokeWidth : 0,
       borderOpacity: opacity,
       borderDashArray: hasStroke ? dash : undefined,
+      // Круглые концы штрихов — чтобы «Пунктир» был точками, как у линии.
+      borderLineCap: LineCapStyle.Round,
     });
     return;
   }

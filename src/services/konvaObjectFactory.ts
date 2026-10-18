@@ -335,6 +335,9 @@ function buildChildren(group: Konva.Group, obj: EditorObject, options: ObjectBui
             stroke,
             strokeWidth,
             dash,
+            // Круглые концы штрихов: иначе пунктир из точек выглядел «рисками».
+            lineCap: 'round',
+            lineJoin: 'round',
             cornerRadius: payload.cornerRadius,
           }),
         );
@@ -349,6 +352,8 @@ function buildChildren(group: Konva.Group, obj: EditorObject, options: ObjectBui
             stroke,
             strokeWidth,
             dash,
+            lineCap: 'round',
+            lineJoin: 'round',
           }),
         );
       } else if (payload.kind === 'triangle' || payload.kind === 'polygon') {
@@ -364,6 +369,7 @@ function buildChildren(group: Konva.Group, obj: EditorObject, options: ObjectBui
             stroke,
             strokeWidth: effectiveWidth,
             dash,
+            lineCap: 'round',
             lineJoin: 'round',
             hitStrokeWidth: 14,
           }),
