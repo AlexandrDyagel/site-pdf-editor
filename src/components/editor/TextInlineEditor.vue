@@ -14,7 +14,7 @@ import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue';
 import { useEditorStore } from '@/stores/editor';
 import { useObjectsStore } from '@/stores/objects';
 import type { TextPayload } from '@/types';
-import { computeTextBlockLayout, textInkTop } from '@/services/textRenderService';
+import { computeTextBlockLayout, textInkCenter } from '@/services/textRenderService';
 import { measureTextWidth } from '@/utils/textLayout';
 
 /** Стиль шрифта для измерения ширины строк. */
@@ -63,7 +63,7 @@ const box = computed(() => {
   const padding = Math.max(0, data?.padding ?? 0) * zoom;
   // Каретка должна стоять на одной высоте с верхушками букв: у строки сверху
   // есть «полуотступ», и без сдвига каретка оказывалась выше текста.
-  const inkTop = data ? textInkTop(data, obj.height) * zoom : 0;
+  const inkTop = data ? textInkCenter(data, obj.height) * zoom : 0;
   return {
     left: editor.pan.x + obj.x * zoom,
     top: editor.pan.y + obj.y * zoom,

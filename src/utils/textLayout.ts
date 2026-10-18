@@ -61,12 +61,29 @@ export function cssFontString(style: Pick<LayoutFontStyle, 'italic' | 'bold' | '
  * Возвращает `null`, если браузер не умеет `actualBoundingBoxAscent`.
  */
 export function measureInkAscent(text: string, style: LayoutFontStyle): number | null {
+  const metrics = measureInkMetrics(text, style);
+  return metrics ? metrics.ascent : null;
+}
+
+/**
+ * Рамка «чернил» строки относительно базовой линии: подъём и спуск глифов.
+ * Нужна, чтобы поставить текст центром в точку клика.
+ */
+export function measureInkMetrics(
+  text: string,
+  style: LayoutFontStyle,
+): { ascent: number; descent: number } | null {
   const sample = text.length > 0 ? text : 'Н';
   if (!measureCtx) return null;
   measureCtx.font = cssFontString(style);
   const metrics = measureCtx.measureText(sample);
   const ascent = metrics.actualBoundingBoxAscent;
-  return typeof ascent === 'number' && Number.isFinite(ascent) ? ascent : null;
+  const descent = metrics.actualBoundingBoxDescent;
+  if (typeof ascent !== 'number' || !Number.isFinite(ascent)) return null;
+  return {
+    ascent,
+    descent: typeof descent === 'number' && Number.isFinite(descent) ? descent : 0,
+  };
 }
 
 /**

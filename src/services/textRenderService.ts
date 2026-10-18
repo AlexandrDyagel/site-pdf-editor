@@ -19,7 +19,7 @@ import {
   getLineHeight,
   justifyOffsets,
   layoutTextBlock,
-  measureInkAscent,
+  measureInkMetrics,
   measureTextWidth,
   verticalOffset,
   type LayoutFontStyle,
@@ -167,27 +167,30 @@ export function computeTextBlockLayout(
 }
 
 /**
- * Отступ от верхнего края объекта до верхушки букв первой строки (pt).
+ * Отступ от верхнего края объекта до **середины** букв первой строки (pt).
  *
- * Нужен в двух местах, чтобы каретка и текст совпадали:
- *   • при создании объекта точка клика становится верхом «чернил»;
- *   • оверлей ввода ставит каретку ровно на эту же высоту.
+ * Точка клика инструментом «Текст» становится центром будущего текста, а не
+ * его верхом. Этот же отступ получает оверлей ввода (`padding-top`), поэтому
+ * каретка начинается на одной высоте с текстом.
  */
-export function textInkTop(payload: TextPayload, boxHeight = 0): number {
+export function textInkCenter(payload: TextPayload, boxHeight = 0): number {
   const height = Math.max(1, boxHeight || payload.fontSize * 1.4);
   const layout = computeTextBlockLayout(payload, 100000, height);
   const padding = Math.max(0, payload.padding);
   const firstLine = (payload.text ?? '').split('\n')[0];
-  const inkAscent =
-    measureInkAscent(firstLine, {
-      fontFamily: payload.fontFamily,
-      fontSize: payload.fontSize,
-      bold: payload.bold,
-      italic: payload.italic,
-      letterSpacing: payload.letterSpacing,
-      lineHeight: payload.lineHeight,
-    }) ?? layout.ascent;
-  return padding + Math.max(0, layout.baselineInLine - inkAscent);
+  const style = {
+    fontFamily: payload.fontFamily,
+    fontSize: payload.fontSize,
+    bold: payload.bold,
+    italic: payload.italic,
+    letterSpacing: payload.letterSpacing,
+    lineHeight: payload.lineHeight,
+  };
+  const ink = measureInkMetrics(firstLine, style);
+  const ascent = ink ? ink.ascent : layout.ascent;
+  const descent = ink ? ink.descent : Math.max(0, layout.descent);
+  const inkTop = padding + Math.max(0, layout.baselineInLine - ascent);
+  return inkTop + (ascent + descent) / 2;
 }
 
 /** Итоговая ширина/высота объекта с учётом autoHeight. */

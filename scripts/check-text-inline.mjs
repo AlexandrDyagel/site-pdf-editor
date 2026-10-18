@@ -453,7 +453,7 @@ try {
     JSON.stringify(realText),
   );
 
-  console.log('\n10. Текст начинается ровно в точке клика');
+  console.log('\n10. Текст центрируется по точке клика');
   const clickPoint = { x: 300, y: 200 };
   await cdp.evaluate(`(() => {
     const app = window.__PDF_EDITOR__;
@@ -510,18 +510,22 @@ try {
     const data = ctx.getImageData(left, top, width, height).data;
     let minX = Infinity;
     let minY = Infinity;
+    let maxY = -1;
     for (let y = 0; y < height; y += 1) {
       for (let x = 0; x < width; x += 1) {
         const index = (y * width + x) * 4;
         if (data[index + 3] > 20) {
           if (x < minX) minX = x;
           if (y < minY) minY = y;
+          if (y > maxY) maxY = y;
         }
       }
     }
     return {
       inkPageX: Number(((left + minX - app.editor.pan.x) / zoom).toFixed(2)),
       inkPageY: Number(((top + minY - app.editor.pan.y) / zoom).toFixed(2)),
+      inkCenterY: Number(((top + (minY + maxY) / 2 - app.editor.pan.y) / zoom).toFixed(2)),
+      inkHeight: Number(((maxY - minY + 1) / zoom).toFixed(2)),
       objectX: Number(object.x.toFixed(2)),
       objectY: Number(object.y.toFixed(2)),
       text: object.payload.text,
@@ -530,9 +534,14 @@ try {
   console.log('  клик:', JSON.stringify(clickPoint), '→', JSON.stringify(placement));
   check('текст набран', placement.text === 'Привет', String(placement.text));
   check(
-    'верх букв совпадает с точкой клика по Y',
-    Math.abs(placement.inkPageY - clickPoint.y) <= 2.5,
-    `y чернил ${placement.inkPageY} против ${clickPoint.y}`,
+    'центр букв совпадает с точкой клика по Y',
+    Math.abs(placement.inkCenterY - clickPoint.y) <= 2.5,
+    `центр чернил ${placement.inkCenterY} против ${clickPoint.y} (высота ${placement.inkHeight})`,
+  );
+  check(
+    'точка клика выше низа текста и ниже верха',
+    placement.inkPageY < clickPoint.y && clickPoint.y < placement.inkPageY + placement.inkHeight,
+    `верх ${placement.inkPageY}, низ ${(placement.inkPageY + placement.inkHeight).toFixed(2)}`,
   );
   check(
     'начало текста совпадает с точкой клика по X',
@@ -540,9 +549,9 @@ try {
     `x чернил ${placement.inkPageX} против ${clickPoint.x}`,
   );
   check(
-    'каретка и текст на одной высоте',
-    caret !== null && Math.abs(caret.pageY - placement.inkPageY) <= 1.5,
-    `каретка ${caret?.pageY}, текст ${placement.inkPageY}`,
+    'каретка начинается в центре текста',
+    caret !== null && Math.abs(caret.pageY - placement.inkCenterY) <= 1.5,
+    `каретка ${caret?.pageY}, центр текста ${placement.inkCenterY}`,
   );
 
   await cdp.screenshot(resolvePath(TMP, 'text-inline.png'));

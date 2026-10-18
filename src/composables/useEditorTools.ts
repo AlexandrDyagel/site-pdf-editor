@@ -45,7 +45,7 @@ import {
 } from '@/services/objectFactory';
 import { ACCEPT, openFileDialog, readImageFile } from '@/services/fileService';
 import { pdfService } from '@/services/pdfService';
-import { textInkTop } from '@/services/textRenderService';
+import { textInkCenter } from '@/services/textRenderService';
 import { useEditorStore } from '@/stores/editor';
 import { useObjectsStore } from '@/stores/objects';
 import { usePdfStore } from '@/stores/pdf';
@@ -221,8 +221,8 @@ export function useEditorTools(deps: {
     // чтобы верх «чернил» первой строки совпал с точкой клика. Тот же отступ
     // использует оверлей ввода, поэтому каретка стоит на одной высоте с буквами.
     const padding = Math.max(0, draft.payload.padding);
-    const inkTop = textInkTop(draft.payload, draft.height);
-    const object = { ...draft, x: at.x - padding, y: at.y - inkTop };
+    const inkShift = textInkCenter(draft.payload, draft.height);
+    const object = { ...draft, x: at.x - padding, y: at.y - inkShift };
     addFromCanvas([object], 'Добавление текста');
     // Сразу открываем ввод с кареткой в начале текста.
     editor.startTextEditing(object.id, 0);
