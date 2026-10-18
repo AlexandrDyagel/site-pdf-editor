@@ -12,7 +12,7 @@
 
 import Konva from 'konva';
 import { onBeforeUnmount, onMounted, ref } from 'vue';
-import type { SignatureTemplate, StampTemplate, StrokePoint, TextAlign } from '@/types';
+import type { EditorObject, SignatureTemplate, StampTemplate, StrokePoint, TextAlign } from '@/types';
 import type { Point } from '@/utils/geometry';
 import { boundsOfTransforms, normalizeRect, rectFromPoints } from '@/utils/geometry';
 import {
@@ -71,6 +71,20 @@ export function useEditorTools(deps: {
   /** Элемент, на котором захвачен указатель (для рисования за пределами холста). */
   let capturedElement: HTMLElement | null = null;
   let capturedPointerId: number | null = null;
+
+  /* ======================== Действия на холсте ======================== */
+
+  /**
+   * Добавление объектов, созданных на холсте.
+   *
+   * После действия на холсте сразу показываем «Свойства» нового объекта.
+   * Выделение строки в панели «Слои» сюда не попадает — там свойства
+   * открываются двойным кликом.
+   */
+  function addFromCanvas(items: EditorObject[], label: string): void {
+    objects.add(items, label);
+    ui.setRightTab('properties');
+  }
 
   /* ======================== Захват указателя ======================== */
 
@@ -179,7 +193,7 @@ export function useEditorTools(deps: {
         letterSpacing: defaults.letterSpacing ?? 0,
       },
     });
-    objects.add([object], 'Добавление текста');
+    addFromCanvas([object], 'Добавление текста');
     editor.editingTextId = object.id;
     ui.setRightTab('properties');
     void fonts.ensureFontLoadedFor(fontId);
@@ -218,7 +232,7 @@ export function useEditorTools(deps: {
       }
     }
     if (created.length > 0) {
-      objects.add(created, 'Добавление изображения');
+      addFromCanvas(created, 'Добавление изображения');
       ui.notify.success('Изображение добавлено', `${created.length} шт.`);
     }
   }
@@ -227,7 +241,7 @@ export function useEditorTools(deps: {
   function insertLibraryImage(src: string, naturalWidth: number, naturalHeight: number, mimeType: string, at: Point): void {
     const maxWidth = editor.pageSize.width * 0.5;
     const scale = Math.min(1, maxWidth / Math.max(1, naturalWidth));
-    objects.add(
+    addFromCanvas(
       [
         createImageObject({
           page: editor.currentPage,
@@ -253,7 +267,7 @@ export function useEditorTools(deps: {
       y: at.y - template.height / 2,
       templateId: template.id,
     });
-    objects.add([object], template.kind === 'seal' ? 'Добавление печати' : 'Добавление штампа');
+    addFromCanvas([object], template.kind === 'seal' ? 'Добавление печати' : 'Добавление штампа');
   }
 
   /** Вставка подписи из библиотеки. */
@@ -272,7 +286,7 @@ export function useEditorTools(deps: {
       modelId: template.id,
       source: 'library',
     });
-    objects.add([object], 'Добавление подписи');
+    addFromCanvas([object], 'Добавление подписи');
   }
 
   /* ======================== Обработчики ======================== */
@@ -423,7 +437,7 @@ export function useEditorTools(deps: {
           eraser: stroke.tool === 'eraser',
           name: stroke.tool === 'eraser' ? 'Корректор' : 'Рисунок',
         });
-        if (drawing) objects.add([drawing], stroke.tool === 'eraser' ? 'Стирание' : 'Рисование');
+        if (drawing) addFromCanvas([drawing], stroke.tool === 'eraser' ? 'Стирание' : 'Рисование');
       }
       return;
     }
@@ -438,7 +452,7 @@ export function useEditorTools(deps: {
         if (!tiny) {
           createShapeFromDraft(draft.start, end, rect, draft.constrained);
         } else if (editor.tool === 'whiteout' && point) {
-          objects.add(
+          addFromCanvas(
             [
               createWhiteoutObject({
                 page: editor.currentPage,
@@ -477,6 +491,8 @@ export function useEditorTools(deps: {
           })
           .map((obj) => obj.id);
         objects.select(inside);
+        // Выделили рамкой на холсте — показываем свойства.
+        if (inside.length > 0) ui.setRightTab('properties');
       }
     }
   }
@@ -572,7 +588,7 @@ export function useEditorTools(deps: {
     const page = editor.currentPage;
 
     if (tool === 'whiteout') {
-      objects.add(
+      addFromCanvas(
         [
           createWhiteoutObject({
             page,
@@ -589,7 +605,7 @@ export function useEditorTools(deps: {
     }
 
     if (tool === 'highlight') {
-      objects.add(
+      addFromCanvas(
         [
           createHighlightObject({
             page,
@@ -624,7 +640,7 @@ export function useEditorTools(deps: {
         (target.x - bounds.x) / width,
         (target.y - bounds.y) / height,
       ];
-      objects.add(
+      addFromCanvas(
         [
           createShapeObject(tool, {
             page,
@@ -641,7 +657,7 @@ export function useEditorTools(deps: {
       return;
     }
 
-    objects.add(
+    addFromCanvas(
       [
         createShapeObject(tool === 'ellipse' ? 'ellipse' : 'rect', {
           page,
@@ -703,7 +719,7 @@ export function useEditorTools(deps: {
           align: 'left',
         },
       });
-      objects.add([whiteout, textObject], 'Замена текста PDF');
+      addFromCanvas([whiteout, textObject], 'Замена текста PDF');
       editor.editingTextId = textObject.id;
       ui.setRightTab('properties');
       ui.notify.info(

@@ -25,6 +25,7 @@ import { useUiStore } from '@/stores/ui';
 import { useSettingsStore } from '@/stores/settings';
 import { usePdfStore } from '@/stores/pdf';
 import { rescaleStrokesForBox, scaleStrokes } from '@/services/strokeService';
+import { layerBaseName, layerDetail, layerLabels } from '@/utils/layers';
 import { fitStampTemplate } from '@/services/stampRenderService';
 import AppSection from '@/components/ui/AppSection.vue';
 import AppInput from '@/components/ui/AppInput.vue';
@@ -115,6 +116,24 @@ const typeLabels: Record<string, string> = {
   whiteout: 'Закрашивание',
   highlight: 'Выделение',
 };
+void typeLabels;
+
+/**
+ * Заголовок объекта — так же, как в панели «Слои»: название по инструменту и
+ * номер для одинаковых («Прямоугольник 2», «Эллипс»).
+ */
+const objectTitle = computed(() => {
+  const obj = single.value;
+  if (!obj) return '';
+  const labels = layerLabels(objects.forPage(obj.page));
+  return labels.get(obj.id) ?? layerBaseName(obj);
+});
+
+/** Дополнительная строка под заголовком: текст объекта, название штампа. */
+const objectSubtitle = computed(() => {
+  const obj = single.value;
+  return obj ? layerDetail(obj) : '';
+});
 
 /* ======================== Текст ======================== */
 
@@ -397,11 +416,18 @@ void scaleStrokes;
       <!-- Заголовок -->
       <div class="flex items-center justify-between gap-2 border-b border-slate-200 px-3 py-2 dark:border-slate-800">
         <div class="min-w-0">
-          <p class="truncate text-[13px] font-medium text-slate-800 dark:text-slate-100">
-            {{ single ? typeLabels[single.type] : `${selected.length} объектов` }}
+          <p
+            class="truncate text-[13px] font-medium text-slate-800 dark:text-slate-100"
+            data-object-title
+          >
+            {{ single ? objectTitle : `${selected.length} объектов` }}
           </p>
-          <p v-if="single" class="truncate text-[11px] text-slate-400">
-            {{ single.name || single.id.slice(0, 8) }}
+          <p
+            v-if="single && objectSubtitle"
+            class="truncate text-[11px] text-slate-400"
+            data-object-subtitle
+          >
+            {{ objectSubtitle }}
           </p>
         </div>
         <div class="flex items-center gap-1">

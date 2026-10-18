@@ -76,6 +76,16 @@ async function clickButton(text) {
 }
 
 try {
+  // Ждём, пока приложение отрисует область загрузки: сразу после навигации
+  // поле файла может быть ещё не в DOM (а при HMR — пересоздаваться).
+  let inputReady = false;
+  for (let attempt = 0; attempt < 30; attempt += 1) {
+    inputReady = await cdp.evaluate(`Boolean(document.querySelector('input[type=file]'))`);
+    if (inputReady) break;
+    await sleep(400);
+  }
+  if (!inputReady) throw new Error('Поле выбора файла не появилось');
+
   await cdp.evaluate(`(() => {
     const binary = atob(${JSON.stringify(base64)});
     const bytes = new Uint8Array(binary.length);
@@ -395,6 +405,83 @@ try {
     return element ? element.textContent.trim() : '';
   })()`);
   check('единственная фигура без номера', singleLabel === 'Прямоугольник', singleLabel);
+
+  console.log('\n10. Клик и двойной клик по строке слоя при активном инструменте');
+  await cdp.evaluate(`(async () => {
+    const app = window.__PDF_EDITOR__;
+    const factory = await import('/src/services/objectFactory.ts');
+    const make = (kind, fill) => factory.createShapeObject(kind, {
+      page: 0, x: 120, y: 300, width: 160, height: 100, name: 'Фигура',
+      defaults: { stroke: fill, strokeWidth: 1, fill },
+    });
+    app.objects.clearAll(false);
+    app.objects.add([make('rect', '#dc2626'), make('rect', '#16a34a'), make('ellipse', '#2563eb')], 'тест');
+    app.objects.select([]);
+    // Активен инструмент «Прямоугольник» (панель при этом уходит на «Инструмент»).
+    app.editor.setTool('rect');
+    document.activeElement?.blur?.();
+    return 'ok';
+  })()`);
+  await sleep(900);
+  // Теперь явно открываем вкладку «Слои» и проверяем поведение кликов.
+  await cdp.evaluate(`window.__PDF_EDITOR__.ui.setRightTab('layers'); 'ok'`);
+  await sleep(900);
+
+  const rowInfo = await cdp.evaluate(`(() => {
+    const rows = Array.from(document.querySelectorAll('[data-layer-id]'));
+    const row = rows[1];
+    if (!row) return null;
+    const label = row.querySelector('[data-layer-label]');
+    const box = label.getBoundingClientRect();
+    return {
+      id: row.getAttribute('data-layer-id'),
+      label: label.textContent.trim(),
+      x: Math.round(box.left + 30),
+      y: Math.round(box.top + box.height / 2),
+    };
+  })()`);
+  console.log('  целевая строка:', JSON.stringify(rowInfo));
+  check('строка для проверки найдена', Boolean(rowInfo));
+
+  // Одиночный клик при активном инструменте — остаёмся в «Слоях».
+  await cdp.send('Input.dispatchMouseEvent', { type: 'mouseMoved', x: rowInfo.x, y: rowInfo.y, button: 'none', buttons: 0, pointerType: 'mouse' });
+  await cdp.send('Input.dispatchMouseEvent', { type: 'mousePressed', x: rowInfo.x, y: rowInfo.y, button: 'left', buttons: 1, clickCount: 1, pointerType: 'mouse' });
+  await cdp.send('Input.dispatchMouseEvent', { type: 'mouseReleased', x: rowInfo.x, y: rowInfo.y, button: 'left', buttons: 0, clickCount: 1, pointerType: 'mouse' });
+  await sleep(900);
+  const afterSingle = await cdp.evaluate(`(() => ({
+    tab: window.__PDF_EDITOR__.ui.rightTab,
+    selected: window.__PDF_EDITOR__.objects.selectedIds.length,
+    tool: window.__PDF_EDITOR__.editor.tool,
+  }))()`);
+  console.log('  после одиночного клика:', JSON.stringify(afterSingle));
+  check('одиночный клик выделил слой', afterSingle.selected === 1, JSON.stringify(afterSingle));
+  check(
+    'одиночный клик не переключает вкладку при активном инструменте',
+    afterSingle.tab === 'layers',
+    JSON.stringify(afterSingle),
+  );
+
+  // Двойной клик — открываем «Свойства» с названием слоя.
+  for (const clickCount of [1, 2]) {
+    await cdp.send('Input.dispatchMouseEvent', { type: 'mousePressed', x: rowInfo.x, y: rowInfo.y, button: 'left', buttons: 1, clickCount, pointerType: 'mouse' });
+    await cdp.send('Input.dispatchMouseEvent', { type: 'mouseReleased', x: rowInfo.x, y: rowInfo.y, button: 'left', buttons: 0, clickCount, pointerType: 'mouse' });
+    await sleep(90);
+  }
+  await sleep(1000);
+  const afterDouble = await cdp.evaluate(`(() => {
+    const title = document.querySelector('[data-object-title]');
+    return {
+      tab: window.__PDF_EDITOR__.ui.rightTab,
+      title: title ? title.textContent.trim() : null,
+    };
+  })()`);
+  console.log('  после двойного клика:', JSON.stringify(afterDouble), 'название слоя:', rowInfo.label);
+  check('двойной клик открывает «Свойства»', afterDouble.tab === 'properties', JSON.stringify(afterDouble));
+  check(
+    'заголовок в «Свойствах» совпадает с названием слоя',
+    afterDouble.title === rowInfo.label,
+    `«${afterDouble.title}» вместо «${rowInfo.label}»`,
+  );
 
   await cdp.screenshot(resolvePath(TMP, 'layers-order.png'));
 
