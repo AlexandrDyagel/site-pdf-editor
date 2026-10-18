@@ -245,10 +245,13 @@ export class StorageService {
   /** Удаление проекта. */
   async projectDelete(id: string): Promise<void> {
     const db = await this.getDb();
+    // Вместе с проектом убираем сохранённый рядом исходный PDF.
+    this.memory.delete(`project-pdf:${id}`);
     if (!db) {
       this.memory.delete(`project:${id}`);
       return;
     }
+    await db.delete(IDB.stores.assets, `project-pdf:${id}`);
     await db.delete(IDB.stores.projects, id);
   }
 

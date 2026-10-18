@@ -347,6 +347,9 @@ export const useExportStore = defineStore('export', () => {
   /** Проверка, что в библиотеке есть хотя бы один штамп. */
   const libraryEmpty = computed(() => library.items.length === 0);
 
+  /** Размер исходного PDF, уже записанного в хранилище (по id проекта). */
+  const storedPdfSize = new Map<string, number>();
+
   /**
    * Сохранение проекта в IndexedDB.
    *
@@ -357,16 +360,31 @@ export const useExportStore = defineStore('export', () => {
   async function saveProjectToStorage(): Promise<{ id: string; isNew: boolean }> {
     const previous = pdf.currentProjectId ?? pdf.fingerprint ?? null;
     const id = previous ?? `project_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
+    const original = pdf.originalBytes();
     const project = serializeProject({
       fileName: pdf.fileName || 'document.pdf',
       metadata: settings.value.metadata,
       pages: pdf.pages,
       objects: objects.objects,
       settings: settingsStore.settings,
-      originalBytes: pdf.originalBytes(),
+      originalBytes: original,
+      // PDF кладём отдельным ресурсом (ниже): JSON проекта остаётся маленьким,
+      // а при открытии документ восстанавливается вместе со страницами.
       includeOriginal: false,
     });
     await storageService.projectSave(id, project);
+    if (original && original.byteLength > 0) {
+      // Автосохранение не должно каждый раз перезаписывать десятки мегабайт:
+      // тот же PDF для того же проекта пишем один раз (размер как быстрый ключ,
+      // а при открытии другого документа меняется и id проекта).
+      if (storedPdfSize.get(id) !== original.byteLength) {
+        await storageService.assetPut(`project-pdf:${id}`, original);
+        storedPdfSize.set(id, original.byteLength);
+      }
+    } else {
+      await storageService.assetDelete(`project-pdf:${id}`);
+      storedPdfSize.delete(id);
+    }
     pdf.currentProjectId = id;
     return { id, isNew: previous === null };
   }

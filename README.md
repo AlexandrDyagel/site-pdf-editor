@@ -701,6 +701,14 @@ interface EditorObject {
 
 - `exporter.saveProject()` (`composables/useExport.ts`) → `exportStore.saveProjectToStorage()`
   → `serializeProject()` → `storageService.projectSave(id, project)`;
+- **исходный PDF хранится отдельным ресурсом** `project-pdf:<id>`
+  (`storageService.assetPut`, двоичные данные без JSON-преобразования): JSON
+  проекта остаётся маленьким, а при открытии страницы документа восстанавливаются
+  из этих байтов (`pdf.loadFromProject`). Раньше PDF в проект не попадал
+  (`includeOriginal: false`), и после возобновления был белый холст с объектами
+  поверх. Автосохранение не перезаписывает PDF каждый раз — размер уже
+  записанного файла запоминается в `storedPdfSize`, а при удалении проекта
+  ресурс тоже удаляется;
 - идентификатор: `pdf.currentProjectId` (если документ открыт из проекта) →
   `pdf.fingerprint` (отпечаток исходного PDF) → новый `project_…`;
 - `currentProjectId` сбрасывается при открытии другого файла, создании пустого
@@ -710,9 +718,9 @@ interface EditorObject {
   (`watch` на маршрут в `StartView.vue`), кнопка «Все» открывает окно «Проекты»
   с удалением и списком целиком.
 
-Проверка: `pnpm check:projects` (14 проверок: сохранение кнопкой, запись в IndexedDB,
+Проверка: `pnpm check:projects` (21 проверка: сохранение кнопкой, запись в IndexedDB,
 появление на главной, открытие обратно с объектами, повторное сохранение не
-создаёт дубль).
+создаёт дубль, возобновление после перезагрузки страницы — PDF и объекты на месте).
 
 ## Экспорт PDF: конвейер
 

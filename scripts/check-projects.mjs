@@ -164,6 +164,60 @@ try {
   console.log('  проектов после второго сохранения:', again.length);
   check('второго проекта не появилось', again.length === 1, String(again.length));
 
+  console.log('\n5. Возобновление после перезагрузки страницы');
+  // PDF проекта хранится отдельным ресурсом — проверяем, что он на месте.
+  const assetSize = await cdp.evaluate(`(async () => {
+    const { storageService } = await import('/src/services/storageService.ts');
+    const list = await storageService.projectList();
+    const bytes = await storageService.assetGet('project-pdf:' + list[0].id);
+    return bytes ? bytes.byteLength : 0;
+  })()`);
+  console.log('  размер сохранённого PDF:', assetSize, 'байт');
+  check('исходный PDF сохранён в проекте', assetSize > 1000, String(assetSize));
+
+  await cdp.evaluate(`location.reload(); 'ok'`);
+  await sleep(7000);
+  await cdp.evaluate(`location.hash = '#/'; 'ok'`);
+  await sleep(2500);
+
+  const reopened = await cdp.evaluate(`(() => {
+    const buttons = Array.from(document.querySelectorAll('button'));
+    const target = buttons.find((button) => (button.innerText || '').includes('тест.pdf'));
+    if (!target) return false;
+    target.click();
+    return true;
+  })()`);
+  check('проект открывается после перезагрузки', reopened === true);
+  await sleep(6000);
+
+  const resumed = await cdp.evaluate(`(() => {
+    const app = window.__PDF_EDITOR__;
+    const canvas = document.querySelectorAll('canvas')[0];
+    const ctx = canvas ? canvas.getContext('2d') : null;
+    let ink = 0;
+    if (ctx) {
+      const width = Math.min(600, canvas.width);
+      const height = Math.min(800, canvas.height);
+      const data = ctx.getImageData(0, 0, width, height).data;
+      for (let i = 0; i < data.length; i += 4) {
+        if (data[i] < 200 && data[i + 1] < 200 && data[i + 2] < 200) ink += 1;
+      }
+    }
+    return {
+      isLoaded: app.pdf.isLoaded,
+      pages: app.pdf.numPages,
+      objects: app.objects.objects.length,
+      projectId: app.pdf.currentProjectId,
+      ink,
+    };
+  })()`);
+  console.log('  после перезагрузки:', JSON.stringify(resumed));
+  check('PDF документа загружен', resumed.isLoaded === true, String(resumed.isLoaded));
+  check('страницы PDF на месте (3)', resumed.pages === 3, String(resumed.pages));
+  check('содержимое PDF отрисовано', resumed.ink > 500, `тёмных пикселей: ${resumed.ink}`);
+  check('объекты восстановлены', resumed.objects === 1, String(resumed.objects));
+  check('документ снова связан с проектом', typeof resumed.projectId === 'string', String(resumed.projectId));
+
   await cdp.screenshot(resolvePath(TMP, 'projects-saved.png'));
   console.log('\nОшибки консоли:', cdp.errors.length ? cdp.errors.join('\n') : '(нет)');
 } catch (error) {

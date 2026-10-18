@@ -14,6 +14,7 @@ import type { PdfDocumentState, PdfMetadata, PdfPageState, ProjectFile } from '@
 import type { PageGeometry } from '@/utils/coordinates';
 import { effectivePageRotation, extraPageRotation, getDisplaySize } from '@/utils/coordinates';
 import { pdfService } from '@/services/pdfService';
+import { storageService } from '@/services/storageService';
 import { decodeOriginalPdf } from '@/services/projectService';
 import { readPdfFile } from '@/services/fileService';
 import { formatBytes } from '@/utils/download';
@@ -217,7 +218,13 @@ export const usePdfStore = defineStore('pdf', () => {
    */
   async function loadFromProject(project: ProjectFile & { id?: string }): Promise<LoadOutcome> {
     const projectId = typeof project.id === 'string' ? project.id : null;
-    const original = decodeOriginalPdf(project);
+    let original = decodeOriginalPdf(project);
+    // Проект в браузере хранит PDF отдельным ресурсом (чтобы JSON оставался
+    // маленьким), поэтому достаём его оттуда, если внутри проекта файла нет.
+    if ((!original || original.byteLength === 0) && projectId) {
+      const stored = await storageService.assetGet<Uint8Array>(`project-pdf:${projectId}`);
+      if (stored && stored.byteLength > 0) original = stored;
+    }
     if (original && original.byteLength > 0) {
       const outcome = await loadBytes(original, project.fileName);
       if (!outcome.ok) return outcome;
