@@ -106,18 +106,6 @@ const shapeKindLabels: Record<string, string> = {
   arrow: 'Стрелка',
 };
 
-const typeLabels: Record<string, string> = {
-  text: 'Текст',
-  image: 'Изображение',
-  shape: 'Фигура',
-  drawing: 'Рисунок',
-  signature: 'Подпись',
-  stamp: 'Штамп',
-  whiteout: 'Закрашивание',
-  highlight: 'Выделение',
-};
-void typeLabels;
-
 /**
  * Заголовок объекта — так же, как в панели «Слои»: название по инструменту и
  * номер для одинаковых («Прямоугольник 2», «Эллипс»).
@@ -700,8 +688,9 @@ void scaleStrokes;
           <AppColorPicker
             label="Обводка"
             compact
-            :model-value="shapePayload.stroke"
-            @update:model-value="single && edit('Цвет обводки', () => patch(single!.id, { payload: { stroke: $event } }))"
+            allow-null
+            :model-value="shapePayload.stroke ?? ''"
+            @update:model-value="single && edit('Цвет обводки', () => patch(single!.id, { payload: { stroke: $event || null } }))"
           />
           <AppInput
             label="Толщина"
@@ -710,7 +699,7 @@ void scaleStrokes;
             :min="0"
             :step="0.5"
             :model-value="shapePayload.strokeWidth"
-            @update:model-value="single && edit('Толщина обводки', () => patch(single!.id, { payload: { strokeWidth: Number($event) || 0 } }))"
+            @update:model-value="single && edit('Толщина обводки', () => patch(single!.id, { payload: { strokeWidth: Math.max(0, Number($event) || 0) } }))"
           />
         </div>
         <AppColorPicker

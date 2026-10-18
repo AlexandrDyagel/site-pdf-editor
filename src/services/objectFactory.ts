@@ -61,7 +61,8 @@ export interface TextDefaults {
 
 /** Настройки фигур по умолчанию. */
 export interface ShapeDefaults {
-  stroke: string;
+  /** Цвет обводки; null — «без цвета». */
+  stroke: string | null;
   strokeWidth: number;
   fill?: string | null;
 }

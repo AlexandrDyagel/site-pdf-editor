@@ -30,7 +30,7 @@ export interface EditorToolOptions {
   marker: { color: string; width: number; opacity: number };
   eraser: { color: string; width: number };
   shape: {
-    stroke: string;
+    stroke: string | null;
     strokeWidth: number;
     fill: string | null;
     dash: number[];

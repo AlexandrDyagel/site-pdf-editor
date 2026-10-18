@@ -141,7 +141,12 @@ const documentFontsUsed = computed(() => {
 
     <!-- Фигуры -->
     <AppSection v-else-if="editor.isShapeTool" title="Параметры фигуры" icon="square">
-      <AppColorPicker v-model="editor.toolOptions.shape.stroke" label="Цвет обводки" />
+      <AppColorPicker
+        label="Цвет обводки"
+        allow-null
+        :model-value="editor.toolOptions.shape.stroke ?? ''"
+        @update:model-value="editor.toolOptions.shape.stroke = $event || null"
+      />
       <AppSlider
         v-model="editor.toolOptions.shape.strokeWidth"
         label="Толщина обводки"

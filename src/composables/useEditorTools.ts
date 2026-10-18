@@ -580,9 +580,14 @@ export function useEditorTools(deps: {
   ): void {
     const tool = editor.tool;
     const defaultStyle = settings.shapeDefaults;
+    // Значения из параметров инструмента берём как есть: 0 — это осознанная
+    // нулевая толщина, null — «без цвета». Раньше `0 || default` и
+    // `null || default` подменяли выбор пользователя, и фигура рисовалась
+    // с обводкой «по умолчанию».
+    const toolStroke = editor.toolOptions.shape.stroke;
     const style = {
-      stroke: editor.toolOptions.shape.stroke || defaultStyle.stroke,
-      strokeWidth: editor.toolOptions.shape.strokeWidth || defaultStyle.strokeWidth,
+      stroke: toolStroke === '' ? null : toolStroke,
+      strokeWidth: Math.max(0, editor.toolOptions.shape.strokeWidth ?? defaultStyle.strokeWidth),
       fill: editor.toolOptions.shape.fill,
     };
     const page = editor.currentPage;

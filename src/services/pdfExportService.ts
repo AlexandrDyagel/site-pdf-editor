@@ -383,7 +383,10 @@ function drawShapeObject(
 ): void {
   const payload = obj.payload;
   const frame = frameOf(obj, geo);
-  const stroke = hexToRgb(payload.stroke);
+  // Обводки может не быть вовсе: «без цвета» (stroke: null) или нулевая толщина.
+  const strokeColor = payload.stroke ?? null;
+  const stroke = strokeColor ? hexToRgb(strokeColor) : null;
+  const hasStroke = Boolean(stroke) && payload.strokeWidth > 0;
   const fill = payload.fill ? hexToRgb(payload.fill) : null;
   const opacity = Math.max(0, Math.min(1, obj.opacity));
   const dash = payload.dash.length > 0 ? payload.dash : undefined;
@@ -396,10 +399,10 @@ function drawShapeObject(
       rotate: degrees(frame.rotate),
       color: fill ? rgb(fill.r, fill.g, fill.b) : undefined,
       opacity: fill ? opacity : undefined,
-      borderColor: payload.strokeWidth > 0 ? rgb(stroke.r, stroke.g, stroke.b) : undefined,
-      borderWidth: payload.strokeWidth,
+      borderColor: hasStroke && stroke ? rgb(stroke.r, stroke.g, stroke.b) : undefined,
+      borderWidth: hasStroke ? payload.strokeWidth : 0,
       borderOpacity: opacity,
-      borderDashArray: dash,
+      borderDashArray: hasStroke ? dash : undefined,
     });
     return;
   }
@@ -414,13 +417,16 @@ function drawShapeObject(
       rotate: degrees(frame.rotate),
       color: fill ? rgb(fill.r, fill.g, fill.b) : undefined,
       opacity: fill ? opacity : undefined,
-      borderColor: payload.strokeWidth > 0 ? rgb(stroke.r, stroke.g, stroke.b) : undefined,
-      borderWidth: payload.strokeWidth,
+      borderColor: hasStroke && stroke ? rgb(stroke.r, stroke.g, stroke.b) : undefined,
+      borderWidth: hasStroke ? payload.strokeWidth : 0,
       borderOpacity: opacity,
-      borderDashArray: dash,
+      borderDashArray: hasStroke ? dash : undefined,
     });
     return;
   }
+
+  // Линия или стрелка: без обводки рисовать нечего.
+  if (!hasStroke || !stroke) return;
 
   // Линия или стрелка: координаты заданы нормализованно внутри bbox.
   const [nx1, ny1, nx2, ny2] = payload.points;
@@ -429,7 +435,7 @@ function drawShapeObject(
   page.drawLine({
     start,
     end,
-    thickness: Math.max(0.2, payload.strokeWidth),
+    thickness: payload.strokeWidth,
     color: rgb(stroke.r, stroke.g, stroke.b),
     opacity,
     dashArray: dash,

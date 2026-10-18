@@ -260,6 +260,9 @@ export function useKonvaStage(containerRef: Ref<HTMLDivElement | null>): KonvaSt
     if (draft) {
       const rect = normalizeRect(rectFromPoints(draft.start, draft.end));
       const tool = editor.tool;
+      // «Без цвета» (stroke: null) — для резиновой рамки берём нейтральный цвет,
+      // иначе контур черновика был бы невидим.
+      const draftStroke = editor.toolOptions.shape.stroke ?? '#94a3b8';
       ctx.save();
       if (tool === 'whiteout') {
         ctx.fillStyle = editor.toolOptions.whiteout.color;
@@ -268,7 +271,7 @@ export function useKonvaStage(containerRef: Ref<HTMLDivElement | null>): KonvaSt
         ctx.lineWidth = 1 / Math.max(editor.zoom, 0.2);
         ctx.strokeRect(rect.x, rect.y, rect.width, rect.height);
       } else if (tool === 'line' || tool === 'arrow') {
-        ctx.strokeStyle = editor.toolOptions.shape.stroke;
+        ctx.strokeStyle = draftStroke;
         ctx.lineWidth = editor.toolOptions.shape.strokeWidth;
         ctx.lineCap = 'round';
         ctx.beginPath();
@@ -276,7 +279,7 @@ export function useKonvaStage(containerRef: Ref<HTMLDivElement | null>): KonvaSt
         ctx.lineTo(draft.end.x, draft.end.y);
         ctx.stroke();
       } else {
-        ctx.strokeStyle = editor.toolOptions.shape.stroke;
+        ctx.strokeStyle = draftStroke;
         ctx.lineWidth = Math.max(1, editor.toolOptions.shape.strokeWidth);
         ctx.setLineDash([6 / Math.max(editor.zoom, 0.2), 4 / Math.max(editor.zoom, 0.2)]);
         if (tool === 'ellipse') {

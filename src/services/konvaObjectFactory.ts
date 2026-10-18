@@ -315,8 +315,12 @@ function buildChildren(group: Konva.Group, obj: EditorObject, options: ObjectBui
     case 'shape': {
       const payload = obj.payload as ShapePayload;
       const dash = payload.dash.length > 0 ? payload.dash : undefined;
+      // Нулевая толщина или «без цвета» — обводки нет. Минимум не подставляем:
+      // иначе при толщине 0 оставалась тонкая линия «по умолчанию».
       const strokeWidth = Math.max(0, payload.strokeWidth);
-      const stroke = strokeWidth > 0 ? payload.stroke : undefined;
+      const strokeColor = payload.stroke ?? null;
+      const stroke = strokeColor !== null && strokeWidth > 0 ? strokeColor : undefined;
+      const effectiveWidth = stroke ? strokeWidth : 0;
       const fill = payload.fill ?? undefined;
 
       if (payload.kind === 'rect') {
@@ -353,9 +357,9 @@ function buildChildren(group: Konva.Group, obj: EditorObject, options: ObjectBui
           group.add(
             new Konva.Arrow({
               points,
-              stroke: stroke ?? payload.stroke,
-              fill: payload.stroke,
-              strokeWidth: Math.max(0.5, strokeWidth),
+              stroke,
+              fill: stroke,
+              strokeWidth: effectiveWidth,
               dash,
               pointerLength: Math.max(6, strokeWidth * 3.4),
               pointerWidth: Math.max(5, strokeWidth * 2.6),
@@ -366,8 +370,8 @@ function buildChildren(group: Konva.Group, obj: EditorObject, options: ObjectBui
           group.add(
             new Konva.Line({
               points,
-              stroke: stroke ?? payload.stroke,
-              strokeWidth: Math.max(0.5, strokeWidth),
+              stroke,
+              strokeWidth: effectiveWidth,
               dash,
               lineCap: 'round',
               hitStrokeWidth: 14,

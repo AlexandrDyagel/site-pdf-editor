@@ -185,7 +185,8 @@ export interface ImagePayload {
 /** Содержимое фигуры. */
 export interface ShapePayload {
   kind: ShapeKind;
-  stroke: string;
+  /** Цвет обводки; null — «без цвета», обводка не рисуется. */
+  stroke: string | null;
   strokeWidth: number;
   fill: string | null;
   /** Штриховая линия (в pt). */
