@@ -56,6 +56,8 @@ const ICONS: Record<string, string[]> = {
   download: ['M12 4v11', 'M8 11l4 4 4-4', 'M5 20h14'],
   upload: ['M12 20V9', 'M8 13l4-4 4 4', 'M5 4h14'],
   folder: ['M4 6.5h5l2 2h9v10.5H4z'],
+  folderOpen: ['M4 6.5h5l2 2h9v3.5', 'M4 6.5v12.5h16l-2.5-9H8'],
+  folderPlus: ['M4 6.5h5l2 2h9v10.5H4z', 'M12 11.5v5', 'M9.5 14h5'],
   file: ['M6.5 3h7L18 7.5V21H6.5z', 'M13.5 3v4.5H18'],
   zoomIn: ['M11 4.5a6.5 6.5 0 1 0 0 13 6.5 6.5 0 0 0 0-13z', 'M19.5 19.5L16 16', 'M11 8.5v5', 'M8.5 11h5'],
   zoomOut: ['M11 4.5a6.5 6.5 0 1 0 0 13 6.5 6.5 0 0 0 0-13z', 'M19.5 19.5L16 16', 'M8.5 11h5'],

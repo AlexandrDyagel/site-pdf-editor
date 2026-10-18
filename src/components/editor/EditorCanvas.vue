@@ -122,7 +122,8 @@ function bindStage(): void {
   stage.on('pointercancel', tools.onPointerUp);
   stage.on('dblclick', tools.onDoubleClick);
   stage.on('wheel', tools.onWheel);
-  stage.on('contextmenu', (event) => event.evt.preventDefault());
+  // Правая кнопка мыши: контекстное меню объекта (Сгруппировать / Удалить).
+  stage.on('contextmenu', tools.onContextMenu);
 }
 
 onMounted(() => {

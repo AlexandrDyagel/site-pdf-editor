@@ -26,6 +26,19 @@ export type LeftTab = 'pages' | 'library' | 'text';
 /** Вкладки правой панели. */
 export type RightTab = 'tool' | 'properties' | 'layers' | 'history' | 'page';
 
+/** Состояние контекстного меню объектов. */
+export interface ContextMenuState {
+  /** Координаты курсора в окне. */
+  x: number;
+  y: number;
+  /** Объекты, к которым применяются действия меню. */
+  ids: string[];
+  /** Группа, по которой кликнули (если клик был по группе или её объекту). */
+  groupId: string | null;
+  /** Заголовок меню (например, название группы). */
+  title?: string;
+}
+
 /** Диалог подтверждения. */
 export interface ConfirmState {
   open: boolean;
@@ -72,6 +85,23 @@ export const useUiStore = defineStore('ui', () => {
     danger: false,
   });
 
+  /**
+   * Контекстное меню объектов (правая кнопка мыши).
+   * Открывается и из панели «Слои», и с холста — меню одно, поэтому действия
+   * ведут себя одинаково.
+   */
+  const contextMenu = ref<ContextMenuState | null>(null);
+
+  function openContextMenu(state: ContextMenuState): void {
+    contextMenu.value = state;
+    // Меню перекрывает панели — закрываем открытые модальные окна выбора.
+    confirmResolver = confirmResolver ?? null;
+  }
+
+  function closeContextMenu(): void {
+    contextMenu.value = null;
+  }
+
   let confirmResolver: ((value: boolean) => void) | null = null;
 
   const anyModalOpen = computed(() => Object.values(modals.value).some(Boolean));
@@ -91,6 +121,7 @@ export const useUiStore = defineStore('ui', () => {
   function closeAllModals(): void {
     for (const key of Object.keys(modals.value) as ModalName[]) modals.value[key] = false;
     modalPayload.value = {};
+    contextMenu.value = null;
   }
 
   function isModalOpen(name: ModalName): boolean {
@@ -216,6 +247,9 @@ export const useUiStore = defineStore('ui', () => {
     rightPanelOpen,
     mobilePanelsVisible,
     confirmState,
+    contextMenu,
+    openContextMenu,
+    closeContextMenu,
     anyModalOpen,
     openModal,
     closeModal,

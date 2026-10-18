@@ -60,6 +60,7 @@ export interface EditorToolsApi {
   onPointerMove: (event: Konva.KonvaEventObject<PointerEvent>) => void;
   onPointerUp: (event: Konva.KonvaEventObject<PointerEvent>) => void;
   onDoubleClick: (event: Konva.KonvaEventObject<MouseEvent>) => void;
+  onContextMenu: (event: Konva.KonvaEventObject<PointerEvent>) => void;
   onWheel: (event: Konva.KonvaEventObject<WheelEvent>) => void;
   isPanning: ReturnType<typeof ref<boolean>>;
 }
@@ -614,6 +615,45 @@ export function useEditorTools(deps: {
     }
   }
 
+  /**
+   * Правая кнопка мыши на холсте: контекстное меню «Сгруппировать / Удалить».
+   *
+   * Если кликнули по объекту вне выделения — сначала выделяем его (или всю его
+   * группу), чтобы действия меню применялись к тому, на что нажали.
+   */
+  function onContextMenu(event: Konva.KonvaEventObject<PointerEvent>): void {
+    event.evt.preventDefault();
+    if (editor.viewOnly) return;
+    const id = objectIdFromTarget(event.target);
+    if (!id) {
+      ui.closeContextMenu();
+      return;
+    }
+    const obj = objects.byId(id);
+    if (!obj) return;
+    if (!objects.selectedIds.includes(id)) {
+      objects.select(obj.groupId ? groupMembersOf(obj) : [id]);
+    }
+    ui.openContextMenu({
+      x: event.evt.clientX,
+      y: event.evt.clientY,
+      ids: [...objects.selectedIds],
+      groupId: obj.groupId ?? null,
+      title:
+        objects.selectedIds.length === 1
+          ? 'Объект'
+          : `Выбрано объектов: ${objects.selectedIds.length}`,
+    });
+  }
+
+  /** Все объекты группы, к которой принадлежит объект. */
+  function groupMembersOf(obj: EditorObject): string[] {
+    if (!obj.groupId) return [obj.id];
+    return objects.objects
+      .filter((item) => item.groupId === obj.groupId)
+      .map((item) => item.id);
+  }
+
   function onWheel(event: Konva.KonvaEventObject<WheelEvent>): void {
     event.evt.preventDefault();
     const { deltaY, ctrlKey, metaKey, shiftKey, clientX, clientY } = event.evt;
@@ -819,6 +859,7 @@ export function useEditorTools(deps: {
     onPointerMove,
     onPointerUp,
     onDoubleClick,
+    onContextMenu,
     onWheel,
     isPanning,
   };

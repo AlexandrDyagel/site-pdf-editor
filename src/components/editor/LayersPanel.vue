@@ -1,10 +1,17 @@
 <script setup lang="ts">
-/** Панель слоёв: список объектов текущей страницы. */
-import { computed } from 'vue';
+/**
+ * Панель слоёв: список объектов текущей страницы и групп.
+ *
+ * Группы показываются строкой с иконкой папки (как в Photoshop), их можно
+ * сворачивать. Клик по группе выделяет все её объекты на холсте, правая
+ * кнопка мыши открывает общее контекстное меню («Сгруппировать», «Удалить»).
+ */
+import { computed, ref } from 'vue';
 import { useObjectsStore } from '@/stores/objects';
 import { useEditorStore } from '@/stores/editor';
 import { useUiStore } from '@/stores/ui';
 import { usePdfStore } from '@/stores/pdf';
+import type { EditorObject } from '@/types';
 import { layerAccentColor, layerDetail, layerLabels, layerName } from '@/utils/layers';
 import AppButton from '@/components/ui/AppButton.vue';
 import AppEmptyState from '@/components/ui/AppEmptyState.vue';
@@ -25,6 +32,21 @@ const layers = computed(() => objects.forPage(editor.currentPage).slice().revers
  * новые объекты сверху не сбивают номера у уже существующих.
  */
 const labels = computed(() => layerLabels(objects.forPage(editor.currentPage)));
+
+/** Свёрнутые группы (по id группы). */
+const collapsedGroups = ref<Set<string>>(new Set());
+
+/** Строка списка: либо объект, либо группа объектов. */
+interface LayerRow {
+  key: string;
+  kind: 'object' | 'group';
+  groupId: string | null;
+  title: string;
+  objects: EditorObject[];
+  depth: number;
+  collapsed: boolean;
+  zIndex: number;
+}
 
 function label(objectId: string): string {
   const obj = objects.byId(objectId);
@@ -58,14 +80,153 @@ const typeIcons: Record<string, string> = {
   highlight: 'highlight',
 };
 
-async function removeSelected(objectId: string): Promise<void> {
+/**
+ * Строки списка: группы собираются в одну строку, их объекты — вложенными
+ * (если группа развёрнута). Порядок — как у слоёв, сверху вниз.
+ */
+const rows = computed<LayerRow[]>(() => {
+  const pageObjects = objects.forPage(editor.currentPage);
+  const topFirst = pageObjects.slice().reverse();
+
+  // Названия групп: нумеруем по порядку появления снизу вверх.
+  const groupNames = new Map<string, string>();
+  let groupIndex = 0;
+  for (const obj of pageObjects) {
+    if (obj.groupId && !groupNames.has(obj.groupId)) {
+      groupIndex += 1;
+      groupNames.set(obj.groupId, `Группа ${groupIndex}`);
+    }
+  }
+
+  const result: LayerRow[] = [];
+  const emitted = new Set<string>();
+  for (const obj of topFirst) {
+    if (obj.groupId) {
+      if (emitted.has(obj.groupId)) continue;
+      emitted.add(obj.groupId);
+      const members = topFirst.filter((item) => item.groupId === obj.groupId);
+      const collapsed = collapsedGroups.value.has(obj.groupId);
+      result.push({
+        key: `group-${obj.groupId}`,
+        kind: 'group',
+        groupId: obj.groupId,
+        title: groupNames.get(obj.groupId) ?? 'Группа',
+        objects: members,
+        depth: 0,
+        collapsed,
+        zIndex: Math.max(...members.map((item) => item.zIndex)),
+      });
+      if (!collapsed) {
+        for (const member of members) {
+          result.push({
+            key: member.id,
+            kind: 'object',
+            groupId: obj.groupId,
+            title: label(member.id),
+            objects: [member],
+            depth: 1,
+            collapsed: false,
+            zIndex: member.zIndex,
+          });
+        }
+      }
+      continue;
+    }
+    result.push({
+      key: obj.id,
+      kind: 'object',
+      groupId: null,
+      title: label(obj.id),
+      objects: [obj],
+      depth: 0,
+      collapsed: false,
+      zIndex: obj.zIndex,
+    });
+  }
+  return result;
+});
+
+/** Выделена ли строка (группа — когда выделены все её объекты). */
+function isSelected(row: LayerRow): boolean {
+  return row.objects.every((obj) => objects.selectedIds.includes(obj.id));
+}
+
+/** Строка подсвечена как часть выделения (хотя бы один объект). */
+function isActive(row: LayerRow): boolean {
+  return row.objects.some((obj) => objects.selectedIds.includes(obj.id));
+}
+
+function toggleGroup(row: LayerRow): void {
+  const id = row.groupId;
+  if (!id) return;
+  const next = new Set(collapsedGroups.value);
+  if (next.has(id)) next.delete(id);
+  else next.add(id);
+  collapsedGroups.value = next;
+}
+
+function onClickRow(row: LayerRow, event: MouseEvent): void {
+  if (row.kind === 'group') {
+    objects.select(row.objects.map((obj) => obj.id));
+    return;
+  }
+  objects.selectOne(row.objects[0].id, event.shiftKey);
+}
+
+function onDblClickRow(row: LayerRow): void {
+  const ids = row.objects.map((obj) => obj.id);
+  objects.select(ids);
+  const first = row.objects[0];
+  if (row.kind === 'object' && first.type === 'text') editor.startTextEditing(first.id);
+  ui.setRightTab('properties');
+}
+
+/** Правая кнопка мыши: контекстное меню для строки (или текущего выделения). */
+function openRowMenu(event: MouseEvent, row: LayerRow): void {
+  event.preventDefault();
+  const ids = row.objects.map((obj) => obj.id);
+  if (row.kind === 'group') {
+    objects.select(ids);
+  } else if (!ids.every((id) => objects.selectedIds.includes(id))) {
+    objects.select(ids);
+  }
+  ui.openContextMenu({
+    x: event.clientX,
+    y: event.clientY,
+    ids: [...objects.selectedIds],
+    groupId: row.groupId,
+    title: row.kind === 'group' ? `${row.title} · объектов: ${row.objects.length}` : hint(ids[0]),
+  });
+}
+
+async function removeRow(row: LayerRow): Promise<void> {
+  const ids = row.objects.map((obj) => obj.id);
+  if (row.kind === 'group') {
+    const confirmed = await ui.askConfirm({
+      title: 'Удалить группу?',
+      text: `${row.title}: объектов ${row.objects.length}`,
+      confirmLabel: 'Удалить',
+      danger: true,
+    });
+    if (confirmed) objects.remove(ids, 'Удаление группы');
+    return;
+  }
   const confirmed = await ui.askConfirm({
     title: 'Удалить объект?',
-    text: label(objectId),
+    text: row.title,
     confirmLabel: 'Удалить',
     danger: true,
   });
-  if (confirmed) objects.remove([objectId]);
+  if (confirmed) objects.remove(ids);
+}
+
+/** Все объекты строки видимы / заблокированы. */
+function allVisible(row: LayerRow): boolean {
+  return row.objects.every((obj) => obj.visible);
+}
+
+function allLocked(row: LayerRow): boolean {
+  return row.objects.every((obj) => obj.locked);
 }
 
 /**
@@ -76,17 +237,18 @@ async function removeSelected(objectId: string): Promise<void> {
  * подсказки (у отключённых кнопок подсказка не показывается и клик не
  * срабатывает — именно это выглядело как «не работает»).
  */
-function moveLayer(objectId: string, direction: 1 | -1, index: number): void {
+function moveLayer(row: LayerRow, direction: 1 | -1, index: number): void {
   if (direction > 0 && index === 0) {
     ui.notify.info('Слой уже наверху', 'Выше на этой странице слоёв нет.');
     return;
   }
-  if (direction < 0 && index === layers.value.length - 1) {
+  if (direction < 0 && index === rows.value.length - 1) {
     ui.notify.info('Слой уже внизу', 'Ниже на этой странице слоёв нет.');
     return;
   }
-  if (direction > 0) objects.bringForward([objectId]);
-  else objects.sendBackward([objectId]);
+  const ids = row.objects.map((obj) => obj.id);
+  if (direction > 0) objects.bringForward(ids);
+  else objects.sendBackward(ids);
 }
 
 /** Сдвиг выделенных слоёв (кнопки внизу панели). */
@@ -134,52 +296,87 @@ function moveSelectedToEdge(edge: 'front' | 'back'): void {
 
     <div v-else class="flex-1 overflow-y-auto">
       <div
-        v-for="(layer, index) in layers"
-        :key="layer.id"
-        :data-layer-id="layer.id"
-        class="group flex items-center gap-1.5 border-b border-slate-100 px-2 py-1.5 transition-colors dark:border-slate-800/60"
-        :class="
-          objects.selectedIds.includes(layer.id)
+        v-for="(row, index) in rows"
+        :key="row.key"
+        :data-layer-id="row.kind === 'object' ? row.objects[0].id : undefined"
+        :data-group-id="row.kind === 'group' ? row.groupId ?? undefined : undefined"
+        :data-layer-kind="row.kind"
+        class="group flex items-center gap-1.5 border-b border-slate-100 py-1.5 pr-2 transition-colors dark:border-slate-800/60"
+        :class="[
+          isSelected(row)
             ? 'bg-brand-50 dark:bg-brand-600/15'
-            : 'hover:bg-slate-50 dark:hover:bg-slate-800/50'
-        "
+            : isActive(row)
+              ? 'bg-brand-50/60 dark:bg-brand-600/10'
+              : 'hover:bg-slate-50 dark:hover:bg-slate-800/50',
+          row.kind === 'group' ? 'border-l-2 border-l-brand-300 dark:border-l-brand-500/60' : '',
+          row.depth > 0 ? 'border-l border-l-slate-200 dark:border-l-slate-700' : '',
+        ]"
+        :style="{ paddingLeft: row.depth > 0 ? '20px' : '6px' }"
+        @contextmenu="openRowMenu($event, row)"
       >
+        <!-- Свернуть/развернуть группу -->
+        <button
+          v-if="row.kind === 'group'"
+          type="button"
+          class="flex h-4 w-4 shrink-0 items-center justify-center rounded text-slate-400 hover:bg-slate-200/70 hover:text-slate-600 dark:hover:bg-slate-700 dark:hover:text-slate-200"
+          :title="row.collapsed ? 'Развернуть группу' : 'Свернуть группу'"
+          data-group-toggle
+          @click.stop="toggleGroup(row)"
+        >
+          <AppIcon :name="row.collapsed ? 'chevronRight' : 'chevronDown'" :size="12" />
+        </button>
+        <span v-else-if="row.depth > 0" class="w-4 shrink-0" />
+
         <button
           type="button"
           class="flex min-w-0 flex-1 items-center gap-2 text-left"
-          :title="hint(layer.id)"
-          @click="objects.selectOne(layer.id, $event.shiftKey)"
-          @dblclick="
-            objects.select([layer.id]);
-            layer.type === 'text' ? (editor.startTextEditing(layer.id)) : undefined;
-            ui.setRightTab('properties');
-          "
+          :title="row.kind === 'group' ? `${row.title} · объектов: ${row.objects.length}` : hint(row.objects[0].id)"
+          @click="onClickRow(row, $event)"
+          @dblclick="onDblClickRow(row)"
         >
-          <!-- Индикатор основного цвета: заливка фигуры, цвет текста и т. п. -->
+          <!-- Группа: значок папки. Объект: индикатор цвета или значок типа -->
           <span
-            v-if="accent(layer.id)"
+            v-if="row.kind === 'group'"
+            class="flex h-[15px] w-[15px] shrink-0 items-center justify-center text-amber-500 dark:text-amber-400"
+          >
+            <AppIcon :name="row.collapsed ? 'folder' : 'folderOpen'" :size="15" />
+          </span>
+          <span
+            v-else-if="accent(row.objects[0].id)"
             class="flex h-[15px] w-[15px] shrink-0 items-center justify-center"
-            :title="accent(layer.id) ?? ''"
+            :title="accent(row.objects[0].id) ?? ''"
           >
             <span
               data-layer-color
               class="block h-3 w-3 rounded-full ring-1 ring-slate-300 dark:ring-slate-600"
-              :style="{ backgroundColor: accent(layer.id) ?? 'transparent' }"
+              :style="{ backgroundColor: accent(row.objects[0].id) ?? 'transparent' }"
             />
           </span>
           <span v-else class="text-slate-400">
-            <AppIcon :name="typeIcons[layer.type] ?? 'square'" :size="15" />
+            <AppIcon :name="typeIcons[row.objects[0].type] ?? 'square'" :size="15" />
           </span>
           <span class="min-w-0 flex-1">
             <span
               data-layer-label
-              class="block truncate text-[12px] text-slate-700 dark:text-slate-200"
+              class="block truncate text-[12px]"
+              :class="
+                row.kind === 'group'
+                  ? 'font-medium text-slate-800 dark:text-slate-100'
+                  : 'text-slate-700 dark:text-slate-200'
+              "
             >
-              {{ label(layer.id) }}
+              {{ row.title }}
             </span>
             <span class="block truncate text-[10px] text-slate-400">
-              z={{ layer.zIndex }} · {{ Math.round(layer.width) }}×{{ Math.round(layer.height) }} pt
-              <template v-if="layer.groupId"> · группа</template>
+              <template v-if="row.kind === 'group'">
+                объектов: {{ row.objects.length }}
+              </template>
+              <template v-else>
+                z={{ row.zIndex }} · {{ Math.round(row.objects[0].width) }}×{{
+                  Math.round(row.objects[0].height)
+                }}
+                pt
+              </template>
             </span>
           </span>
         </button>
@@ -193,7 +390,7 @@ function moveSelectedToEdge(edge: 'front' | 'back'): void {
               variant="ghost"
               title="Выше"
               :class="{ 'opacity-40': index === 0 }"
-              @click="moveLayer(layer.id, 1, index)"
+              @click="moveLayer(row, 1, index)"
             />
           </AppTooltip>
           <AppTooltip text="Ниже (дальше от зрителя)">
@@ -202,33 +399,28 @@ function moveSelectedToEdge(edge: 'front' | 'back'): void {
               size="xs"
               variant="ghost"
               title="Ниже"
-              :class="{ 'opacity-40': index === layers.length - 1 }"
-              @click="moveLayer(layer.id, -1, index)"
+              :class="{ 'opacity-40': index === rows.length - 1 }"
+              @click="moveLayer(row, -1, index)"
             />
           </AppTooltip>
-          <AppTooltip :text="layer.visible ? 'Скрыть' : 'Показать'">
+          <AppTooltip :text="allVisible(row) ? 'Скрыть' : 'Показать'">
             <AppButton
-              :icon="layer.visible ? 'eye' : 'eyeOff'"
+              :icon="allVisible(row) ? 'eye' : 'eyeOff'"
               size="xs"
               variant="ghost"
-              @click="objects.setVisible([layer.id], !layer.visible)"
+              @click="objects.setVisible(row.objects.map((obj) => obj.id), !allVisible(row))"
             />
           </AppTooltip>
-          <AppTooltip :text="layer.locked ? 'Разблокировать' : 'Заблокировать'">
+          <AppTooltip :text="allLocked(row) ? 'Разблокировать' : 'Заблокировать'">
             <AppButton
-              :icon="layer.locked ? 'lock' : 'unlock'"
+              :icon="allLocked(row) ? 'lock' : 'unlock'"
               size="xs"
               variant="ghost"
-              @click="objects.setLocked([layer.id], !layer.locked)"
+              @click="objects.setLocked(row.objects.map((obj) => obj.id), !allLocked(row))"
             />
           </AppTooltip>
           <AppTooltip text="Удалить">
-            <AppButton
-              icon="trash"
-              size="xs"
-              variant="ghost"
-              @click="removeSelected(layer.id)"
-            />
+            <AppButton icon="trash" size="xs" variant="ghost" @click="removeRow(row)" />
           </AppTooltip>
         </div>
       </div>

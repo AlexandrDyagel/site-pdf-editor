@@ -18,6 +18,7 @@ import PageThumbnails from '@/components/editor/PageThumbnails.vue';
 import PropertiesPanel from '@/components/editor/PropertiesPanel.vue';
 import LayersPanel from '@/components/editor/LayersPanel.vue';
 import HistoryPanel from '@/components/editor/HistoryPanel.vue';
+import ObjectContextMenu from '@/components/editor/ObjectContextMenu.vue';
 import ToolOptionsPanel from '@/components/editor/ToolOptionsPanel.vue';
 import PagePropertiesPanel from '@/components/editor/PagePropertiesPanel.vue';
 import TextLayerPanel from '@/components/editor/TextLayerPanel.vue';
@@ -237,6 +238,9 @@ watch(
           </AppButton>
         </div>
       </main>
+
+      <!-- Контекстное меню объектов: открывается и с холста, и из «Слоёв» -->
+      <ObjectContextMenu />
 
       <!-- Правая панель -->
       <aside
