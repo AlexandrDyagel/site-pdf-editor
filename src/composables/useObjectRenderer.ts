@@ -328,6 +328,29 @@ export function useObjectRenderer(deps: {
         beginInteraction('Преобразование');
       });
       tr.on('transformend', () => commitTransform());
+      /**
+       * Тянуть за стороны текста нужно без «резины»: вместо визуального
+       * масштабирования сразу переносим scale в размеры объекта, и текст
+       * перерисовывается при новой ширине (переносится по словам).
+       */
+      tr.on('transform', () => {
+        for (const node of tr.nodes()) {
+          const id = String(node.getAttr('objectId') ?? '');
+          const obj = objects.byId(id);
+          if (!obj || obj.type !== 'text') continue;
+          const scaleX = node.scaleX();
+          const scaleY = node.scaleY();
+          if (Math.abs(scaleX - 1) < 0.001 && Math.abs(scaleY - 1) < 0.001) continue;
+          const snapshot = transformSnapshot.get(id) ?? { width: obj.width, height: obj.height };
+          const width = Math.max(8, snapshot.width * scaleX);
+          const height = Math.max(8, snapshot.height * scaleY);
+          node.scaleX(1);
+          node.scaleY(1);
+          // Снимок держим актуальным, чтобы commitTransform не вернул старый размер.
+          transformSnapshot.set(id, { width, height });
+          objects.patchSilent(id, { x: node.x(), y: node.y(), width, height });
+        }
+      });
       transformerBound = true;
     }
 

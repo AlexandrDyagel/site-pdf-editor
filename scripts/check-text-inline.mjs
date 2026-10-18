@@ -210,6 +210,135 @@ try {
   console.log('  во время ввода:', JSON.stringify(duringEdit));
   check('Konva-текст скрыт, пока идёт ввод', duringEdit.opacity === 0, String(duringEdit.opacity));
 
+  console.log('\n6. Пробел в конце слова не раздувает поле');
+  const beforeSpace = await cdp.evaluate(`(() => {
+    const object = window.__PDF_EDITOR__.objects.objects[0];
+    return { text: object.payload.text, height: Number(object.height.toFixed(1)) };
+  })()`);
+  await cdp.send('Input.insertText', { text: ' ' });
+  await sleep(700);
+  const afterSpace = await cdp.evaluate(`(() => {
+    const object = window.__PDF_EDITOR__.objects.objects[0];
+    const field = document.querySelector('[data-testid=text-inline-editor]');
+    return {
+      text: object.payload.text,
+      height: Number(object.height.toFixed(1)),
+      scrollHeight: field ? field.scrollHeight : null,
+      clientHeight: field ? field.clientHeight : null,
+    };
+  })()`);
+  console.log('  до пробела:', JSON.stringify(beforeSpace), '→ после:', JSON.stringify(afterSpace));
+  check(
+    'пробел добавлен в текст',
+    String(afterSpace.text).length === String(beforeSpace.text).length + 1,
+    JSON.stringify(afterSpace.text),
+  );
+  check(
+    'высота поля не изменилась от пробела',
+    afterSpace.height === beforeSpace.height,
+    `${beforeSpace.height} → ${afterSpace.height}`,
+  );
+
+  console.log('\n7. Пустой текст не остаётся на холсте');
+  await cdp.evaluate(`(() => {
+    const app = window.__PDF_EDITOR__;
+    const field = document.querySelector('[data-testid=text-inline-editor]');
+    if (field) {
+      field.focus();
+      field.setSelectionRange(0, field.value.length);
+      field.value = '';
+      field.dispatchEvent(new Event('input', { bubbles: true }));
+    }
+    return 'ok';
+  })()`);
+  await sleep(500);
+  await cdp.send('Input.dispatchKeyEvent', { type: 'keyDown', key: 'Escape', code: 'Escape', windowsVirtualKeyCode: 27 });
+  await cdp.send('Input.dispatchKeyEvent', { type: 'keyUp', key: 'Escape', code: 'Escape', windowsVirtualKeyCode: 27 });
+  await sleep(900);
+  const afterEmpty = await cdp.evaluate(`(() => ({
+    objects: window.__PDF_EDITOR__.objects.objects.length,
+    editing: window.__PDF_EDITOR__.editor.editingTextId,
+    hasField: Boolean(document.querySelector('[data-testid=text-inline-editor]')),
+  }))()`);
+  console.log('  после стирания текста:', JSON.stringify(afterEmpty));
+  check('пустой текстовый объект удалён', afterEmpty.objects === 0, JSON.stringify(afterEmpty));
+
+  console.log('\n8. Растягивание текста за сторону — без «резины»');
+  const created = await cdp.evaluate(`(async () => {
+    const app = window.__PDF_EDITOR__;
+    const factory = await import('/src/services/objectFactory.ts');
+    app.objects.clearAll(false);
+    const text = factory.createTextObject({
+      page: 0, x: 120, y: 120, width: 60, height: 22, text: 'Однострочный текст', autoHeight: true,
+      defaults: {
+        fontId: 'pt-sans', fontFamily: 'PT Sans', fontSize: 14, color: '#111827',
+        bold: false, italic: false, align: 'left', lineHeight: 1.25, letterSpacing: 0,
+      },
+    });
+    app.objects.add([text], 'тест');
+    app.objects.select([text.id]);
+    app.editor.setTool('select');
+    document.activeElement?.blur?.();
+    return { id: text.id, width: Number(text.width.toFixed(1)), height: Number(text.height.toFixed(1)) };
+  })()`);
+  await sleep(1200);
+  const handle = await cdp.evaluate(`(() => {
+    const stage = window.__PDF_EDITOR_STAGE__;
+    const transformer = stage.findOne((node) => node.name && node.name() === 'transformer');
+    const anchor = transformer ? transformer.findOne('.middle-right') : null;
+    if (!anchor) return null;
+    const rect = stage.container().getBoundingClientRect();
+    const absolute = anchor.getAbsolutePosition();
+    return { x: Math.round(rect.left + absolute.x), y: Math.round(rect.top + absolute.y) };
+  })()`);
+  check('найдена ручка растягивания справа', handle !== null);
+
+  if (handle) {
+    await cdp.send('Input.dispatchMouseEvent', { type: 'mouseMoved', x: handle.x, y: handle.y, button: 'none', buttons: 0, pointerType: 'mouse' });
+    await cdp.send('Input.dispatchMouseEvent', { type: 'mousePressed', x: handle.x, y: handle.y, button: 'left', buttons: 1, clickCount: 1, pointerType: 'mouse' });
+    for (let step = 1; step <= 8; step += 1) {
+      await cdp.send('Input.dispatchMouseEvent', {
+        type: 'mouseMoved',
+        x: handle.x + step * 26,
+        y: handle.y,
+        button: 'left',
+        buttons: 1,
+        pointerType: 'mouse',
+      });
+      await sleep(30);
+    }
+    await cdp.send('Input.dispatchMouseEvent', { type: 'mouseReleased', x: handle.x + 208, y: handle.y, button: 'left', buttons: 0, clickCount: 1, pointerType: 'mouse' });
+    await sleep(900);
+    const afterResize = await cdp.evaluate(`(() => {
+      const app = window.__PDF_EDITOR__;
+      const object = app.objects.byId(${JSON.stringify(created.id)});
+      const stage = window.__PDF_EDITOR_STAGE__;
+      const node = stage.findOne((item) => item.getAttr && item.getAttr('objectId') === ${JSON.stringify(created.id)});
+      return {
+        width: object ? Number(object.width.toFixed(1)) : null,
+        height: object ? Number(object.height.toFixed(1)) : null,
+        scaleX: node ? Number(node.scaleX().toFixed(3)) : null,
+        scaleY: node ? Number(node.scaleY().toFixed(3)) : null,
+      };
+    })()`);
+    console.log('  до:', JSON.stringify(created), '→ после растягивания:', JSON.stringify(afterResize));
+    check(
+      'ширина текста увеличилась',
+      afterResize.width !== null && afterResize.width > created.width + 40,
+      `${created.width} → ${afterResize.width}`,
+    );
+    check(
+      'масштаб узла сброшен (текст не растянут)',
+      afterResize.scaleX === 1 && afterResize.scaleY === 1,
+      JSON.stringify(afterResize),
+    );
+    check(
+      'текст остался в одну строку',
+      Math.abs(afterResize.height - created.height) < 2,
+      `${created.height} → ${afterResize.height}`,
+    );
+  }
+
   await cdp.screenshot(resolvePath(TMP, 'text-inline.png'));
   console.log('\nОшибки консоли:', cdp.errors.length ? cdp.errors.join('\n') : '(нет)');
 } catch (error) {

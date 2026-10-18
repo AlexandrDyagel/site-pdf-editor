@@ -15,6 +15,21 @@ import { useEditorStore } from '@/stores/editor';
 import { useObjectsStore } from '@/stores/objects';
 import type { TextPayload } from '@/types';
 import { computeTextBlockLayout } from '@/services/textRenderService';
+import { measureTextWidth } from '@/utils/textLayout';
+
+/** Стиль шрифта для измерения ширины строк. */
+function textStyle(payload: TextPayload) {
+  return {
+    fontFamily: payload.fontFamily,
+    fontId: payload.fontId,
+    fontSize: payload.fontSize,
+    bold: payload.bold,
+    italic: payload.italic,
+    letterSpacing: payload.letterSpacing,
+    lineHeight: payload.lineHeight,
+    underline: payload.underline,
+  };
+}
 
 const editor = useEditorStore();
 const objects = useObjectsStore();
@@ -109,20 +124,31 @@ function onInput(): void {
 
   const text = element.value;
   const next: TextPayload = { ...data, text };
-  // Раскладку считаем «без переноса» (широкая рамка): так получаем
-  // естественную ширину текста, по которой и растёт область.
-  const natural = computeTextBlockLayout(next, 100000, Math.max(4, obj.height));
+  // Ширину считаем по самой длинной строке напрямую: раскладка не учитывает
+  // пробелы в конце строки, и из-за этого пробел «переносился» на новую строку,
+  // а поле вырастало в два раза.
+  const lines = text.split('\n');
+  const longest = Math.max(
+    0,
+    ...lines.map((line) => measureTextWidth(line.length > 0 ? line : ' ', textStyle(next))),
+  );
   const padding = Math.max(0, next.padding) * 2;
+  const natural = computeTextBlockLayout(next, Math.max(4, longest + 1000), Math.max(4, obj.height));
   // Рамка только растёт: так текст не «прыгает» при удалении символов.
-  const width = Math.max(obj.width, natural.contentWidth + padding + 1);
+  const width = Math.max(obj.width, longest + padding + 2);
   const height = Math.max(next.fontSize * 1.2, natural.boxHeight);
   objects.patchSilent(obj.id, { payload: { text }, width, height });
 }
 
 function finish(): void {
-  if (!editor.editingTextId) return;
+  const obj = object.value;
+  const id = obj?.id ?? null;
+  // Пустой текст на холсте не нужен: если ничего не ввели или всё стёрли,
+  // объект удаляется.
+  const empty = Boolean(obj) && (obj?.payload.text ?? '').trim().length === 0;
   editActive = false;
   editor.stopTextEditing();
+  if (empty && id) objects.remove([id], 'Удаление пустого текста');
 }
 
 /**
