@@ -431,9 +431,11 @@ function drawShapeObject(
   }
 
   if (payload.kind === 'triangle' || payload.kind === 'polygon') {
-    // Путь строим в системе PDF (y вверх), как у прямоугольника со скруглением.
+    // Путь в тех же координатах, что и у прямоугольника: pdf-lib сам
+    // переворачивает Y (scale(1,-1)), поэтому путь задаётся «как на экране».
+    // С флагом flipY фигура выходила перевёрнутой.
     const sides = payload.kind === 'triangle' ? 3 : normalizeSides(payload.sides);
-    const path = polygonPath(obj.width, obj.height, sides, payload.cornerRadius, true);
+    const path = polygonPath(obj.width, obj.height, sides, payload.cornerRadius);
     page.drawSvgPath(path, {
       x: frame.anchor.x,
       y: frame.anchor.y,

@@ -34,6 +34,25 @@ const isLineTool = computed(() => editor.tool === 'line' || editor.tool === 'arr
 const shapeColorLabel = computed(() => (isLineTool.value ? 'Цвет линии' : 'Цвет обводки'));
 const shapeWidthLabel = computed(() => (isLineTool.value ? 'Толщина линии' : 'Толщина обводки'));
 
+/** Подсказка про Shift — своя для каждого инструмента. */
+const shapeHint = computed(() => {
+  switch (editor.tool) {
+    case 'triangle':
+      return 'Зажмите Shift, чтобы получить треугольник с равными сторонами (правильный треугольник)';
+    case 'ellipse':
+      return 'Зажмите Shift, чтобы получить круг';
+    case 'rect':
+      return 'Зажмите Shift, чтобы получить квадрат';
+    case 'polygon':
+      return 'Зажмите Shift, чтобы получить многоугольник, вписанный в квадрат';
+    case 'line':
+    case 'arrow':
+      return 'Зажмите Shift, чтобы получить ровную линию под 45°';
+    default:
+      return '';
+  }
+});
+
 const fontOptions = computed(() =>
   fonts.fonts.map((font) => ({
     value: font.id,
@@ -205,14 +224,7 @@ const documentFontsUsed = computed(() => {
           ]"
         />
       </template>
-      <p class="text-[11px] text-slate-400">
-        <template v-if="isLineTool">
-          Зажмите Shift, чтобы получить ровную линию под 45°.
-        </template>
-        <template v-else>
-          Зажмите Shift, чтобы получить квадрат (равные стороны).
-        </template>
-      </p>
+      <p v-if="shapeHint" class="text-[11px] text-slate-400">{{ shapeHint }}</p>
     </AppSection>
 
     <!-- Текст -->

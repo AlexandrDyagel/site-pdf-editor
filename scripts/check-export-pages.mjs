@@ -167,6 +167,144 @@ try {
     JSON.stringify(withOriginal),
   );
 
+  console.log('\n5. Положение объектов в растре при dpi 144');
+  const inkBox = await cdp.evaluate(`(async () => {
+    const service = await import('/src/services/imageExportService.ts');
+    const app = window.__PDF_EDITOR__;
+    const pages = await service.renderPagesImageList({
+      settings: {
+        ...app.exporter.settings,
+        format: 'png',
+        pageRange: 'current',
+        includeAnnotations: true,
+        includeOriginalContent: false,
+        transparentBackground: false,
+        dpi: 144,
+        zip: false,
+      },
+      objects: app.objects.objects,
+      pageGeometry: app.pdf.pages.map((_, index) => app.pdf.geometry(index)),
+      currentPage: 0,
+      renderOriginalPage: () => Promise.resolve(null),
+    });
+    const canvas = pages.pages[0].canvas;
+    const ctx = canvas.getContext('2d');
+    const data = ctx.getImageData(0, 0, canvas.width, canvas.height).data;
+    let minX = Infinity;
+    let minY = Infinity;
+    let maxX = -1;
+    let maxY = -1;
+    for (let y = 0; y < canvas.height; y += 1) {
+      for (let x = 0; x < canvas.width; x += 1) {
+        const index = (y * canvas.width + x) * 4;
+        if (data[index + 3] > 10 && (data[index] < 240 || data[index + 1] < 240 || data[index + 2] < 240)) {
+          if (x < minX) minX = x;
+          if (y < minY) minY = y;
+          if (x > maxX) maxX = x;
+          if (y > maxY) maxY = y;
+        }
+      }
+    }
+    const object = app.objects.objects[0];
+    return {
+      size: { width: canvas.width, height: canvas.height },
+      ink: { x: minX, y: minY, width: maxX - minX + 1, height: maxY - minY + 1 },
+      expected: { x: object.x * 2, y: object.y * 2, width: object.width * 2, height: object.height * 2 },
+    };
+  })()`);
+  console.log('  рамка объекта в растре:', JSON.stringify(inkBox));
+  check(
+    'объект стоит на своём месте при dpi 144 (не в левом верхнем углу)',
+    inkBox.ink.x >= inkBox.expected.x - 6 &&
+      inkBox.ink.y >= inkBox.expected.y - 6 &&
+      Math.abs(inkBox.ink.width - inkBox.expected.width) < 12 &&
+      Math.abs(inkBox.ink.height - inkBox.expected.height) < 12,
+    JSON.stringify(inkBox),
+  );
+
+  console.log('\n6. Ориентация фигур в PDF');
+  const triangleExport = await cdp.evaluate(`(async () => {
+    const app = window.__PDF_EDITOR__;
+    const factory = await import('/src/services/objectFactory.ts');
+    app.objects.clearAll(false);
+    const shape = factory.createShapeObject('triangle', {
+      page: 0, x: 100, y: 100, width: 200, height: 100,
+      defaults: { stroke: '#dc2626', strokeWidth: 2, fill: '#fde68a' },
+    });
+    app.objects.add([shape], 'тест');
+    app.objects.select([]);
+    app.exporter.setFormat('pdf');
+    const result = await app.exporter.run({ download: false });
+    if (!result.ok) return { ok: false, error: result.error };
+    const bytes = new Uint8Array(await result.blob.arrayBuffer());
+    let binary = '';
+    const chunk = 0x8000;
+    for (let i = 0; i < bytes.length; i += chunk) binary += String.fromCharCode.apply(null, bytes.subarray(i, i + chunk));
+    const geometry = app.pdf.geometry(0);
+    return { ok: true, b64: btoa(binary), pageHeight: geometry.height };
+  })()`);
+  check('экспорт PDF с треугольником выполнен', triangleExport.ok === true, triangleExport.error ?? '');
+
+  if (triangleExport.ok) {
+    const zlib = await import('node:zlib');
+    const pdfLib = await import('pdf-lib');
+    const doc = await pdfLib.PDFDocument.load(Buffer.from(triangleExport.b64, 'base64'));
+    const page = doc.getPage(0);
+    const streams = [];
+    const walk = (ref) => {
+      const value = ref && ref.constructor?.name === 'PDFRef' ? doc.context.lookup(ref) : ref;
+      if (value instanceof pdfLib.PDFRawStream) {
+        try {
+          streams.push(zlib.inflateSync(Buffer.from(value.contents)).toString('latin1'));
+        } catch {
+          streams.push(Buffer.from(value.contents).toString('latin1'));
+        }
+      } else if (value instanceof pdfLib.PDFArray) {
+        for (let i = 0; i < value.size(); i += 1) walk(value.get(i));
+      }
+    };
+    walk(page.node.get(pdfLib.PDFName.of('Contents')));
+    const text = streams.join('\n');
+
+    // Блок-треугольник: один «m», два «l» и замыкание «h».
+    let vertices = null;
+    let anchor = null;
+    for (const block of text.split(/\nq\n/g)) {
+      const moves = block.match(/^([\d.-]+) ([\d.-]+) m$/gm) ?? [];
+      const lines = block.match(/^([\d.-]+) ([\d.-]+) l$/gm) ?? [];
+      if (moves.length !== 1 || lines.length !== 2 || !/^h$/m.test(block)) continue;
+      const cm = block.match(/^1 0 0 1 ([\d.-]+) ([\d.-]+) cm$/m);
+      if (!cm) continue;
+      anchor = { x: Number(cm[1]), y: Number(cm[2]) };
+      vertices = [...moves, ...lines].map((line) => {
+        const parts = line.split(' ');
+        return { x: Number(parts[0]), y: Number(parts[1]) };
+      });
+      break;
+    }
+
+    if (anchor && vertices) {
+      // pdf-lib переворачивает Y внутри drawSvgPath: (x, y) → (anchor.x + x, anchor.y - y).
+      const pdfPoints = vertices.map((point) => ({ x: anchor.x + point.x, y: anchor.y - point.y }));
+      const apex = pdfPoints.reduce((best, point) => (point.y > best.y ? point : best), pdfPoints[0]);
+      const base = pdfPoints.filter((point) => point !== apex);
+      console.log('  вершины в PDF:', JSON.stringify(pdfPoints.map((point) => ({ x: Math.round(point.x), y: Math.round(point.y) }))));
+      check(
+        'вершина треугольника сверху (фигура не перевёрнута)',
+        Math.abs(apex.y - (triangleExport.pageHeight - 100)) < 1.5,
+        `y вершины ${apex.y.toFixed(2)}, ожидалось ${(triangleExport.pageHeight - 100).toFixed(2)}`,
+      );
+      check(
+        'основание треугольника снизу',
+        base.every((point) => Math.abs(point.y - (triangleExport.pageHeight - 200)) < 1.5),
+        JSON.stringify(base.map((point) => Number(point.y.toFixed(2)))),
+      );
+      check('вершина по центру рамки', Math.abs(apex.x - 200) < 1.5, `x вершины ${apex.x.toFixed(2)}`);
+    } else {
+      check('в PDF найден путь треугольника', false, 'блок не найден');
+    }
+  }
+
   await cdp.screenshot(resolvePath(TMP, 'export-pages.png'));
   console.log('\nОшибки консоли:', cdp.errors.length ? cdp.errors.join('\n') : '(нет)');
 } catch (error) {

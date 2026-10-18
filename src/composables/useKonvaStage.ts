@@ -18,7 +18,13 @@ import { onBeforeUnmount, ref, shallowRef, watch, type Ref, type ShallowRef } fr
 import { useEditorStore } from '@/stores/editor';
 import { useSettingsStore } from '@/stores/settings';
 import type { Point } from '@/utils/geometry';
-import { normalizeRect, rectFromPoints, snapPointToAngle, squareFromPoints } from '@/utils/geometry';
+import {
+  equilateralTriangleBox,
+  normalizeRect,
+  rectFromPoints,
+  snapPointToAngle,
+  squareFromPoints,
+} from '@/utils/geometry';
 import { ROTATE_CURSOR } from '@/utils/cursors';
 import { normalizeSides, polygonPath } from '@/utils/shapePath';
 import { paintStroke } from '@/services/strokeService';
@@ -268,7 +274,9 @@ export function useKonvaStage(containerRef: Ref<HTMLDivElement | null>): KonvaSt
       const endPoint = draft.constrained ? snapPointToAngle(draft.start, draft.end) : draft.end;
       const rect =
         draft.constrained && tool !== 'line' && tool !== 'arrow'
-          ? squareFromPoints(draft.start, draft.end)
+          ? tool === 'triangle'
+            ? equilateralTriangleBox(draft.start, draft.end)
+            : squareFromPoints(draft.start, draft.end)
           : normalizeRect(rectFromPoints(draft.start, draft.end));
       // «Без цвета» (stroke: null) — для резиновой рамки берём нейтральный цвет,
       // иначе контур черновика был бы невидим.

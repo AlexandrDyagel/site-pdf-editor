@@ -21,7 +21,14 @@ import type {
   TextAlign,
 } from '@/types';
 import type { Point } from '@/utils/geometry';
-import { boundsOfTransforms, normalizeRect, rectFromPoints, snapPointToAngle, squareFromPoints } from '@/utils/geometry';
+import {
+  boundsOfTransforms,
+  equilateralTriangleBox,
+  normalizeRect,
+  rectFromPoints,
+  snapPointToAngle,
+  squareFromPoints,
+} from '@/utils/geometry';
 import {
   createDrawingObject,
   createHighlightObject,
@@ -588,8 +595,12 @@ export function useEditorTools(deps: {
     constrained: boolean,
   ): void {
     const tool = editor.tool;
-    // Shift: у линий и стрелок — угол, кратный 45°, у фигур — квадрат.
-    if (constrained) rect = squareFromPoints(start, end);
+    // Shift: у линии и стрелки — угол, кратный 45°; у треугольника — рамка
+    // правильного треугольника (иначе он лишь равнобедренный); у остальных фигур
+    // квадратная рамка (круг, квадрат, многоугольник в квадрате).
+    if (constrained) {
+      rect = tool === 'triangle' ? equilateralTriangleBox(start, end) : squareFromPoints(start, end);
+    }
     const defaultStyle = settings.shapeDefaults;
     // Значения из параметров инструмента берём как есть: 0 — это осознанная
     // нулевая толщина, null — «без цвета». Раньше `0 || default` и

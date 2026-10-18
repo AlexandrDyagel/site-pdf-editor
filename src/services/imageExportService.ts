@@ -82,12 +82,17 @@ export async function renderPageCanvas(request: PageCanvasRequest): Promise<HTML
   container.style.top = '0';
 
   const stage = new Konva.Stage({ container, width, height });
-  const layer = new Konva.Layer({ listening: false });
+  // Фон уже в пикселях, объекты — в точках страницы, поэтому слой объектов
+  // масштабируется. Без этого при dpi > 72 вся композиция съезжала в левый
+  // верхний угол: холст в пикселях, а координаты — в точках.
+  const backgroundLayer = new Konva.Layer({ listening: false });
+  const layer = new Konva.Layer({ listening: false, scaleX: scale, scaleY: scale });
+  stage.add(backgroundLayer);
   stage.add(layer);
 
   try {
     if (backgroundCanvas) {
-      layer.add(
+      backgroundLayer.add(
         new Konva.Image({
           image: backgroundCanvas,
           x: 0,
@@ -98,7 +103,7 @@ export async function renderPageCanvas(request: PageCanvasRequest): Promise<HTML
         }),
       );
     } else if (!transparent || whiteBackground) {
-      layer.add(
+      backgroundLayer.add(
         new Konva.Rect({ x: 0, y: 0, width, height, fill: '#ffffff', listening: false }),
       );
     }
@@ -119,6 +124,7 @@ export async function renderPageCanvas(request: PageCanvasRequest): Promise<HTML
     }
 
     if (pending.length > 0) await Promise.all(pending);
+    backgroundLayer.draw();
     layer.draw();
 
     const canvas = stage.toCanvas({ pixelRatio: 1 }) as HTMLCanvasElement;

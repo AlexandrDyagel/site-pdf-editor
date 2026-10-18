@@ -157,6 +157,27 @@ export function squareFromPoints(a: Point, b: Point): Rect {
 }
 
 /**
+ * Рамка правильного (равностороннего) треугольника по двум точкам.
+ *
+ * Высота правильного треугольника = сторона × √3/2, поэтому рамка не квадратная:
+ * иначе треугольник, заполняющий рамку, был бы только равнобедренным.
+ */
+export function equilateralTriangleBox(a: Point, b: Point): Rect {
+  const dx = b.x - a.x;
+  const dy = b.y - a.y;
+  const size = Math.max(Math.abs(dx), Math.abs(dy));
+  const height = size * (Math.sqrt(3) / 2);
+  const signX = dx < 0 ? -1 : 1;
+  const signY = dy < 0 ? -1 : 1;
+  return {
+    x: Math.min(a.x, a.x + signX * size),
+    y: Math.min(a.y, a.y + signY * height),
+    width: size,
+    height,
+  };
+}
+
+/**
  * Точка, привязанная к направлению, кратному `stepDegrees` (для линий и стрелок
  * при зажатом Shift). Длина отрезка сохраняется.
  */

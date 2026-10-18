@@ -483,11 +483,16 @@ try {
 
   const squareTriangle = await drawWithShift('triangle', { x: 300, y: 90 }, { x: 450, y: 160 });
   console.log('  треугольник с Shift:', JSON.stringify(squareTriangle));
-  check('Shift делает треугольник равносторонним по рамке', squareTriangle !== null && Math.abs(squareTriangle.width - squareTriangle.height) < 1, JSON.stringify(squareTriangle));
+  check(
+    'Shift даёт правильный треугольник (высота = сторона × √3/2)',
+    squareTriangle !== null &&
+      Math.abs(squareTriangle.height - squareTriangle.width * (Math.sqrt(3) / 2)) < 1.5,
+    JSON.stringify(squareTriangle),
+  );
 
   const squarePolygon = await drawWithShift('polygon', { x: 300, y: 90 }, { x: 440, y: 200 });
   console.log('  многоугольник с Shift:', JSON.stringify(squarePolygon));
-  check('Shift делает многоугольник в квадратной рамке', squarePolygon !== null && Math.abs(squarePolygon.width - squarePolygon.height) < 1, JSON.stringify(squarePolygon));
+  check('Shift делает многоугольник вписанным в квадрат', squarePolygon !== null && Math.abs(squarePolygon.width - squarePolygon.height) < 1, JSON.stringify(squarePolygon));
 
   const lineShift = await drawWithShift('line', { x: 300, y: 90 }, { x: 460, y: 130 });
   console.log('  линия с Shift:', JSON.stringify(lineShift));
@@ -496,6 +501,30 @@ try {
     lineShift !== null && lineShift.height < 2,
     JSON.stringify(lineShift),
   );
+
+  // Подсказки про Shift в параметрах инструмента — свои для каждого инструмента.
+  console.log('\n2в. Подсказки про Shift');
+  const expectedHints = {
+    triangle: 'Зажмите Shift, чтобы получить треугольник с равными сторонами (правильный треугольник)',
+    ellipse: 'Зажмите Shift, чтобы получить круг',
+    rect: 'Зажмите Shift, чтобы получить квадрат',
+    polygon: 'Зажмите Shift, чтобы получить многоугольник, вписанный в квадрат',
+    line: 'Зажмите Shift, чтобы получить ровную линию под 45°',
+  };
+  for (const [tool, expected] of Object.entries(expectedHints)) {
+    const hint = await cdp.evaluate(`(async () => {
+      const app = window.__PDF_EDITOR__;
+      app.editor.setTool(${JSON.stringify(tool)});
+      app.ui.setRightTab('tool');
+      document.activeElement?.blur?.();
+      await new Promise((resolve) => setTimeout(resolve, 350));
+      const aside = Array.from(document.querySelectorAll('aside')).pop();
+      const text = (aside?.textContent || '').replace(/\\s+/g, ' ').trim();
+      return text.includes(${JSON.stringify(expected)}) ? ${JSON.stringify(expected)} : text.slice(0, 200);
+    })()`);
+    console.log(`  ${tool}:`, hint === expected ? 'ок' : hint);
+    check(`подсказка Shift у «${tool}»`, hint === expected, String(hint));
+  }
 
   console.log('\n3. Названия слоёв');
   await cdp.evaluate(`(async () => {
