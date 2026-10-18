@@ -466,6 +466,30 @@ try {
   await clickAt(await screenPoint(clickPoint.x, clickPoint.y));
   await cdp.send('Input.insertText', { text: 'Привет' });
   await sleep(800);
+  // Где стоит каретка (верх поля ввода с учётом его отступа сверху).
+  const caret = await cdp.evaluate(`(() => {
+    const app = window.__PDF_EDITOR__;
+    const field = document.querySelector('[data-testid=text-inline-editor]');
+    const container = document.querySelector('[data-testid=editor-canvas]');
+    if (!field || !container) return null;
+    const rect = field.getBoundingClientRect();
+    const base = container.getBoundingClientRect();
+    const style = getComputedStyle(field);
+    const paddingTop = Number.parseFloat(style.paddingTop) || 0;
+    const paddingLeft = Number.parseFloat(style.paddingLeft) || 0;
+    return {
+      paddingTop,
+      pageX: Number(((rect.left + paddingLeft - base.left - app.editor.pan.x) / app.editor.zoom).toFixed(2)),
+      pageY: Number(((rect.top + paddingTop - base.top - app.editor.pan.y) / app.editor.zoom).toFixed(2)),
+    };
+  })()`);
+  console.log('  каретка:', JSON.stringify(caret));
+  check(
+    'каретка стоит в точке клика',
+    caret !== null && Math.abs(caret.pageY - clickPoint.y) <= 2 && Math.abs(caret.pageX - clickPoint.x) <= 2.5,
+    JSON.stringify(caret),
+  );
+
   // Снимаем выделение: рамка трансформера рисуется на том же слое и попала бы
   // в замер «чернил».
   await cdp.evaluate(`(() => {
@@ -514,6 +538,11 @@ try {
     'начало текста совпадает с точкой клика по X',
     Math.abs(placement.inkPageX - clickPoint.x) <= 2.5,
     `x чернил ${placement.inkPageX} против ${clickPoint.x}`,
+  );
+  check(
+    'каретка и текст на одной высоте',
+    caret !== null && Math.abs(caret.pageY - placement.inkPageY) <= 1.5,
+    `каретка ${caret?.pageY}, текст ${placement.inkPageY}`,
   );
 
   await cdp.screenshot(resolvePath(TMP, 'text-inline.png'));

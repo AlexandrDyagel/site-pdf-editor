@@ -45,8 +45,7 @@ import {
 } from '@/services/objectFactory';
 import { ACCEPT, openFileDialog, readImageFile } from '@/services/fileService';
 import { pdfService } from '@/services/pdfService';
-import { computeTextBlockLayout } from '@/services/textRenderService';
-import { measureInkAscent } from '@/utils/textLayout';
+import { textInkTop } from '@/services/textRenderService';
 import { useEditorStore } from '@/stores/editor';
 import { useObjectsStore } from '@/stores/objects';
 import { usePdfStore } from '@/stores/pdf';
@@ -219,20 +218,10 @@ export function useEditorTools(deps: {
     });
     // Текст должен начинаться ровно там, где нажали: у объекта сверху есть
     // межстрочный «полуотступ» до верхушки букв, поэтому сдвигаем рамку так,
-    // чтобы верх «чернил» первой строки совпал с точкой клика.
-    const layout = computeTextBlockLayout(draft.payload, 100000, draft.height);
+    // чтобы верх «чернил» первой строки совпал с точкой клика. Тот же отступ
+    // использует оверлей ввода, поэтому каретка стоит на одной высоте с буквами.
     const padding = Math.max(0, draft.payload.padding);
-    const firstLine = (preset?.text ?? '').split('\n')[0];
-    const inkAscent =
-      measureInkAscent(firstLine, {
-        fontFamily: draft.payload.fontFamily,
-        fontSize: draft.payload.fontSize,
-        bold: draft.payload.bold,
-        italic: draft.payload.italic,
-        letterSpacing: draft.payload.letterSpacing,
-        lineHeight: draft.payload.lineHeight,
-      }) ?? layout.ascent;
-    const inkTop = padding + Math.max(0, layout.baselineInLine - inkAscent);
+    const inkTop = textInkTop(draft.payload, draft.height);
     const object = { ...draft, x: at.x - padding, y: at.y - inkTop };
     addFromCanvas([object], 'Добавление текста');
     // Сразу открываем ввод с кареткой в начале текста.

@@ -14,7 +14,7 @@ import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue';
 import { useEditorStore } from '@/stores/editor';
 import { useObjectsStore } from '@/stores/objects';
 import type { TextPayload } from '@/types';
-import { computeTextBlockLayout } from '@/services/textRenderService';
+import { computeTextBlockLayout, textInkTop } from '@/services/textRenderService';
 import { measureTextWidth } from '@/utils/textLayout';
 
 /** Стиль шрифта для измерения ширины строк. */
@@ -59,16 +59,21 @@ const box = computed(() => {
   const obj = object.value;
   if (!obj) return null;
   const zoom = editor.zoom;
-  const padding = Math.max(0, payload.value?.padding ?? 0) * zoom;
+  const data = payload.value;
+  const padding = Math.max(0, data?.padding ?? 0) * zoom;
+  // Каретка должна стоять на одной высоте с верхушками букв: у строки сверху
+  // есть «полуотступ», и без сдвига каретка оказывалась выше текста.
+  const inkTop = data ? textInkTop(data, obj.height) * zoom : 0;
   return {
     left: editor.pan.x + obj.x * zoom,
     top: editor.pan.y + obj.y * zoom,
     width: Math.max(14, obj.width * zoom),
     height: Math.max(14, obj.height * zoom),
-    fontSize: Math.max(6, (payload.value?.fontSize ?? 12) * zoom),
-    lineHeight: String(payload.value?.lineHeight ?? 1.25),
-    letterSpacing: `${(payload.value?.letterSpacing ?? 0) * zoom}px`,
+    fontSize: Math.max(6, (data?.fontSize ?? 12) * zoom),
+    lineHeight: String(data?.lineHeight ?? 1.25),
+    letterSpacing: `${(data?.letterSpacing ?? 0) * zoom}px`,
     padding: `${padding}px`,
+    inkTop: `${inkTop}px`,
   };
 });
 
@@ -93,7 +98,12 @@ const style = computed(() => {
     // расходились, и после потери фокуса текст «съезжал» на пару пикселей.
     color: 'transparent',
     WebkitTextFillColor: 'transparent',
-    padding: box.value.padding,
+    // Каретка: сверху столько же, сколько занимает «полуотступ» до букв,
+    // чтобы она начиналась на одной высоте с текстом.
+    paddingTop: box.value.inkTop,
+    paddingRight: box.value.padding,
+    paddingBottom: '0px',
+    paddingLeft: box.value.padding,
     caretColor: '#355ef0',
     background: 'transparent',
   };

@@ -19,6 +19,7 @@ import {
   getLineHeight,
   justifyOffsets,
   layoutTextBlock,
+  measureInkAscent,
   measureTextWidth,
   verticalOffset,
   type LayoutFontStyle,
@@ -165,9 +166,32 @@ export function computeTextBlockLayout(
   };
 }
 
+/**
+ * Отступ от верхнего края объекта до верхушки букв первой строки (pt).
+ *
+ * Нужен в двух местах, чтобы каретка и текст совпадали:
+ *   • при создании объекта точка клика становится верхом «чернил»;
+ *   • оверлей ввода ставит каретку ровно на эту же высоту.
+ */
+export function textInkTop(payload: TextPayload, boxHeight = 0): number {
+  const height = Math.max(1, boxHeight || payload.fontSize * 1.4);
+  const layout = computeTextBlockLayout(payload, 100000, height);
+  const padding = Math.max(0, payload.padding);
+  const firstLine = (payload.text ?? '').split('\n')[0];
+  const inkAscent =
+    measureInkAscent(firstLine, {
+      fontFamily: payload.fontFamily,
+      fontSize: payload.fontSize,
+      bold: payload.bold,
+      italic: payload.italic,
+      letterSpacing: payload.letterSpacing,
+      lineHeight: payload.lineHeight,
+    }) ?? layout.ascent;
+  return padding + Math.max(0, layout.baselineInLine - inkAscent);
+}
+
 /** Итоговая ширина/высота объекта с учётом autoHeight. */
-export function resolveTextBox(
-  payload: TextPayload,
+export function resolveTextBox(payload: TextPayload,
   width: number,
   height: number,
 ): { width: number; height: number } {
