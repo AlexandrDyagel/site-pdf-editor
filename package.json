@@ -40,7 +40,9 @@
     "check:transform": "node scripts/make-test-pdf.mjs && node scripts/check-transform-any-tool.mjs",
     "check:groups": "node scripts/make-test-pdf.mjs && node scripts/check-groups.mjs",
     "check:fonts": "node scripts/check-font-subsets.mjs",
-    "check:all": "pnpm typecheck && pnpm verify && pnpm check:components && pnpm check:workflow && pnpm check:interaction && pnpm check:corrector && pnpm check:rotation && pnpm check:user-font && pnpm check:font-ui && pnpm check:layout && pnpm check:tooltips && pnpm check:hotkeys && pnpm check:canvas-tools && pnpm check:layer-order && pnpm check:shape-styles && pnpm check:shapes-extra && pnpm check:history && pnpm check:drop-toast && pnpm check:export-pages && pnpm check:text-inline && pnpm check:transform && pnpm check:groups"
+    "check:font-embed": "node scripts/check-font-embed.mjs",
+    "check:bundled-fonts": "node scripts/make-test-pdf.mjs && node scripts/check-bundled-fonts.mjs",
+    "check:all": "pnpm typecheck && pnpm verify && pnpm check:components && pnpm check:workflow && pnpm check:interaction && pnpm check:corrector && pnpm check:rotation && pnpm check:user-font && pnpm check:font-ui && pnpm check:layout && pnpm check:tooltips && pnpm check:hotkeys && pnpm check:canvas-tools && pnpm check:layer-order && pnpm check:shape-styles && pnpm check:shapes-extra && pnpm check:history && pnpm check:drop-toast && pnpm check:export-pages && pnpm check:text-inline && pnpm check:transform && pnpm check:groups && pnpm check:font-embed && pnpm check:bundled-fonts"
   },
   "pnpm": {
     "onlyBuiltDependencies": ["esbuild"]

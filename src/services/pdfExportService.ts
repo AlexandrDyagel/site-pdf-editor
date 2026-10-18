@@ -198,6 +198,32 @@ async function embedImage(
   }
 }
 
+/**
+ * Убирает из текста символы, которых нет в шрифте.
+ *
+ * pdf-lib бросает/обрывает `drawText` на первом неподдерживаемом символе, из-за
+ * чего пропадал весь остаток строки (например, «№» в Montserrat). Пробелы и
+ * переносы сохраняем, остальные отсутствующие символы выбрасываем.
+ */
+function stripMissingGlyphs(text: string, font: PDFFont): string {
+  if (text.length === 0) return text;
+  let result = '';
+  for (const char of text) {
+    if (char === ' ' || char === '\n' || char === '\t') {
+      result += char;
+      continue;
+    }
+    try {
+      if (font.getCharacterSet().includes(char.codePointAt(0) ?? 0)) {
+        result += char;
+      }
+    } catch {
+      result += char;
+    }
+  }
+  return result;
+}
+
 /** Разрешение шрифта с проверкой покрытия глифов. */
 async function resolveFont(
   ctx: DrawContext,
@@ -272,8 +298,13 @@ async function drawTextObject(
     fill: { r: number; g: number; b: number },
     lineOpacity: number,
   ): number => {
+    // Убираем символы, которых нет в шрифте (например «№» в Montserrat):
+    // pdf-lib на первом же таком символе обрывает строку, и весь остаток
+    // текста пропадал из PDF.
+    const safe = stripMissingGlyphs(text, font);
+    if (safe.length === 0) return 0;
     const point = frame.toPdf(localX, baseline);
-    page.drawText(text, {
+    page.drawText(safe, {
       x: point.x,
       y: point.y,
       size: payload.fontSize,
@@ -283,7 +314,7 @@ async function drawTextObject(
       rotate: degrees(frame.rotate),
       xSkew: degrees(withSkew),
     });
-    return font.widthOfTextAtSize(text, payload.fontSize);
+    return font.widthOfTextAtSize(safe, payload.fontSize);
   };
 
   // «Тень» (белый ореол) — делает текст читаемым поверх сканов.

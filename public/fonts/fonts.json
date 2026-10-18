@@ -1,7 +1,7 @@
 {
   "version": 1,
-  "note": "Встроенные шрифты с поддержкой кириллицы. Файлы лежат в public/fonts и встраиваются в PDF через fontkit. Лицензии: PT Sans/PT Mono — ParaType (OFL 1.1), Roboto — Google (Apache 2.0), Inter — rsms (OFL 1.1), Noto Sans — Google (OFL 1.1), DejaVu — Bitstream Vera (свободная лицензия).",
-  "subsetNote": "Поле subsetSafe показывает, можно ли встраивать шрифт подмножеством. Значения получены автоматической проверкой scripts/check-font-subsets.mjs: подмножества pdf-lib повреждают Inter, Noto Sans и PT Mono (глифы частично пропадают), поэтому для них выполняется полное встраивание.",
+  "note": "Встроенные шрифты с поддержкой кириллицы. Файлы лежат в public/fonts и встраиваются в PDF через fontkit. Лицензии: PT Sans/PT Mono/PT Serif/Golos Text — ParaType (OFL 1.1), Roboto — Google (Apache 2.0), Inter — rsms (OFL 1.1), Noto Sans — Google (OFL 1.1), DejaVu — Bitstream Vera, Tinos — Chrome OS metric fonts (OFL 1.1), Liberation Sans — Red Hat (OFL 1.1), Ubuntu — Canonical (UFL 1.0), остальные — Google Fonts (OFL 1.1).",
+  "subsetNote": "subsetSafe: false — начертание повреждается при встраивании подмножеством (часть глифов теряется), поэтому для него выполняется полное встраивание: файл в PDF больше, но текст целый. Значения проверены scripts/check-font-subsets.mjs и scripts/check-font-embed.mjs.",
   "fonts": [
     {
       "id": "pt-sans",
@@ -12,10 +12,26 @@
       "subsetSafe": true,
       "license": "OFL 1.1 (ParaType)",
       "faces": {
-        "400-normal": { "weight": 400, "style": "normal", "url": "PT_Sans-Web-Regular.ttf" },
-        "700-normal": { "weight": 700, "style": "normal", "url": "PT_Sans-Web-Bold.ttf" },
-        "400-italic": { "weight": 400, "style": "italic", "url": "PT_Sans-Web-Italic.ttf" },
-        "700-italic": { "weight": 700, "style": "italic", "url": "PT_Sans-Web-BoldItalic.ttf" }
+        "400-normal": {
+          "weight": 400,
+          "style": "normal",
+          "url": "PT_Sans-Web-Regular.ttf"
+        },
+        "700-normal": {
+          "weight": 700,
+          "style": "normal",
+          "url": "PT_Sans-Web-Bold.ttf"
+        },
+        "400-italic": {
+          "weight": 400,
+          "style": "italic",
+          "url": "PT_Sans-Web-Italic.ttf"
+        },
+        "700-italic": {
+          "weight": 700,
+          "style": "italic",
+          "url": "PT_Sans-Web-BoldItalic.ttf"
+        }
       }
     },
     {
@@ -27,11 +43,31 @@
       "subsetSafe": true,
       "license": "Apache 2.0 (Google)",
       "faces": {
-        "400-normal": { "weight": 400, "style": "normal", "url": "Roboto-Regular.ttf" },
-        "500-normal": { "weight": 500, "style": "normal", "url": "Roboto-Medium.ttf" },
-        "700-normal": { "weight": 700, "style": "normal", "url": "Roboto-Bold.ttf" },
-        "400-italic": { "weight": 400, "style": "italic", "url": "Roboto-Italic.ttf" },
-        "700-italic": { "weight": 700, "style": "italic", "url": "Roboto-BoldItalic.ttf" }
+        "400-normal": {
+          "weight": 400,
+          "style": "normal",
+          "url": "Roboto-Regular.ttf"
+        },
+        "500-normal": {
+          "weight": 500,
+          "style": "normal",
+          "url": "Roboto-Medium.ttf"
+        },
+        "700-normal": {
+          "weight": 700,
+          "style": "normal",
+          "url": "Roboto-Bold.ttf"
+        },
+        "400-italic": {
+          "weight": 400,
+          "style": "italic",
+          "url": "Roboto-Italic.ttf"
+        },
+        "700-italic": {
+          "weight": 700,
+          "style": "italic",
+          "url": "Roboto-BoldItalic.ttf"
+        }
       }
     },
     {
@@ -43,8 +79,16 @@
       "subsetSafe": false,
       "license": "OFL 1.1 (rsms)",
       "faces": {
-        "400-normal": { "weight": 400, "style": "normal", "url": "Inter-Regular.ttf" },
-        "700-normal": { "weight": 700, "style": "normal", "url": "Inter-Bold.ttf" }
+        "400-normal": {
+          "weight": 400,
+          "style": "normal",
+          "url": "Inter-Regular.ttf"
+        },
+        "700-normal": {
+          "weight": 700,
+          "style": "normal",
+          "url": "Inter-Bold.ttf"
+        }
       }
     },
     {
@@ -56,8 +100,16 @@
       "subsetSafe": false,
       "license": "OFL 1.1 (Google)",
       "faces": {
-        "400-normal": { "weight": 400, "style": "normal", "url": "NotoSans-Regular.ttf" },
-        "700-normal": { "weight": 700, "style": "normal", "url": "NotoSans-Bold.ttf" }
+        "400-normal": {
+          "weight": 400,
+          "style": "normal",
+          "url": "NotoSans-Regular.ttf"
+        },
+        "700-normal": {
+          "weight": 700,
+          "style": "normal",
+          "url": "NotoSans-Bold.ttf"
+        }
       }
     },
     {
@@ -66,12 +118,24 @@
       "family": "DejaVu Sans",
       "source": "bundled",
       "supportsCyrillic": true,
-      "subsetSafe": true,
+      "subsetSafe": false,
       "license": "Bitstream Vera / Public domain",
       "faces": {
-        "400-normal": { "weight": 400, "style": "normal", "url": "DejaVuSans.ttf" },
-        "700-normal": { "weight": 700, "style": "normal", "url": "DejaVuSans-Bold.ttf" },
-        "400-italic": { "weight": 400, "style": "italic", "url": "DejaVuSans-Oblique.ttf" }
+        "400-normal": {
+          "weight": 400,
+          "style": "normal",
+          "url": "DejaVuSans.ttf"
+        },
+        "700-normal": {
+          "weight": 700,
+          "style": "normal",
+          "url": "DejaVuSans-Bold.ttf"
+        },
+        "400-italic": {
+          "weight": 400,
+          "style": "italic",
+          "url": "DejaVuSans-Oblique.ttf"
+        }
       }
     },
     {
@@ -83,7 +147,11 @@
       "subsetSafe": true,
       "license": "Bitstream Vera / Public domain",
       "faces": {
-        "400-normal": { "weight": 400, "style": "normal", "url": "DejaVuSerif.ttf" }
+        "400-normal": {
+          "weight": 400,
+          "style": "normal",
+          "url": "DejaVuSerif.ttf"
+        }
       }
     },
     {
@@ -95,7 +163,412 @@
       "subsetSafe": false,
       "license": "OFL 1.1 (ParaType)",
       "faces": {
-        "400-normal": { "weight": 400, "style": "normal", "url": "PT_Mono-Regular.ttf" }
+        "400-normal": {
+          "weight": 400,
+          "style": "normal",
+          "url": "PT_Mono-Regular.ttf"
+        }
+      }
+    },
+    {
+      "id": "tinos",
+      "name": "Tinos",
+      "family": "Tinos",
+      "source": "bundled",
+      "supportsCyrillic": true,
+      "subsetSafe": false,
+      "license": "OFL 1.1 (Chrome OS metric fonts)",
+      "faces": {
+        "400-normal": {
+          "weight": 400,
+          "style": "normal",
+          "url": "Tinos-Regular.ttf"
+        },
+        "700-normal": {
+          "weight": 700,
+          "style": "normal",
+          "url": "Tinos-Bold.ttf"
+        },
+        "400-italic": {
+          "weight": 400,
+          "style": "italic",
+          "url": "Tinos-Italic.ttf"
+        }
+      }
+    },
+    {
+      "id": "manrope",
+      "name": "Manrope",
+      "family": "Manrope",
+      "source": "bundled",
+      "supportsCyrillic": true,
+      "subsetSafe": true,
+      "license": "OFL 1.1 (Mikhail Sharanda)",
+      "faces": {
+        "400-normal": {
+          "weight": 400,
+          "style": "normal",
+          "url": "Manrope-Regular.ttf"
+        },
+        "700-normal": {
+          "weight": 700,
+          "style": "normal",
+          "url": "Manrope-Bold.ttf"
+        }
+      }
+    },
+    {
+      "id": "liberation-sans",
+      "name": "Liberation Sans",
+      "family": "Liberation Sans",
+      "source": "bundled",
+      "supportsCyrillic": true,
+      "subsetSafe": false,
+      "license": "SIL OFL 1.1 (Red Hat, Liberation Fonts)",
+      "faces": {
+        "400-normal": {
+          "weight": 400,
+          "style": "normal",
+          "url": "LiberationSans-Regular.ttf"
+        },
+        "700-normal": {
+          "weight": 700,
+          "style": "normal",
+          "url": "LiberationSans-Bold.ttf"
+        },
+        "400-italic": {
+          "weight": 400,
+          "style": "italic",
+          "url": "LiberationSans-Italic.ttf"
+        }
+      }
+    },
+    {
+      "id": "rubik",
+      "name": "Rubik",
+      "family": "Rubik",
+      "source": "bundled",
+      "supportsCyrillic": true,
+      "subsetSafe": true,
+      "license": "OFL 1.1 (Hubert & Fischer)",
+      "faces": {
+        "400-normal": {
+          "weight": 400,
+          "style": "normal",
+          "url": "Rubik-Regular.ttf"
+        },
+        "700-normal": {
+          "weight": 700,
+          "style": "normal",
+          "url": "Rubik-Bold.ttf"
+        },
+        "400-italic": {
+          "weight": 400,
+          "style": "italic",
+          "url": "Rubik-Italic.ttf"
+        }
+      }
+    },
+    {
+      "id": "ibm-plex-sans",
+      "name": "IBM Plex Sans",
+      "family": "IBM Plex Sans",
+      "source": "bundled",
+      "supportsCyrillic": true,
+      "subsetSafe": true,
+      "license": "OFL 1.1 (IBM)",
+      "faces": {
+        "400-normal": {
+          "weight": 400,
+          "style": "normal",
+          "url": "IBMPlexSans-Regular.ttf"
+        },
+        "700-normal": {
+          "weight": 700,
+          "style": "normal",
+          "url": "IBMPlexSans-Bold.ttf"
+        },
+        "400-italic": {
+          "weight": 400,
+          "style": "italic",
+          "url": "IBMPlexSans-Italic.ttf"
+        }
+      }
+    },
+    {
+      "id": "cormorant",
+      "name": "Cormorant",
+      "family": "Cormorant",
+      "source": "bundled",
+      "supportsCyrillic": true,
+      "subsetSafe": true,
+      "license": "OFL 1.1 (Christian Thalmann)",
+      "faces": {
+        "400-normal": {
+          "weight": 400,
+          "style": "normal",
+          "url": "Cormorant-Regular.ttf"
+        },
+        "700-normal": {
+          "weight": 700,
+          "style": "normal",
+          "url": "Cormorant-Bold.ttf"
+        },
+        "400-italic": {
+          "weight": 400,
+          "style": "italic",
+          "url": "Cormorant-Italic.ttf"
+        }
+      }
+    },
+    {
+      "id": "merriweather",
+      "name": "Merriweather",
+      "family": "Merriweather",
+      "source": "bundled",
+      "supportsCyrillic": true,
+      "subsetSafe": true,
+      "license": "OFL 1.1 (Sorkin Type)",
+      "faces": {
+        "400-normal": {
+          "weight": 400,
+          "style": "normal",
+          "url": "Merriweather-Regular.ttf"
+        },
+        "700-normal": {
+          "weight": 700,
+          "style": "normal",
+          "url": "Merriweather-Bold.ttf"
+        },
+        "400-italic": {
+          "weight": 400,
+          "style": "italic",
+          "url": "Merriweather-Italic.ttf"
+        }
+      }
+    },
+    {
+      "id": "pt-serif",
+      "name": "PT Serif",
+      "family": "PT Serif",
+      "source": "bundled",
+      "supportsCyrillic": true,
+      "subsetSafe": false,
+      "license": "OFL 1.1 (ParaType)",
+      "faces": {
+        "400-normal": {
+          "weight": 400,
+          "style": "normal",
+          "url": "PTSerif-Regular.ttf"
+        },
+        "700-normal": {
+          "weight": 700,
+          "style": "normal",
+          "url": "PTSerif-Bold.ttf"
+        },
+        "400-italic": {
+          "weight": 400,
+          "style": "italic",
+          "url": "PTSerif-Italic.ttf"
+        }
+      }
+    },
+    {
+      "id": "montserrat",
+      "name": "Montserrat",
+      "family": "Montserrat",
+      "source": "bundled",
+      "supportsCyrillic": true,
+      "subsetSafe": true,
+      "license": "OFL 1.1 (Julieta Ulanovsky)",
+      "faces": {
+        "400-normal": {
+          "weight": 400,
+          "style": "normal",
+          "url": "Montserrat-Regular.ttf"
+        },
+        "700-normal": {
+          "weight": 700,
+          "style": "normal",
+          "url": "Montserrat-Bold.ttf"
+        },
+        "400-italic": {
+          "weight": 400,
+          "style": "italic",
+          "url": "Montserrat-Italic.ttf"
+        }
+      }
+    },
+    {
+      "id": "raleway",
+      "name": "Raleway",
+      "family": "Raleway",
+      "source": "bundled",
+      "supportsCyrillic": true,
+      "subsetSafe": true,
+      "license": "OFL 1.1 (Matt McInerney)",
+      "faces": {
+        "400-normal": {
+          "weight": 400,
+          "style": "normal",
+          "url": "Raleway-Regular.ttf"
+        },
+        "700-normal": {
+          "weight": 700,
+          "style": "normal",
+          "url": "Raleway-Bold.ttf"
+        },
+        "400-italic": {
+          "weight": 400,
+          "style": "italic",
+          "url": "Raleway-Italic.ttf"
+        }
+      }
+    },
+    {
+      "id": "fira-sans",
+      "name": "Fira Sans",
+      "family": "Fira Sans",
+      "source": "bundled",
+      "supportsCyrillic": true,
+      "subsetSafe": false,
+      "license": "OFL 1.1 (Mozilla, Erik Spiekermann)",
+      "faces": {
+        "400-normal": {
+          "weight": 400,
+          "style": "normal",
+          "url": "FiraSans-Regular.ttf"
+        },
+        "700-normal": {
+          "weight": 700,
+          "style": "normal",
+          "url": "FiraSans-Bold.ttf"
+        },
+        "400-italic": {
+          "weight": 400,
+          "style": "italic",
+          "url": "FiraSans-Italic.ttf"
+        }
+      }
+    },
+    {
+      "id": "source-sans-3",
+      "name": "Source Sans 3",
+      "family": "Source Sans 3",
+      "source": "bundled",
+      "supportsCyrillic": true,
+      "subsetSafe": true,
+      "license": "OFL 1.1 (Adobe)",
+      "faces": {
+        "400-normal": {
+          "weight": 400,
+          "style": "normal",
+          "url": "SourceSans3-Regular.ttf"
+        },
+        "700-normal": {
+          "weight": 700,
+          "style": "normal",
+          "url": "SourceSans3-Bold.ttf"
+        },
+        "400-italic": {
+          "weight": 400,
+          "style": "italic",
+          "url": "SourceSans3-Italic.ttf"
+        }
+      }
+    },
+    {
+      "id": "ubuntu",
+      "name": "Ubuntu",
+      "family": "Ubuntu",
+      "source": "bundled",
+      "supportsCyrillic": true,
+      "subsetSafe": false,
+      "license": "Ubuntu Font License 1.0 (Canonical)",
+      "faces": {
+        "400-normal": {
+          "weight": 400,
+          "style": "normal",
+          "url": "Ubuntu-Regular.ttf"
+        },
+        "700-normal": {
+          "weight": 700,
+          "style": "normal",
+          "url": "Ubuntu-Bold.ttf"
+        },
+        "400-italic": {
+          "weight": 400,
+          "style": "italic",
+          "url": "Ubuntu-Italic.ttf"
+        }
+      }
+    },
+    {
+      "id": "fira-code",
+      "name": "Fira Code",
+      "family": "Fira Code",
+      "source": "bundled",
+      "supportsCyrillic": true,
+      "subsetSafe": true,
+      "license": "OFL 1.1 (Nikita Prokopov)",
+      "faces": {
+        "400-normal": {
+          "weight": 400,
+          "style": "normal",
+          "url": "FiraCode-Regular.ttf"
+        },
+        "700-normal": {
+          "weight": 700,
+          "style": "normal",
+          "url": "FiraCode-Bold.ttf"
+        }
+      }
+    },
+    {
+      "id": "golos-text",
+      "name": "Golos Text",
+      "family": "Golos Text",
+      "source": "bundled",
+      "supportsCyrillic": true,
+      "subsetSafe": true,
+      "license": "OFL 1.1 (Paratype)",
+      "faces": {
+        "400-normal": {
+          "weight": 400,
+          "style": "normal",
+          "url": "GolosText-Regular.ttf"
+        },
+        "700-normal": {
+          "weight": 700,
+          "style": "normal",
+          "url": "GolosText-Bold.ttf"
+        }
+      }
+    },
+    {
+      "id": "open-sans",
+      "name": "Open Sans",
+      "family": "Open Sans",
+      "source": "bundled",
+      "supportsCyrillic": true,
+      "subsetSafe": true,
+      "license": "OFL 1.1 (Google)",
+      "faces": {
+        "400-normal": {
+          "weight": 400,
+          "style": "normal",
+          "url": "OpenSans-Regular.ttf"
+        },
+        "700-normal": {
+          "weight": 700,
+          "style": "normal",
+          "url": "OpenSans-Bold.ttf"
+        },
+        "400-italic": {
+          "weight": 400,
+          "style": "italic",
+          "url": "OpenSans-Italic.ttf"
+        }
       }
     }
   ]

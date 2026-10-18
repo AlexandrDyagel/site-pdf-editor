@@ -11,3 +11,5 @@ public/pdfjs
 .env.*
 !.env.example
 .idea
+__pycache__/
+*.pyc
