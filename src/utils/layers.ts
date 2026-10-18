@@ -47,6 +47,17 @@ export function layerBaseName(obj: EditorObject): string {
 }
 
 /**
+ * Название слоя с учётом пользовательского имени.
+ *
+ * Имя из раздела «Служебное» главнее названия инструмента: иначе
+ * переименование сохранялось в объект, но нигде не было видно.
+ */
+export function layerName(obj: EditorObject): string {
+  const custom = obj.name?.trim();
+  return custom && custom.length > 0 ? custom : layerBaseName(obj);
+}
+
+/**
  * Подписи всех объектов страницы.
  *
  * `ordered` — объекты в порядке отрисовки (снизу вверх, как отдаёт `forPage`):
@@ -56,7 +67,7 @@ export function layerBaseName(obj: EditorObject): string {
 export function layerLabels(ordered: readonly EditorObject[]): Map<string, string> {
   const groups = new Map<string, EditorObject[]>();
   for (const obj of ordered) {
-    const base = layerBaseName(obj);
+    const base = layerName(obj);
     const list = groups.get(base);
     if (list) list.push(obj);
     else groups.set(base, [obj]);

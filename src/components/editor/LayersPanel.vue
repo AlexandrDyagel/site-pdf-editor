@@ -5,7 +5,7 @@ import { useObjectsStore } from '@/stores/objects';
 import { useEditorStore } from '@/stores/editor';
 import { useUiStore } from '@/stores/ui';
 import { usePdfStore } from '@/stores/pdf';
-import { layerAccentColor, layerBaseName, layerDetail, layerLabels } from '@/utils/layers';
+import { layerAccentColor, layerDetail, layerLabels, layerName } from '@/utils/layers';
 import AppButton from '@/components/ui/AppButton.vue';
 import AppEmptyState from '@/components/ui/AppEmptyState.vue';
 import AppTooltip from '@/components/ui/AppTooltip.vue';
@@ -20,16 +20,16 @@ const pdf = usePdfStore();
 const layers = computed(() => objects.forPage(editor.currentPage).slice().reverse());
 
 /**
- * Подписи слоёв: название инструмента + номер для одинаковых («Эллипс 1»,
- * «Прямоугольник 2»). Нумеруем снизу вверх, поэтому новые объекты сверху
- * не сбивают номера у уже существующих.
+ * Подписи слоёв: имя из «Служебного», иначе название инструмента + номер для
+ * одинаковых («Эллипс 1», «Прямоугольник 2»). Нумеруем снизу вверх, поэтому
+ * новые объекты сверху не сбивают номера у уже существующих.
  */
 const labels = computed(() => layerLabels(objects.forPage(editor.currentPage)));
 
 function label(objectId: string): string {
   const obj = objects.byId(objectId);
   if (!obj) return '';
-  return labels.value.get(objectId) ?? layerBaseName(obj);
+  return labels.value.get(objectId) ?? layerName(obj);
 }
 
 /** Подсказка строки: название + содержимое (текст, название штампа). */

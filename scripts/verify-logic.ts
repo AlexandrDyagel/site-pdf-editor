@@ -36,7 +36,7 @@ import {
 } from '@/utils/coordinates';
 import { decodeAuto, detectEncoding, encodeUtf8, buildCsv, sanitizeFileName } from '@/utils/encoding';
 import { wrapText } from '@/utils/textLayout';
-import { layerAccentColor, layerBaseName, layerLabels } from '@/utils/layers';
+import { layerAccentColor, layerBaseName, layerLabels, layerName } from '@/utils/layers';
 import { getStrokeOutline, outlineToPath, strokesToSvg } from '@/services/strokeService';
 import type { EditorObject, ShapeKind, StrokeData } from '@/types';
 
@@ -605,6 +605,33 @@ check(
   layerAccentColor(makeShape('ellipse', 'transparent', '#2563eb', 1)) === '#2563eb',
 );
 check('у закрашивания индикатор — его цвет', layerAccentColor(makeWhiteout('#ffffff', 1)) === '#ffffff');
+
+// Переименование объекта (раздел «Служебное») должно попадать в подписи слоёв.
+const renamedObject = makeShape('rect', '#ff0000', '#000000', 1);
+check('без имени название — по инструменту', layerName(renamedObject) === 'Прямоугольник');
+check(
+  'пользовательское имя главнее названия инструмента',
+  layerName({ ...renamedObject, name: '  Схема зала  ' }) === 'Схема зала',
+  layerName({ ...renamedObject, name: '  Схема зала  ' }),
+);
+check(
+  'пустое имя не ломает название',
+  layerName({ ...renamedObject, name: '   ' }) === 'Прямоугольник',
+);
+
+const renamedPair = [
+  { ...makeShape('rect', null, '#000', 1), name: 'Схема' },
+  { ...makeShape('ellipse', null, '#000', 2), name: 'Схема' },
+  makeShape('rect', null, '#000', 3),
+];
+const renamedLabels = layerLabels(renamedPair);
+check(
+  'одинаковые пользовательские имена нумеруются',
+  renamedLabels.get(renamedPair[0].id) === 'Схема 1' &&
+    renamedLabels.get(renamedPair[1].id) === 'Схема 2' &&
+    renamedLabels.get(renamedPair[2].id) === 'Прямоугольник',
+  [...renamedLabels.values()].join(' / '),
+);
 
 /* ==========================================================================
  *  Итог

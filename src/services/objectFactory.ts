@@ -237,7 +237,7 @@ export function createDrawingObject(
       width: payload.designWidth,
       height: payload.designHeight,
       zIndex: options.zIndex ?? 1,
-      name: options.name ?? 'Рисунок',
+      name: options.name,
       // Небольшой запас, чтобы сглаженные края не обрезались.
       opacity: 1,
     }),
@@ -304,7 +304,7 @@ export function createStampObject(
       height,
       zIndex: options.zIndex ?? 1,
       rotation: options.rotation ?? 0,
-      name: options.name ?? template.name,
+      name: options.name,
     }),
     type: 'stamp',
     payload: {
@@ -322,7 +322,7 @@ export function createWhiteoutObject(
   options: BaseCreateOptions & { color: string },
 ): WhiteoutObject {
   return {
-    ...baseFields({ ...options, name: options.name ?? 'Закрашивание' }),
+    ...baseFields(options),
     type: 'whiteout',
     payload: { color: options.color, solid: true },
   };
@@ -333,7 +333,7 @@ export function createHighlightObject(
   options: BaseCreateOptions & { color: string },
 ): HighlightObject {
   return {
-    ...baseFields({ ...options, name: options.name ?? 'Выделение' }),
+    ...baseFields(options),
     type: 'highlight',
     payload: { color: options.color, blend: 'multiply' },
   };

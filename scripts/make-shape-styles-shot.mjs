@@ -32,19 +32,19 @@ try {
     app.objects.clearAll(false);
     const factory = await import('/src/services/objectFactory.ts');
     const line = factory.createShapeObject('line', {
-      page: 0, x: 300, y: 90, width: 220, height: 40, name: 'Фигура',
+      page: 0, x: 300, y: 90, width: 220, height: 40,
       defaults: { stroke: '#dc2626', strokeWidth: 3, fill: null },
       points: [0, 0.5, 1, 0.5],
       dash: [8, 5, 1, 5],
     });
     const arrow = factory.createShapeObject('arrow', {
-      page: 0, x: 300, y: 170, width: 220, height: 40, name: 'Фигура',
+      page: 0, x: 300, y: 170, width: 220, height: 40,
       defaults: { stroke: '#2563eb', strokeWidth: 3, fill: null },
       points: [0, 0.5, 1, 0.5],
       arrowHead: 'both',
     });
     const dots = factory.createShapeObject('line', {
-      page: 0, x: 300, y: 250, width: 220, height: 40, name: 'Фигура',
+      page: 0, x: 300, y: 250, width: 220, height: 40,
       defaults: { stroke: '#16a34a', strokeWidth: 3, fill: null },
       points: [0, 0.5, 1, 0.5],
       dash: [1, 6],

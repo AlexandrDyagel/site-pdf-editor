@@ -96,7 +96,7 @@ try {
     const factory = await import('/src/services/objectFactory.ts');
     const make = (kind, box) => factory.createShapeObject(kind, {
       page: 0, x: box.x, y: box.y, width: box.width, height: box.height,
-      name: 'Фигура',
+      
       defaults: { stroke: '#dc2626', strokeWidth: 3, fill: null },
       points: [0, 0.5, 1, 0.5],
     });

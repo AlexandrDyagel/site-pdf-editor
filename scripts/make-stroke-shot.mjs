@@ -32,7 +32,7 @@ try {
     app.objects.clearAll(false);
     const factory = await import('/src/services/objectFactory.ts');
     const make = (kind, x, y, fill) => factory.createShapeObject(kind, {
-      page: 0, x, y, width: 180, height: 110, name: 'Фигура',
+      page: 0, x, y, width: 180, height: 110,
       defaults: { stroke: '#dc2626', strokeWidth: 3, fill },
     });
     const solid = make('rect', 300, 90, '#fde68a');

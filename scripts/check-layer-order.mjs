@@ -348,7 +348,7 @@ try {
     const app = window.__PDF_EDITOR__;
     const factory = await import('/src/services/objectFactory.ts');
     const make = (kind, fill) => factory.createShapeObject(kind, {
-      page: 0, x: 120, y: 300, width: 160, height: 100, name: 'Фигура',
+      page: 0, x: 120, y: 300, width: 160, height: 100,
       defaults: { stroke: fill, strokeWidth: 1, fill },
     });
     app.objects.clearAll(false);
@@ -411,7 +411,7 @@ try {
     const app = window.__PDF_EDITOR__;
     const factory = await import('/src/services/objectFactory.ts');
     const make = (kind, fill) => factory.createShapeObject(kind, {
-      page: 0, x: 120, y: 300, width: 160, height: 100, name: 'Фигура',
+      page: 0, x: 120, y: 300, width: 160, height: 100,
       defaults: { stroke: fill, strokeWidth: 1, fill },
     });
     app.objects.clearAll(false);
@@ -481,6 +481,87 @@ try {
     'заголовок в «Свойствах» совпадает с названием слоя',
     afterDouble.title === rowInfo.label,
     `«${afterDouble.title}» вместо «${rowInfo.label}»`,
+  );
+
+  console.log('\n11. Переименование объекта (раздел «Служебное»)');
+  await cdp.evaluate(`(() => {
+    const app = window.__PDF_EDITOR__;
+    app.objects.select([${JSON.stringify(rowInfo.id)}]);
+    app.ui.setRightTab('properties');
+    document.activeElement?.blur?.();
+    return 'ok';
+  })()`);
+  await sleep(900);
+  const sectionOpened = await cdp.evaluate(`(() => {
+    const aside = Array.from(document.querySelectorAll('aside')).pop();
+    const header = Array.from(aside.querySelectorAll('button')).find((button) =>
+      (button.textContent || '').includes('Служебное'),
+    );
+    if (!header) return false;
+    header.click();
+    return true;
+  })()`);
+  await sleep(700);
+  const typedName = await cdp.evaluate(`(() => {
+    const aside = Array.from(document.querySelectorAll('aside')).pop();
+    const field = Array.from(aside.querySelectorAll('input')).find((input) => {
+      const wrapper = input.closest('div');
+      return wrapper && (wrapper.textContent || '').includes('Имя объекта');
+    });
+    if (!field) return false;
+    field.focus();
+    field.value = 'Схема зала';
+    field.dispatchEvent(new Event('input', { bubbles: true }));
+    field.dispatchEvent(new Event('change', { bubbles: true }));
+    return true;
+  })()`);
+  await sleep(1000);
+  const afterRename = await cdp.evaluate(`(() => {
+    const app = window.__PDF_EDITOR__;
+    const object = app.objects.byId(${JSON.stringify(rowInfo.id)});
+    const title = document.querySelector('[data-object-title]');
+    return { name: object ? object.name : null, title: title ? title.textContent.trim() : null };
+  })()`);
+  console.log('  после переименования:', JSON.stringify(afterRename));
+  check('раздел «Служебное» открывается', sectionOpened === true);
+  check('поле «Имя объекта» найдено', typedName === true);
+  check('имя сохраняется в объект', afterRename.name === 'Схема зала', JSON.stringify(afterRename));
+  check(
+    'заголовок «Свойств» показывает новое имя',
+    afterRename.title === 'Схема зала',
+    JSON.stringify(afterRename.title),
+  );
+
+  await cdp.evaluate(`window.__PDF_EDITOR__.ui.setRightTab('layers'); 'ok'`);
+  await sleep(1000);
+  const layerLabelAfter = await cdp.evaluate(`(() => {
+    const row = document.querySelector('[data-layer-id=' + ${JSON.stringify(JSON.stringify(rowInfo.id))} + '] [data-layer-label]');
+    return row ? row.textContent.trim() : null;
+  })()`);
+  console.log('  подпись слоя:', layerLabelAfter);
+  check('в «Слоях» показывается новое имя', layerLabelAfter === 'Схема зала', String(layerLabelAfter));
+
+  // Отмена возвращает название по инструменту (undo живёт в сторе объектов).
+  await cdp.evaluate(`(() => {
+    const app = window.__PDF_EDITOR__;
+    app.objects.undo();
+    return 'ok';
+  })()`);
+  await sleep(1100);
+  const afterUndo = await cdp.evaluate(`(() => {
+    const app = window.__PDF_EDITOR__;
+    const object = app.objects.byId(${JSON.stringify(rowInfo.id)});
+    const row = document.querySelector('[data-layer-id=' + ${JSON.stringify(JSON.stringify(rowInfo.id))} + '] [data-layer-label]');
+    return {
+      name: object ? object.name : null,
+      label: row ? row.textContent.trim() : null,
+    };
+  })()`);
+  console.log('  после отмены:', JSON.stringify(afterUndo));
+  check(
+    'отмена возвращает название по инструменту',
+    afterUndo.name !== 'Схема зала' && String(afterUndo.label) !== 'Схема зала',
+    JSON.stringify(afterUndo),
   );
 
   await cdp.screenshot(resolvePath(TMP, 'layers-order.png'));

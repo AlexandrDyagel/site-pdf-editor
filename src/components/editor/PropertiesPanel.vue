@@ -25,7 +25,7 @@ import { useUiStore } from '@/stores/ui';
 import { useSettingsStore } from '@/stores/settings';
 import { usePdfStore } from '@/stores/pdf';
 import { rescaleStrokesForBox, scaleStrokes } from '@/services/strokeService';
-import { layerBaseName, layerDetail, layerLabels } from '@/utils/layers';
+import { layerBaseName, layerDetail, layerLabels, layerName } from '@/utils/layers';
 import { fitStampTemplate } from '@/services/stampRenderService';
 import AppSection from '@/components/ui/AppSection.vue';
 import AppInput from '@/components/ui/AppInput.vue';
@@ -116,14 +116,20 @@ const shapeKindLabels: Record<string, string> = {
 };
 
 /**
- * Заголовок объекта — так же, как в панели «Слои»: название по инструменту и
- * номер для одинаковых («Прямоугольник 2», «Эллипс»).
+ * Заголовок объекта — так же, как в панели «Слои»: имя из «Служебного», иначе
+ * название по инструменту и номер для одинаковых («Прямоугольник 2», «Эллипс»).
  */
 const objectTitle = computed(() => {
   const obj = single.value;
   if (!obj) return '';
   const labels = layerLabels(objects.forPage(obj.page));
-  return labels.get(obj.id) ?? layerBaseName(obj);
+  return labels.get(obj.id) ?? layerName(obj);
+});
+
+/** Название по инструменту — подсказка в поле «Имя объекта». */
+const defaultObjectName = computed(() => {
+  const obj = single.value;
+  return obj ? layerBaseName(obj) : '';
 });
 
 /** Дополнительная строка под заголовком: текст объекта, название штампа. */
@@ -911,8 +917,13 @@ void scaleStrokes;
           label="Имя объекта"
           size="sm"
           :model-value="single?.name ?? ''"
-          @update:model-value="single && objects.rename(single.id, String($event))"
+          :placeholder="defaultObjectName"
+          @update:model-value="single && objects.rename(single.id, String($event).trim())"
         />
+        <p class="text-[11px] text-slate-400">
+          Имя показывается в панели «Слои» и в заголовке свойств. Пустое поле —
+          название по инструменту ({{ defaultObjectName }}).
+        </p>
       </AppSection>
     </template>
   </div>
