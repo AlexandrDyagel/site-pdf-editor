@@ -453,6 +453,69 @@ try {
     JSON.stringify(realText),
   );
 
+  console.log('\n10. Текст начинается ровно в точке клика');
+  const clickPoint = { x: 300, y: 200 };
+  await cdp.evaluate(`(() => {
+    const app = window.__PDF_EDITOR__;
+    app.objects.clearAll(false);
+    app.editor.setTool('text');
+    document.activeElement?.blur?.();
+    return 'ok';
+  })()`);
+  await sleep(600);
+  await clickAt(await screenPoint(clickPoint.x, clickPoint.y));
+  await cdp.send('Input.insertText', { text: 'Привет' });
+  await sleep(800);
+  // Снимаем выделение: рамка трансформера рисуется на том же слое и попала бы
+  // в замер «чернил».
+  await cdp.evaluate(`(() => {
+    window.__PDF_EDITOR__.objects.clearSelection();
+    return 'ok';
+  })()`);
+  await sleep(700);
+  const placement = await cdp.evaluate(`(() => {
+    const app = window.__PDF_EDITOR__;
+    const object = app.objects.objects[0];
+    const canvas = document.querySelectorAll('canvas')[1];
+    const ctx = canvas.getContext('2d');
+    const zoom = app.editor.zoom;
+    const left = Math.max(0, Math.round(app.editor.pan.x + (${clickPoint.x} - 40) * zoom));
+    const top = Math.max(0, Math.round(app.editor.pan.y + (${clickPoint.y} - 40) * zoom));
+    const width = Math.round(120 * zoom);
+    const height = Math.round(80 * zoom);
+    const data = ctx.getImageData(left, top, width, height).data;
+    let minX = Infinity;
+    let minY = Infinity;
+    for (let y = 0; y < height; y += 1) {
+      for (let x = 0; x < width; x += 1) {
+        const index = (y * width + x) * 4;
+        if (data[index + 3] > 20) {
+          if (x < minX) minX = x;
+          if (y < minY) minY = y;
+        }
+      }
+    }
+    return {
+      inkPageX: Number(((left + minX - app.editor.pan.x) / zoom).toFixed(2)),
+      inkPageY: Number(((top + minY - app.editor.pan.y) / zoom).toFixed(2)),
+      objectX: Number(object.x.toFixed(2)),
+      objectY: Number(object.y.toFixed(2)),
+      text: object.payload.text,
+    };
+  })()`);
+  console.log('  клик:', JSON.stringify(clickPoint), '→', JSON.stringify(placement));
+  check('текст набран', placement.text === 'Привет', String(placement.text));
+  check(
+    'верх букв совпадает с точкой клика по Y',
+    Math.abs(placement.inkPageY - clickPoint.y) <= 2.5,
+    `y чернил ${placement.inkPageY} против ${clickPoint.y}`,
+  );
+  check(
+    'начало текста совпадает с точкой клика по X',
+    Math.abs(placement.inkPageX - clickPoint.x) <= 2.5,
+    `x чернил ${placement.inkPageX} против ${clickPoint.x}`,
+  );
+
   await cdp.screenshot(resolvePath(TMP, 'text-inline.png'));
   console.log('\nОшибки консоли:', cdp.errors.length ? cdp.errors.join('\n') : '(нет)');
 } catch (error) {

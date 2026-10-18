@@ -52,6 +52,22 @@ export function cssFontString(style: Pick<LayoutFontStyle, 'italic' | 'bold' | '
   const italic = style.italic ? 'italic ' : '';
   return `${italic}${weight} ${style.fontSize}px "${style.fontFamily}"`;
 }
+/**
+ * Высота «чернил» строки над базовой линией (pt).
+ *
+ * Нужна, чтобы текст, созданный кликом, начинался ровно в точке клика: у
+ * верхушки букв нет такого же отступа, как у строки целиком (ascent шрифта
+ * выше заглавных букв), поэтому используем реальную рамку глифов.
+ * Возвращает `null`, если браузер не умеет `actualBoundingBoxAscent`.
+ */
+export function measureInkAscent(text: string, style: LayoutFontStyle): number | null {
+  const sample = text.length > 0 ? text : 'Н';
+  if (!measureCtx) return null;
+  measureCtx.font = cssFontString(style);
+  const metrics = measureCtx.measureText(sample);
+  const ascent = metrics.actualBoundingBoxAscent;
+  return typeof ascent === 'number' && Number.isFinite(ascent) ? ascent : null;
+}
 
 /**
  * Ширина строки в pt. Учитывает межбуквенное расстояние.

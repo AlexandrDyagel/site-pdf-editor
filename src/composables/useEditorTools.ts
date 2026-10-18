@@ -45,6 +45,8 @@ import {
 } from '@/services/objectFactory';
 import { ACCEPT, openFileDialog, readImageFile } from '@/services/fileService';
 import { pdfService } from '@/services/pdfService';
+import { computeTextBlockLayout } from '@/services/textRenderService';
+import { measureInkAscent } from '@/utils/textLayout';
 import { useEditorStore } from '@/stores/editor';
 import { useObjectsStore } from '@/stores/objects';
 import { usePdfStore } from '@/stores/pdf';
@@ -195,7 +197,7 @@ export function useEditorTools(deps: {
     // Новая текстовая область — маленькая, примерно под один символ: по мере
     // набора её размер увеличивает оверлей-редактор (`TextInlineEditor`).
     const width = preset?.width ?? Math.max(12, fontSize * 1.1);
-    const object = createTextObject({
+    const draft = createTextObject({
       page: editor.currentPage,
       x: at.x,
       y: at.y,
@@ -215,6 +217,23 @@ export function useEditorTools(deps: {
         letterSpacing: defaults.letterSpacing ?? 0,
       },
     });
+    // Текст должен начинаться ровно там, где нажали: у объекта сверху есть
+    // межстрочный «полуотступ» до верхушки букв, поэтому сдвигаем рамку так,
+    // чтобы верх «чернил» первой строки совпал с точкой клика.
+    const layout = computeTextBlockLayout(draft.payload, 100000, draft.height);
+    const padding = Math.max(0, draft.payload.padding);
+    const firstLine = (preset?.text ?? '').split('\n')[0];
+    const inkAscent =
+      measureInkAscent(firstLine, {
+        fontFamily: draft.payload.fontFamily,
+        fontSize: draft.payload.fontSize,
+        bold: draft.payload.bold,
+        italic: draft.payload.italic,
+        letterSpacing: draft.payload.letterSpacing,
+        lineHeight: draft.payload.lineHeight,
+      }) ?? layout.ascent;
+    const inkTop = padding + Math.max(0, layout.baselineInLine - inkAscent);
+    const object = { ...draft, x: at.x - padding, y: at.y - inkTop };
     addFromCanvas([object], 'Добавление текста');
     // Сразу открываем ввод с кареткой в начале текста.
     editor.startTextEditing(object.id, 0);
