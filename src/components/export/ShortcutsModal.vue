@@ -18,7 +18,7 @@ const groups: { title: string; items: { keys: string; label: string }[] }[] = [
     title: 'Файл',
     items: [
       { keys: HOTKEYS.open, label: 'Открыть PDF' },
-      { keys: HOTKEYS.save, label: 'Сохранить PDF с аннотациями' },
+      { keys: HOTKEYS.save, label: 'Сохранить проект в браузере' },
       { keys: 'Ctrl + Shift + S', label: 'Открыть окно экспорта' },
       { keys: HOTKEYS.export, label: 'Экспорт' },
     ],

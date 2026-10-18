@@ -5,7 +5,7 @@ import { useUiStore } from '@/stores/ui';
 import { usePdfStore } from '@/stores/pdf';
 import { useObjectsStore } from '@/stores/objects';
 import { useEditorStore } from '@/stores/editor';
-import { useExportStore } from '@/stores/export';
+import { useExport } from '@/composables/useExport';
 import { useHistoryStore } from '@/stores/history';
 import { storageService } from '@/services/storageService';
 import { formatBytes } from '@/utils/download';
@@ -27,7 +27,7 @@ const ui = useUiStore();
 const pdf = usePdfStore();
 const objects = useObjectsStore();
 const editor = useEditorStore();
-const exporter = useExportStore();
+const { saveProject } = useExport();
 const history = useHistoryStore();
 
 const projects = ref<ProjectEntry[]>([]);
@@ -62,9 +62,8 @@ async function saveCurrent(): Promise<void> {
   }
   isSaving.value = true;
   try {
-    await exporter.saveProjectToStorage();
+    await saveProject();
     await refresh();
-    ui.notify.success('Проект сохранён в браузере');
   } finally {
     isSaving.value = false;
   }

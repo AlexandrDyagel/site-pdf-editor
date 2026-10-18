@@ -50,6 +50,12 @@ export const usePdfStore = defineStore('pdf', () => {
   const isRestricted = ref(false);
   const needsPassword = ref(false);
   const fingerprint = ref<string | null>(null);
+  /**
+   * Проект в локальном хранилище, из которого открыт документ.
+   * Нужен, чтобы кнопка «Сохранить» обновляла тот же проект, а не создавала
+   * новый при каждом нажатии.
+   */
+  const currentProjectId = ref<string | null>(null);
   const error = ref<string | null>(null);
   const loadProgress = ref(0);
   const lastPassword = ref<string | undefined>(undefined);
@@ -144,6 +150,8 @@ export const usePdfStore = defineStore('pdf', () => {
     isLoading.value = true;
     error.value = null;
     needsPassword.value = false;
+    // Открыли другой документ — связь с сохранённым проектом теряется.
+    currentProjectId.value = null;
     loadProgress.value = 0.1;
     try {
       const result = await pdfService.load(data, { password, fileName: name });
@@ -207,13 +215,15 @@ export const usePdfStore = defineStore('pdf', () => {
    * Загрузка документа из проекта: восстанавливает страницы и, если в проекте
    * есть исходный PDF, открывает его для рендера и дальнейшего экспорта.
    */
-  async function loadFromProject(project: ProjectFile): Promise<LoadOutcome> {
+  async function loadFromProject(project: ProjectFile & { id?: string }): Promise<LoadOutcome> {
+    const projectId = typeof project.id === 'string' ? project.id : null;
     const original = decodeOriginalPdf(project);
     if (original && original.byteLength > 0) {
       const outcome = await loadBytes(original, project.fileName);
       if (!outcome.ok) return outcome;
       metadata.value = { ...metadata.value, ...project.metadata };
       fileName.value = project.fileName;
+      currentProjectId.value = projectId;
       return { ok: true, warning: null };
     }
 
@@ -235,6 +245,7 @@ export const usePdfStore = defineStore('pdf', () => {
     isLoading.value = false;
     error.value = null;
     fingerprint.value = null;
+    currentProjectId.value = projectId;
     return {
       ok: true,
       warning:
@@ -348,6 +359,7 @@ export const usePdfStore = defineStore('pdf', () => {
     fileName.value = name;
     isLoaded.value = true;
     error.value = null;
+    currentProjectId.value = null;
   }
 
   /** Полный сброс документа. */
@@ -365,6 +377,7 @@ export const usePdfStore = defineStore('pdf', () => {
     isRestricted.value = false;
     needsPassword.value = false;
     fingerprint.value = null;
+    currentProjectId.value = null;
     error.value = null;
     loadProgress.value = 0;
     lastPassword.value = undefined;
@@ -384,6 +397,7 @@ export const usePdfStore = defineStore('pdf', () => {
     isRestricted,
     needsPassword,
     fingerprint,
+    currentProjectId,
     error,
     loadProgress,
     // getters

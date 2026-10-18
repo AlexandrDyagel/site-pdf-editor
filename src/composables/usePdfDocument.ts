@@ -197,7 +197,7 @@ export function usePdfDocument(): {
     if (objects.objects.length > 0) {
       const confirmed = await ui.askConfirm({
         title: 'Закрыть документ?',
-        text: 'Все несохранённые аннотации будут потеряны. Сохранить проект можно в меню «Экспорт».',
+        text: 'Все несохранённые аннотации будут потеряны. Сохранить проект можно кнопкой «Сохранить» (Ctrl+S).',
         confirmLabel: 'Закрыть без сохранения',
         danger: true,
       });

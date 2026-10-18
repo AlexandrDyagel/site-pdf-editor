@@ -53,8 +53,9 @@ async function onOpen(): Promise<void> {
   await documents.openFromDialog();
 }
 
+/** Сохранение проекта в браузере (IndexedDB), а не скачивание PDF. */
 async function onSave(): Promise<void> {
-  await exporter.quickSavePdf();
+  await exporter.saveProject();
 }
 
 function onExport(): void {
@@ -95,12 +96,13 @@ function toggleViewOnly(): void {
         <AppButton icon="folder" size="sm" @click="onOpen">Открыть</AppButton>
       </AppTooltip>
 
-      <AppTooltip text="Сохранить PDF с аннотациями" shortcut="Ctrl+S">
+      <AppTooltip text="Сохранить проект в браузере (PDF скачивается через «Экспорт»)" shortcut="Ctrl+S">
         <AppButton
           icon="save"
           size="sm"
           variant="primary"
           :disabled="!pdf.isLoaded"
+          data-testid="toolbar-save"
           @click="onSave"
         >
           Сохранить

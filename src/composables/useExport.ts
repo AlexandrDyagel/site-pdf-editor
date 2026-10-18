@@ -53,17 +53,29 @@ export function useExport() {
     return result;
   }
 
-  /** Быстрое сохранение PDF с аннотациями (Ctrl+S). */
-  async function quickSavePdf(): Promise<void> {
-    const previous = store.settings.format;
-    store.setFormat('pdf');
-    const result = await store.run({ download: true });
-    store.setFormat(previous);
-    if (result.ok) {
-      ui.notify.success('Документ сохранён', result.fileName);
-      for (const warning of result.warnings ?? []) ui.notify.warning('Предупреждение', warning);
-    } else {
-      ui.notify.error('Не удалось сохранить PDF', result.error ?? 'Неизвестная ошибка');
+  /**
+   * Сохранение проекта в браузере (кнопка «Сохранить», Ctrl+S).
+   *
+   * Документ, аннотации и настройки остаются в IndexedDB — открыть их можно на
+   * главной странице в блоке «Локальные проекты». PDF на диск не скачивается:
+   * для этого есть «Экспорт».
+   */
+  async function saveProject(): Promise<void> {
+    if (!pdf.isLoaded) {
+      ui.notify.warning('Нет открытого документа', 'Сначала загрузите PDF-файл.');
+      return;
+    }
+    try {
+      const { isNew } = await store.saveProjectToStorage();
+      ui.notify.success(
+        isNew ? 'Проект сохранён в браузере' : 'Проект обновлён',
+        'Открыть его можно на главной странице → «Локальные проекты».',
+      );
+    } catch (error) {
+      ui.notify.error(
+        'Не удалось сохранить проект',
+        error instanceof Error ? error.message : 'Неизвестная ошибка',
+      );
     }
   }
 
@@ -81,5 +93,5 @@ export function useExport() {
     return `${pages} стр. · ${objectsCount} объектов`;
   });
 
-  return { store, formats, open, close, run, quickSavePdf, downloadLast, formatLabel, summary };
+  return { store, formats, open, close, run, saveProject, downloadLast, formatLabel, summary };
 }

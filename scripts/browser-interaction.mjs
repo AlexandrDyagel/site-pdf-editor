@@ -216,9 +216,12 @@ try {
   const saved = await cdp.evaluate(`(async () => {
     const app = window.__PDF_EDITOR__;
     try {
-      const id = await app.exporter.saveProjectToStorage();
-      const list = await (await import('/src/services/storageService.ts')).storageService.projectList();
-      const project = await (await import('/src/services/storageService.ts')).storageService.projectLoad(id);
+      // Как и кнопка «Сохранить»: id проекта возвращается в объекте.
+      const result = await app.exporter.saveProjectToStorage();
+      const id = result && result.id ? result.id : result;
+      const { storageService } = await import('/src/services/storageService.ts');
+      const list = await storageService.projectList();
+      const project = await storageService.projectLoad(id);
       return { ok: true, id, count: list.length, objects: project ? project.objects.length : -1 };
     } catch (error) {
       return { ok: false, error: String(error && error.message ? error.message : error) };

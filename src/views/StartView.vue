@@ -1,7 +1,7 @@
 <script setup lang="ts">
 /** Стартовый экран: загрузка файла, создание документа, проекты и библиотека. */
-import { computed, onMounted, ref } from 'vue';
-import { useRouter } from 'vue-router';
+import { computed, onMounted, ref, watch } from 'vue';
+import { useRoute, useRouter } from 'vue-router';
 import { PAGE_SIZE_PRESETS } from '@/constants';
 import { storageService } from '@/services/storageService';
 import { docsHint } from '@/utils/hints';
@@ -76,6 +76,15 @@ async function refreshProjects(): Promise<void> {
 onMounted(() => {
   void refreshProjects();
 });
+
+// Возвращаемся из редактора на главную — список проектов может измениться.
+const route = useRoute();
+watch(
+  () => route.path,
+  (path) => {
+    if (path === '/') void refreshProjects();
+  },
+);
 
 /** Открытие файлов из зоны загрузки. */
 async function onFiles(files: File[]): Promise<void> {
@@ -257,7 +266,18 @@ const librarySummary = computed(() => [
           <div class="rounded-2xl border border-slate-200 p-4 dark:border-slate-700">
             <div class="flex items-center justify-between">
               <p class="text-[13px] font-semibold">Локальные проекты</p>
-              <AppButton size="xs" variant="ghost" icon="refresh" @click="refreshProjects">Обновить</AppButton>
+              <div class="flex items-center gap-1">
+                <AppButton size="xs" variant="ghost" icon="refresh" @click="refreshProjects">Обновить</AppButton>
+                <AppButton
+                  v-if="projects.length > 0"
+                  size="xs"
+                  variant="ghost"
+                  icon="folder"
+                  @click="ui.openModal('projects')"
+                >
+                  Все
+                </AppButton>
+              </div>
             </div>
             <div v-if="projects.length === 0" class="mt-2">
               <AppEmptyState

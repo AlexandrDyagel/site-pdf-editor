@@ -347,9 +347,16 @@ export const useExportStore = defineStore('export', () => {
   /** Проверка, что в библиотеке есть хотя бы один штамп. */
   const libraryEmpty = computed(() => library.items.length === 0);
 
-  /** Сохранение проекта в IndexedDB (автосохранение). */
-  async function saveProjectToStorage(): Promise<string> {
-    const id = pdf.fingerprint ?? 'current';
+  /**
+   * Сохранение проекта в IndexedDB.
+   *
+   * Идентификатор: проект, из которого открыт документ, иначе отпечаток файла,
+   * иначе новый id. Так повторное нажатие «Сохранить» обновляет тот же проект,
+   * а разные документы не затирают друг друга.
+   */
+  async function saveProjectToStorage(): Promise<{ id: string; isNew: boolean }> {
+    const previous = pdf.currentProjectId ?? pdf.fingerprint ?? null;
+    const id = previous ?? `project_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
     const project = serializeProject({
       fileName: pdf.fileName || 'document.pdf',
       metadata: settings.value.metadata,
@@ -360,7 +367,8 @@ export const useExportStore = defineStore('export', () => {
       includeOriginal: false,
     });
     await storageService.projectSave(id, project);
-    return id;
+    pdf.currentProjectId = id;
+    return { id, isNew: previous === null };
   }
 
   return {
