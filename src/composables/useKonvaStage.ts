@@ -18,7 +18,7 @@ import { onBeforeUnmount, ref, shallowRef, watch, type Ref, type ShallowRef } fr
 import { useEditorStore } from '@/stores/editor';
 import { useSettingsStore } from '@/stores/settings';
 import type { Point } from '@/utils/geometry';
-import { normalizeRect, rectFromPoints } from '@/utils/geometry';
+import { normalizeRect, rectFromPoints, snapPointToAngle, squareFromPoints } from '@/utils/geometry';
 import { ROTATE_CURSOR } from '@/utils/cursors';
 import { normalizeSides, polygonPath } from '@/utils/shapePath';
 import { paintStroke } from '@/services/strokeService';
@@ -262,8 +262,14 @@ export function useKonvaStage(containerRef: Ref<HTMLDivElement | null>): KonvaSt
     // Резиновая рамка инструмента.
     const draft = editor.shapeDraft;
     if (draft) {
-      const rect = normalizeRect(rectFromPoints(draft.start, draft.end));
       const tool = editor.tool;
+      // Shift: у линий и стрелок — угол 45°, у фигур — квадрат. Предпросмотр
+      // показывает ровно то, что получится после отпускания мыши.
+      const endPoint = draft.constrained ? snapPointToAngle(draft.start, draft.end) : draft.end;
+      const rect =
+        draft.constrained && tool !== 'line' && tool !== 'arrow'
+          ? squareFromPoints(draft.start, draft.end)
+          : normalizeRect(rectFromPoints(draft.start, draft.end));
       // «Без цвета» (stroke: null) — для резиновой рамки берём нейтральный цвет,
       // иначе контур черновика был бы невидим.
       const draftStroke = editor.toolOptions.shape.stroke ?? '#94a3b8';
@@ -280,7 +286,7 @@ export function useKonvaStage(containerRef: Ref<HTMLDivElement | null>): KonvaSt
         ctx.lineCap = 'round';
         ctx.beginPath();
         ctx.moveTo(draft.start.x, draft.start.y);
-        ctx.lineTo(draft.end.x, draft.end.y);
+        ctx.lineTo(endPoint.x, endPoint.y);
         ctx.stroke();
       } else {
         ctx.strokeStyle = draftStroke;

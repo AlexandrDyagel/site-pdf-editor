@@ -427,9 +427,92 @@ try {
     JSON.stringify(afterTwo),
   );
 
+  console.log('\n2б. Shift ограничивает рисование');
+  /** Рисует фигуру с зажатым Shift и возвращает её размеры. */
+  async function drawWithShift(tool, from, to) {
+    await cdp.evaluate(`(() => {
+      const app = window.__PDF_EDITOR__;
+      app.objects.clearAll(false);
+      app.objects.select([]);
+      app.editor.setTool(${JSON.stringify(tool)});
+      document.activeElement?.blur?.();
+      return 'ok';
+    })()`);
+    await sleep(600);
+    const points = await cdp.evaluate(`(() => {
+      const app = window.__PDF_EDITOR__;
+      const rect = document.querySelector('[data-testid=editor-canvas]').getBoundingClientRect();
+      const toScreen = (x, y) => ({
+        x: Math.round(rect.left + app.editor.pan.x + x * app.editor.zoom),
+        y: Math.round(rect.top + app.editor.pan.y + y * app.editor.zoom),
+      });
+      return { from: toScreen(${from.x}, ${from.y}), to: toScreen(${to.x}, ${to.y}) };
+    })()`);
+    const SHIFT = 8;
+    await cdp.send('Input.dispatchMouseEvent', { type: 'mouseMoved', x: points.from.x, y: points.from.y, button: 'none', buttons: 0, pointerType: 'mouse', modifiers: SHIFT });
+    await cdp.send('Input.dispatchMouseEvent', { type: 'mousePressed', x: points.from.x, y: points.from.y, button: 'left', buttons: 1, clickCount: 1, pointerType: 'mouse', modifiers: SHIFT });
+    for (let step = 1; step <= 8; step += 1) {
+      await cdp.send('Input.dispatchMouseEvent', {
+        type: 'mouseMoved',
+        x: Math.round(points.from.x + ((points.to.x - points.from.x) * step) / 8),
+        y: Math.round(points.from.y + ((points.to.y - points.from.y) * step) / 8),
+        button: 'left',
+        buttons: 1,
+        pointerType: 'mouse',
+        modifiers: SHIFT,
+      });
+      await sleep(25);
+    }
+    await cdp.send('Input.dispatchMouseEvent', { type: 'mouseReleased', x: points.to.x, y: points.to.y, button: 'left', buttons: 0, clickCount: 1, pointerType: 'mouse', modifiers: SHIFT });
+    await sleep(900);
+    return cdp.evaluate(`(() => {
+      const shape = window.__PDF_EDITOR__.objects.objects.find((object) => object.type === 'shape');
+      return shape
+        ? { kind: shape.payload.kind, width: Number(shape.width.toFixed(1)), height: Number(shape.height.toFixed(1)), points: shape.payload.points }
+        : null;
+    })()`);
+  }
+
+  const squareRect = await drawWithShift('rect', { x: 300, y: 90 }, { x: 460, y: 150 });
+  console.log('  прямоугольник с Shift:', JSON.stringify(squareRect));
+  check('Shift делает прямоугольник квадратным', squareRect !== null && Math.abs(squareRect.width - squareRect.height) < 1, JSON.stringify(squareRect));
+
+  const squareEllipse = await drawWithShift('ellipse', { x: 300, y: 90 }, { x: 470, y: 140 });
+  console.log('  эллипс с Shift:', JSON.stringify(squareEllipse));
+  check('Shift делает эллипс круглым', squareEllipse !== null && Math.abs(squareEllipse.width - squareEllipse.height) < 1, JSON.stringify(squareEllipse));
+
+  const squareTriangle = await drawWithShift('triangle', { x: 300, y: 90 }, { x: 450, y: 160 });
+  console.log('  треугольник с Shift:', JSON.stringify(squareTriangle));
+  check('Shift делает треугольник равносторонним по рамке', squareTriangle !== null && Math.abs(squareTriangle.width - squareTriangle.height) < 1, JSON.stringify(squareTriangle));
+
+  const squarePolygon = await drawWithShift('polygon', { x: 300, y: 90 }, { x: 440, y: 200 });
+  console.log('  многоугольник с Shift:', JSON.stringify(squarePolygon));
+  check('Shift делает многоугольник в квадратной рамке', squarePolygon !== null && Math.abs(squarePolygon.width - squarePolygon.height) < 1, JSON.stringify(squarePolygon));
+
+  const lineShift = await drawWithShift('line', { x: 300, y: 90 }, { x: 460, y: 130 });
+  console.log('  линия с Shift:', JSON.stringify(lineShift));
+  check(
+    'Shift привязывает линию к 0°/45° (наклон 20° → горизонталь)',
+    lineShift !== null && lineShift.height < 2,
+    JSON.stringify(lineShift),
+  );
+
   console.log('\n3. Названия слоёв');
-  await cdp.evaluate(`window.__PDF_EDITOR__.ui.setRightTab('layers'); 'ok'`);
-  await sleep(900);
+  await cdp.evaluate(`(async () => {
+    const app = window.__PDF_EDITOR__;
+    const factory = await import('/src/services/objectFactory.ts');
+    app.objects.clearAll(false);
+    const shape = factory.createShapeObject('polygon', {
+      page: 0, x: 300, y: 90, width: 160, height: 110,
+      defaults: { stroke: '#15803d', strokeWidth: 2, fill: '#dcfce7' },
+      sides: 7,
+    });
+    app.objects.add([shape], 'тест');
+    app.objects.select([]);
+    app.ui.setRightTab('layers');
+    return 'ok';
+  })()`);
+  await sleep(1000);
   const layerLabels = await cdp.evaluate(`(() => Array.from(document.querySelectorAll('[data-layer-label]')).map((element) => element.textContent.trim()))()`);
   console.log('  слои:', JSON.stringify(layerLabels));
   check('многоугольник в «Слоях» — «Многоугольник»', layerLabels.includes('Многоугольник'), JSON.stringify(layerLabels));

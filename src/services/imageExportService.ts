@@ -63,6 +63,7 @@ export interface PageCanvasRequest {
  */
 export async function renderPageCanvas(request: PageCanvasRequest): Promise<HTMLCanvasElement> {
   const {
+    pageIndex,
     scale,
     geometry,
     objects,
@@ -103,8 +104,11 @@ export async function renderPageCanvas(request: PageCanvasRequest): Promise<HTML
     }
 
     const pending: Promise<unknown>[] = [];
+    // Только объекты этой страницы: раньше сюда попадали объекты всех страниц,
+    // и при экспорте в PNG/JPEG/WebP/DOCX содержимое первой страницы
+    // дублировалось на остальных.
     const visibleObjects = objects
-      .filter((obj) => obj.visible)
+      .filter((obj) => obj.visible && obj.page === pageIndex)
       .slice()
       .sort((a, b) => a.zIndex - b.zIndex);
 

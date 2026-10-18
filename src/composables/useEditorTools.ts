@@ -21,7 +21,7 @@ import type {
   TextAlign,
 } from '@/types';
 import type { Point } from '@/utils/geometry';
-import { boundsOfTransforms, normalizeRect, rectFromPoints } from '@/utils/geometry';
+import { boundsOfTransforms, normalizeRect, rectFromPoints, snapPointToAngle, squareFromPoints } from '@/utils/geometry';
 import {
   createDrawingObject,
   createHighlightObject,
@@ -588,6 +588,8 @@ export function useEditorTools(deps: {
     constrained: boolean,
   ): void {
     const tool = editor.tool;
+    // Shift: у линий и стрелок — угол, кратный 45°, у фигур — квадрат.
+    if (constrained) rect = squareFromPoints(start, end);
     const defaultStyle = settings.shapeDefaults;
     // Значения из параметров инструмента берём как есть: 0 — это осознанная
     // нулевая толщина, null — «без цвета». Раньше `0 || default` и
@@ -636,15 +638,8 @@ export function useEditorTools(deps: {
     }
 
     if (tool === 'line' || tool === 'arrow') {
-      let target = end;
-      if (constrained) {
-        // Привязка к углам, кратным 45°.
-        const dx = end.x - start.x;
-        const dy = end.y - start.y;
-        const angle = Math.round(Math.atan2(dy, dx) / (Math.PI / 4)) * (Math.PI / 4);
-        const length = Math.hypot(dx, dy);
-        target = { x: start.x + Math.cos(angle) * length, y: start.y + Math.sin(angle) * length };
-      }
+      // Привязка к углам, кратным 45° (общая функция с предпросмотром).
+      const target = constrained ? snapPointToAngle(start, end) : end;
       const bounds = normalizeRect(rectFromPoints(start, target));
       const width = Math.max(1, bounds.width);
       const height = Math.max(1, bounds.height);

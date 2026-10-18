@@ -206,7 +206,12 @@ const documentFontsUsed = computed(() => {
         />
       </template>
       <p class="text-[11px] text-slate-400">
-        Зажмите Shift, чтобы получить ровную линию под 45°.
+        <template v-if="isLineTool">
+          Зажмите Shift, чтобы получить ровную линию под 45°.
+        </template>
+        <template v-else>
+          Зажмите Shift, чтобы получить квадрат (равные стороны).
+        </template>
       </p>
     </AppSection>
 

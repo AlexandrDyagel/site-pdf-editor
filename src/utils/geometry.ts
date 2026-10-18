@@ -136,6 +136,39 @@ export function rectFromPoints(a: Point, b: Point): Rect {
   };
 }
 
+/**
+ * Квадрат по двум точкам — ограничение рисования при зажатом Shift.
+ *
+ * Угол, от которого тянут, остаётся на месте, а сторона равна большему из
+ * смещений, поэтому фигура не «прыгает» при смене направления.
+ */
+export function squareFromPoints(a: Point, b: Point): Rect {
+  const dx = b.x - a.x;
+  const dy = b.y - a.y;
+  const size = Math.max(Math.abs(dx), Math.abs(dy));
+  const signX = dx < 0 ? -1 : 1;
+  const signY = dy < 0 ? -1 : 1;
+  return {
+    x: Math.min(a.x, a.x + signX * size),
+    y: Math.min(a.y, a.y + signY * size),
+    width: size,
+    height: size,
+  };
+}
+
+/**
+ * Точка, привязанная к направлению, кратному `stepDegrees` (для линий и стрелок
+ * при зажатом Shift). Длина отрезка сохраняется.
+ */
+export function snapPointToAngle(start: Point, end: Point, stepDegrees = 45): Point {
+  const dx = end.x - start.x;
+  const dy = end.y - start.y;
+  const step = toRadians(stepDegrees) || Math.PI / 4;
+  const angle = Math.round(Math.atan2(dy, dx) / step) * step;
+  const length = Math.hypot(dx, dy);
+  return { x: start.x + Math.cos(angle) * length, y: start.y + Math.sin(angle) * length };
+}
+
 /** Нормализация прямоугольника (положительные размеры). */
 export function normalizeRect(rect: Rect): Rect {
   return {
