@@ -29,6 +29,11 @@ const toolInfo = computed(
   () => TOOL_DEFINITIONS.find((tool) => tool.id === editor.tool) ?? TOOL_DEFINITIONS[0],
 );
 
+/** У линий и стрелок заливки нет — цвет и толщина относятся к самой линии. */
+const isLineTool = computed(() => editor.tool === 'line' || editor.tool === 'arrow');
+const shapeColorLabel = computed(() => (isLineTool.value ? 'Цвет линии' : 'Цвет обводки'));
+const shapeWidthLabel = computed(() => (isLineTool.value ? 'Толщина линии' : 'Толщина обводки'));
+
 const fontOptions = computed(() =>
   fonts.fonts.map((font) => ({
     value: font.id,
@@ -142,14 +147,14 @@ const documentFontsUsed = computed(() => {
     <!-- Фигуры -->
     <AppSection v-else-if="editor.isShapeTool" title="Параметры фигуры" icon="square">
       <AppColorPicker
-        label="Цвет обводки"
+        :label="shapeColorLabel"
         allow-null
         :model-value="editor.toolOptions.shape.stroke ?? ''"
         @update:model-value="editor.toolOptions.shape.stroke = $event || null"
       />
       <AppSlider
         v-model="editor.toolOptions.shape.strokeWidth"
-        label="Толщина обводки"
+        :label="shapeWidthLabel"
         unit="pt"
         :min="0"
         :max="20"

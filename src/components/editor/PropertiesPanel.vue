@@ -56,6 +56,15 @@ const multiple = computed(() => selected.value.length > 1);
 const textPayload = computed(() => single.value?.payload as TextPayload | undefined);
 const imagePayload = computed(() => single.value?.payload as ImagePayload | undefined);
 const shapePayload = computed(() => single.value?.payload as ShapePayload | undefined);
+
+/**
+ * Подпись цвета у фигур: у линий и стрелок заливки нет, поэтому «Обводка»
+ * там называется просто «Цвет».
+ */
+const shapeColorLabel = computed(() => {
+  const kind = shapePayload.value?.kind;
+  return kind === 'line' || kind === 'arrow' ? 'Цвет' : 'Обводка';
+});
 const stampPayload = computed(() => single.value?.payload as StampPayload | undefined);
 const drawingPayload = computed(
   () => single.value?.payload as DrawingPayload | SignaturePayload | undefined,
@@ -686,7 +695,7 @@ void scaleStrokes;
         <p class="text-[11px] text-slate-400">{{ shapeKindLabels[shapePayload.kind] }}</p>
         <div class="grid grid-cols-2 gap-2">
           <AppColorPicker
-            label="Обводка"
+            :label="shapeColorLabel"
             compact
             allow-null
             :model-value="shapePayload.stroke ?? ''"

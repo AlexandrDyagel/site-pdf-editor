@@ -65,6 +65,16 @@ try {
   })()`);
   await sleep(1200);
   await cdp.screenshot(resolvePath(TMP, 'shape-styles-line.png'));
+
+  // Параметры инструмента «Линия»: «Цвет линии» / «Толщина линии».
+  await cdp.evaluate(`(() => {
+    const app = window.__PDF_EDITOR__;
+    app.editor.setTool('line');
+    document.activeElement?.blur?.();
+    return 'ok';
+  })()`);
+  await sleep(1000);
+  await cdp.screenshot(resolvePath(TMP, 'shape-styles-tool.png'));
   console.log('Скриншоты сохранены');
 } catch (error) {
   console.error('ОШИБКА:', error);

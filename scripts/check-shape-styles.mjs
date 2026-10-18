@@ -127,7 +127,12 @@ try {
   const lineLabels = await panelLabels();
   console.log('  поля линии:', JSON.stringify(lineLabels));
   check('у линии нет поля «Заливка»', !lineLabels.includes('Заливка'), JSON.stringify(lineLabels));
-  check('у линии есть «Обводка» и «Толщина»', lineLabels.includes('Обводка') && lineLabels.includes('Толщина'));
+  check(
+    'у линии цвет называется «Цвет», а не «Обводка»',
+    lineLabels.includes('Цвет') && !lineLabels.includes('Обводка'),
+    JSON.stringify(lineLabels),
+  );
+  check('у линии есть «Толщина»', lineLabels.includes('Толщина'));
 
   await cdp.evaluate(`(() => {
     const app = window.__PDF_EDITOR__;
@@ -151,6 +156,27 @@ try {
   const toolLabels = await panelLabels();
   console.log('  поля инструмента «Линия»:', JSON.stringify(toolLabels));
   check('в параметрах инструмента «Линия» нет «Заливки»', !toolLabels.includes('Заливка'), JSON.stringify(toolLabels));
+  check(
+    'в параметрах инструмента «Линия» — «Цвет линии» и «Толщина линии»',
+    toolLabels.includes('Цвет линии') && toolLabels.includes('Толщина линии'),
+    JSON.stringify(toolLabels),
+  );
+
+  // У прямоугольника подписи остаются «про обводку».
+  await cdp.evaluate(`(() => {
+    const app = window.__PDF_EDITOR__;
+    app.editor.setTool('rect');
+    document.activeElement?.blur?.();
+    return 'ok';
+  })()`);
+  await sleep(900);
+  const rectToolLabels = await panelLabels();
+  console.log('  поля инструмента «Прямоугольник»:', JSON.stringify(rectToolLabels));
+  check(
+    'у прямоугольника остались «Цвет обводки» и «Толщина обводки»',
+    rectToolLabels.includes('Цвет обводки') && rectToolLabels.includes('Толщина обводки'),
+    JSON.stringify(rectToolLabels),
+  );
 
   console.log('\n2. Штриховая линия: Сплошная / Штрих / Пунктир / Штрих-пунктир');
 
@@ -368,6 +394,55 @@ try {
     check('в PDF с двух сторон — два наконечника', headsBoth === 2, `найдено ${headsBoth}`);
   } else {
     check('экспорт PDF для проверки наконечников', false, pdfNone.error ?? pdfBoth.error ?? '');
+  }
+
+  console.log('\n4. Курсор поворота выделенного объекта');
+  await cdp.evaluate(`(() => {
+    const app = window.__PDF_EDITOR__;
+    app.editor.setTool('select');
+    app.objects.select([${JSON.stringify(created.arrow)}]);
+    document.activeElement?.blur?.();
+    return 'ok';
+  })()`);
+  await sleep(1200);
+
+  const rotateCursor = await cdp.evaluate(`(() => {
+    const stage = window.__PDF_EDITOR_STAGE__;
+    const transformer = stage.findOne((node) => node.name && node.name() === 'transformer') ?? stage.findOne('Transformer');
+    const cursor = transformer && typeof transformer.rotateAnchorCursor === 'function'
+      ? transformer.rotateAnchorCursor()
+      : null;
+    const anchor = transformer ? transformer.findOne('.rotater') : null;
+    let point = null;
+    if (anchor) {
+      const container = stage.container();
+      const rect = container.getBoundingClientRect();
+      const absolute = anchor.getAbsolutePosition();
+      point = { x: Math.round(rect.left + absolute.x), y: Math.round(rect.top + absolute.y) };
+    }
+    return { cursor, point };
+  })()`);
+  console.log('  rotateAnchorCursor:', rotateCursor.cursor ? `${rotateCursor.cursor.slice(0, 42)}…` : null);
+  check(
+    'курсор поворота — картинка, а не крестик',
+    typeof rotateCursor.cursor === 'string' && rotateCursor.cursor.startsWith('url("data:image/png'),
+    rotateCursor.cursor ? rotateCursor.cursor.slice(0, 60) : 'нет курсора',
+  );
+  check('найдена ручка поворота', rotateCursor.point !== null);
+
+  if (rotateCursor.point) {
+    await cdp.send('Input.dispatchMouseEvent', { type: 'mouseMoved', x: rotateCursor.point.x, y: rotateCursor.point.y, button: 'none', buttons: 0, pointerType: 'mouse' });
+    await sleep(500);
+    const hoverCursor = await cdp.evaluate(`(() => {
+      const container = document.querySelector('.konvajs-content');
+      return container ? getComputedStyle(container).cursor : null;
+    })()`);
+    console.log('  курсор над ручкой:', hoverCursor ? `${String(hoverCursor).slice(0, 42)}…` : null);
+    check(
+      'при наведении на ручку поворота курсор — картинка поворота',
+      typeof hoverCursor === 'string' && hoverCursor.startsWith('url('),
+      String(hoverCursor).slice(0, 60),
+    );
   }
 
   console.log('\nОшибки консоли:', cdp.errors.length ? cdp.errors.join('\n') : '(нет)');

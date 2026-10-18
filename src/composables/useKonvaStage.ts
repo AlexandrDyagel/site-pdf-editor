@@ -19,6 +19,7 @@ import { useEditorStore } from '@/stores/editor';
 import { useSettingsStore } from '@/stores/settings';
 import type { Point } from '@/utils/geometry';
 import { normalizeRect, rectFromPoints } from '@/utils/geometry';
+import { ROTATE_CURSOR } from '@/utils/cursors';
 import { paintStroke } from '@/services/strokeService';
 
 /** Публичный интерфейс сцены (все узлы — реактивные ссылки). */
@@ -165,6 +166,8 @@ export function useKonvaStage(containerRef: Ref<HTMLDivElement | null>): KonvaSt
     const tr = new Konva.Transformer({
       name: 'transformer',
       rotateEnabled: true,
+      // Над объектом — круглая стрелка «поворот», а не крестик по умолчанию.
+      rotateAnchorCursor: ROTATE_CURSOR,
       borderStroke: '#355ef0',
       borderStrokeWidth: 1.2,
       anchorStroke: '#355ef0',
