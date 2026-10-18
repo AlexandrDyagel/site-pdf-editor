@@ -88,7 +88,11 @@ const style = computed(() => {
     fontStyle: data.italic ? 'italic' : 'normal',
     textDecoration: data.underline ? 'underline' : 'none',
     textAlign: data.align === 'justify' ? 'left' : data.align,
-    color: data.color,
+    // Текст рисует Konva (он виден и во время ввода), а поле ввода только
+    // принимает клавиши и показывает каретку. Иначе метрики DOM и Konva
+    // расходились, и после потери фокуса текст «съезжал» на пару пикселей.
+    color: 'transparent',
+    WebkitTextFillColor: 'transparent',
     padding: box.value.padding,
     caretColor: '#355ef0',
     background: 'transparent',

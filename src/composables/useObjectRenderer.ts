@@ -10,7 +10,7 @@
  */
 
 import Konva from 'konva';
-import { watch, type ShallowRef } from 'vue';
+import type { ShallowRef } from 'vue';
 import type { EditorObject } from '@/types';
 import type { Point } from '@/utils/geometry';
 import { displayToLocal } from '@/utils/coordinates';
@@ -395,9 +395,7 @@ export function useObjectRenderer(deps: {
       }
       node.draggable(editor.tool === 'select' && !obj.locked && !editor.viewOnly);
       node.listening(!editor.viewOnly || editor.tool === 'select');
-      // Текст, который сейчас набирают, рисует оверлей-редактор (с кареткой),
-      // поэтому сам Konva-узел прячем, чтобы не было двойного текста.
-      node.opacity(editor.editingTextId === obj.id ? 0 : obj.opacity);
+      node.opacity(obj.opacity);
 
       if (obj.type === 'text' && obj.payload.autoHeight) {
         const layout = computeTextBlockLayout(obj.payload, obj.width, obj.height);
@@ -432,12 +430,6 @@ export function useObjectRenderer(deps: {
     redraw();
   }
 
-  // Начало и конец редактирования текста меняют видимость узла: сам Konva-текст
-  // прячется, пока его набирают в оверлее с кареткой.
-  watch(
-    () => editor.editingTextId,
-    () => sync(),
-  );
 
   return {
     sync,

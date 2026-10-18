@@ -199,7 +199,7 @@ try {
   console.log('  текст после вставки:', JSON.stringify(afterInsert));
   check('текст вставился в место каретки', afterInsert === 'Привет, дорогой мир!', String(afterInsert));
 
-  console.log('\n5. Выделение рамкой и объект скрыт во время ввода');
+  console.log('\n5. Текст виден во время ввода (его рисует Konva)');
   const duringEdit = await cdp.evaluate(`(() => {
     const app = window.__PDF_EDITOR__;
     const object = app.objects.objects[0];
@@ -208,7 +208,62 @@ try {
     return { editing: app.editor.editingTextId, opacity: node ? node.opacity() : null };
   })()`);
   console.log('  во время ввода:', JSON.stringify(duringEdit));
-  check('Konva-текст скрыт, пока идёт ввод', duringEdit.opacity === 0, String(duringEdit.opacity));
+  check('Konva-текст виден и во время ввода', duringEdit.opacity === 1, String(duringEdit.opacity));
+
+  console.log('\n5б. Текст не съезжает после потери фокуса');
+  /** Рамка «чернил» текста на слое объектов (в пикселях экрана). */
+  async function textInkBox() {
+    return cdp.evaluate(`(() => {
+      const app = window.__PDF_EDITOR__;
+      const object = app.objects.objects[0];
+      const canvas = document.querySelectorAll('canvas')[1];
+      const ctx = canvas.getContext('2d');
+      const zoom = app.editor.zoom;
+      const left = Math.max(0, Math.round(app.editor.pan.x + object.x * zoom) - 40);
+      const top = Math.max(0, Math.round(app.editor.pan.y + object.y * zoom) - 40);
+      const width = Math.round((object.width + 80) * zoom);
+      const height = Math.round((object.height + 80) * zoom);
+      const data = ctx.getImageData(left, top, Math.max(1, width), Math.max(1, height)).data;
+      let minX = Infinity;
+      let minY = Infinity;
+      let maxX = -1;
+      let maxY = -1;
+      for (let y = 0; y < height; y += 1) {
+        for (let x = 0; x < width; x += 1) {
+          const index = (y * width + x) * 4;
+          if (data[index + 3] > 20) {
+            if (x < minX) minX = x;
+            if (y < minY) minY = y;
+            if (x > maxX) maxX = x;
+            if (y > maxY) maxY = y;
+          }
+        }
+      }
+      return { x: minX, y: minY, width: maxX - minX + 1, height: maxY - minY + 1 };
+    })()`);
+  }
+
+  const boxWhileEditing = await textInkBox();
+  await cdp.send('Input.dispatchKeyEvent', { type: 'keyDown', key: 'Escape', code: 'Escape', windowsVirtualKeyCode: 27 });
+  await cdp.send('Input.dispatchKeyEvent', { type: 'keyUp', key: 'Escape', code: 'Escape', windowsVirtualKeyCode: 27 });
+  await sleep(900);
+  const boxAfterBlur = await textInkBox();
+  console.log('  чернила при вводе:', JSON.stringify(boxWhileEditing), '→ после потери фокуса:', JSON.stringify(boxAfterBlur));
+  check(
+    'текст остаётся на том же месте после потери фокуса',
+    Math.abs(boxWhileEditing.x - boxAfterBlur.x) <= 1 && Math.abs(boxWhileEditing.y - boxAfterBlur.y) <= 1,
+    `сдвиг: x ${boxAfterBlur.x - boxWhileEditing.x}, y ${boxAfterBlur.y - boxWhileEditing.y}`,
+  );
+
+  // Возвращаемся в правку для следующих проверок.
+  await cdp.evaluate(`(() => {
+    const app = window.__PDF_EDITOR__;
+    const object = app.objects.objects[0];
+    app.objects.select([object.id]);
+    app.editor.startTextEditing(object.id);
+    return 'ok';
+  })()`);
+  await sleep(800);
 
   console.log('\n6. Пробел в конце слова не раздувает поле');
   const beforeSpace = await cdp.evaluate(`(() => {
