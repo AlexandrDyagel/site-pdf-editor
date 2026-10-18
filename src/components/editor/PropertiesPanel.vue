@@ -386,37 +386,10 @@ const alignActions: { kind: 'left' | 'center' | 'right' | 'top' | 'middle' | 'bo
 ];
 
 /**
- * Фокус в поле текста при редактировании.
- *
- * flush: 'post' — ждём, пока панель отрисуется. Если панель смонтировалась уже
- * после начала редактирования (переключили вкладку), фокус ставим в onMounted.
- */
-watch(
-  () => editor.editingTextId,
-  async (id) => {
-    if (!id) return;
-    await nextTick();
-    textArea.value?.focus();
-    textArea.value?.select();
-  },
-  { flush: 'post' },
-);
-
-onMounted(async () => {
-  if (!editor.editingTextId) return;
-  await nextTick();
-  textArea.value?.focus();
-  textArea.value?.select();
-});
-
-/**
- * Фокус в поле текста — только при явном редактировании.
- *
- * Раньше фокус ставился на любом выделении текстового объекта, и тогда все
- * горячие клавиши (Ctrl+Z, Ctrl+C, буквы инструментов) переставали работать:
- * обработчик намеренно игнорирует клавиши в полях ввода. Явные способы
- * редактирования (двойной клик по объекту, кнопка в панели слоёв, создание
- * текста) ставят `editor.editingTextId` сами.
+ * Фокус в поле текста больше не перехватывается: с появлением
+ * редактирования прямо на холсте (`TextInlineEditor`) каретка и ввод живут
+ * там, а поле в свойствах остаётся для правки по клику пользователя.
+ * Иначе панель забирала фокус у оверлея и каретка пропадала.
  */
 watch(
   () => [single.value?.id, single.value?.type] as const,
@@ -424,7 +397,7 @@ watch(
     const id = single.value?.id;
     // Прекращаем редактирование, если выделен другой объект.
     if (editor.editingTextId && editor.editingTextId !== id) {
-      editor.editingTextId = null;
+      editor.stopTextEditing();
     }
   },
 );

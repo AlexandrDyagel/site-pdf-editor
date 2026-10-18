@@ -73,6 +73,8 @@ export const useEditorStore = defineStore('editor', () => {
   const shiftPressed = ref(false);
 
   const editingTextId = ref<string | null>(null);
+  /** Куда поставить каретку при входе в редактирование (позиция в тексте). */
+  const textCaretOffset = ref<number | null>(null);
   const hoveredObjectId = ref<string | null>(null);
   const cursorPosition = ref<Point | null>(null);
 
@@ -162,7 +164,24 @@ export const useEditorStore = defineStore('editor', () => {
     previousTool.value = tool.value;
     tool.value = next;
     cancelDrafts();
-    if (next !== 'select') editingTextId.value = null;
+    if (next !== 'select') stopTextEditing();
+  }
+
+  /**
+   * Начать редактирование текста прямо на холсте.
+   *
+   * `caret` — позиция каретки в тексте (при клике по готовому тексту она равна
+   * месту нажатия, при создании нового — 0).
+   */
+  function startTextEditing(id: string, caret: number | null = null): void {
+    textCaretOffset.value = caret;
+    editingTextId.value = id;
+  }
+
+  /** Закончить редактирование текста. */
+  function stopTextEditing(): void {
+    editingTextId.value = null;
+    textCaretOffset.value = null;
   }
 
   function restorePreviousTool(): void {
@@ -385,6 +404,7 @@ export const useEditorStore = defineStore('editor', () => {
     spacePressed,
     shiftPressed,
     editingTextId,
+    textCaretOffset,
     hoveredObjectId,
     cursorPosition,
     activeStroke,
@@ -402,6 +422,8 @@ export const useEditorStore = defineStore('editor', () => {
     activeDrawStyle,
     // actions
     setTool,
+    startTextEditing,
+    stopTextEditing,
     restorePreviousTool,
     cancelDrafts,
     syncTextDefaults,

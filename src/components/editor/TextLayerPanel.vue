@@ -97,7 +97,7 @@ function replaceBlock(block: PdfTextBlock): void {
     },
   });
   objects.add([whiteout, textObject], 'Замена текста PDF');
-  editor.editingTextId = textObject.id;
+  editor.startTextEditing(textObject.id);
   ui.setRightTab('properties');
   ui.notify.info('Текст заменён', 'Отредактируйте его в панели свойств справа.');
 }
@@ -122,7 +122,7 @@ function addTextAt(block: PdfTextBlock): void {
     },
   });
   objects.add([textObject], 'Добавление текста');
-  editor.editingTextId = textObject.id;
+  editor.startTextEditing(textObject.id);
   ui.setRightTab('properties');
 }
 </script>

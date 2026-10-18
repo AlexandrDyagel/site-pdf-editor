@@ -52,7 +52,7 @@ export function usePdfDocument(): {
     history.clear();
     editor.setCurrentPage(0);
     editor.cancelDrafts();
-    editor.editingTextId = null;
+    editor.stopTextEditing();
     editor.tool = 'select';
     clearImageCache();
   }

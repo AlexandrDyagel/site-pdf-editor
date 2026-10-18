@@ -11,6 +11,7 @@ import { useEditorStore } from '@/stores/editor';
 import { useObjectsStore } from '@/stores/objects';
 import { usePdfStore } from '@/stores/pdf';
 import { useSettingsStore } from '@/stores/settings';
+import TextInlineEditor from '@/components/editor/TextInlineEditor.vue';
 
 const editor = useEditorStore();
 const objects = useObjectsStore();
@@ -164,6 +165,9 @@ watch(
     @pointerleave="onPointerLeave"
   >
     <div ref="container" class="absolute inset-0" />
+
+    <!-- Редактирование текста на холсте: каретка, ввод, рост рамки -->
+    <TextInlineEditor />
 
     <!-- Курсор кисти: кружок по размеру выбранного инструмента -->
     <div

@@ -15,6 +15,7 @@ import AppSelect from '@/components/ui/AppSelect.vue';
 import AppSlider from '@/components/ui/AppSlider.vue';
 import AppButton from '@/components/ui/AppButton.vue';
 import AppColorPicker from '@/components/ui/AppColorPicker.vue';
+import AppIcon from '@/components/ui/AppIcon.vue';
 import AppToggle from '@/components/ui/AppToggle.vue';
 
 const editor = useEditorStore();
@@ -35,23 +36,26 @@ const shapeColorLabel = computed(() => (isLineTool.value ? 'Цвет линии'
 const shapeWidthLabel = computed(() => (isLineTool.value ? 'Толщина линии' : 'Толщина обводки'));
 
 /** Подсказка про Shift — своя для каждого инструмента. */
-const shapeHint = computed(() => {
+const shapeHintTail = computed(() => {
   switch (editor.tool) {
     case 'triangle':
-      return 'Зажмите Shift, чтобы получить треугольник с равными сторонами (правильный треугольник)';
+      return 'треугольник с равными сторонами (правильный треугольник)';
     case 'ellipse':
-      return 'Зажмите Shift, чтобы получить круг';
+      return 'круг';
     case 'rect':
-      return 'Зажмите Shift, чтобы получить квадрат';
+      return 'квадрат';
     case 'polygon':
-      return 'Зажмите Shift, чтобы получить многоугольник, вписанный в квадрат';
+      return 'многоугольник, вписанный в квадрат';
     case 'line':
     case 'arrow':
-      return 'Зажмите Shift, чтобы получить ровную линию под 45°';
+      return 'ровную линию под 45°';
     default:
       return '';
   }
 });
+
+/** Есть ли для текущего инструмента подсказка про Shift. */
+const shapeHint = computed(() => shapeHintTail.value.length > 0);
 
 const fontOptions = computed(() =>
   fonts.fonts.map((font) => ({
@@ -224,7 +228,24 @@ const documentFontsUsed = computed(() => {
           ]"
         />
       </template>
-      <p v-if="shapeHint" class="text-[11px] text-slate-400">{{ shapeHint }}</p>
+      <p
+        v-if="shapeHint"
+        class="mt-1 flex items-start gap-2 rounded-lg border border-brand-200/80 bg-brand-50/80 px-2 py-1.5 text-[11px] leading-snug text-brand-800 dark:border-brand-500/30 dark:bg-brand-600/10 dark:text-brand-200"
+        data-testid="shift-hint"
+      >
+        <span
+          class="mt-px flex h-4 w-4 shrink-0 items-center justify-center rounded-md bg-brand-500/15 text-brand-600 dark:bg-brand-400/20 dark:text-brand-200"
+        >
+          <AppIcon name="keyboard" :size="11" />
+        </span>
+        <span>
+          Зажмите
+          <kbd
+            class="mx-px rounded border border-brand-300/80 bg-white px-1 py-px font-mono text-[10px] font-semibold text-brand-700 shadow-sm dark:border-brand-400/40 dark:bg-slate-900 dark:text-brand-200"
+            >Shift</kbd
+          >, чтобы получить {{ shapeHintTail }}
+        </span>
+      </p>
     </AppSection>
 
     <!-- Текст -->

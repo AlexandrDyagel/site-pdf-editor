@@ -25,10 +25,14 @@ import {
   boundsOfTransforms,
   equilateralTriangleBox,
   normalizeRect,
+  pointInRect,
   rectFromPoints,
+  rotatePoint,
+  rotatedBounds,
   snapPointToAngle,
   squareFromPoints,
 } from '@/utils/geometry';
+import { caretOffsetAtPoint } from '@/utils/textCaret';
 import {
   createDrawingObject,
   createHighlightObject,
@@ -186,19 +190,22 @@ export function useEditorTools(deps: {
     const defaults = { ...settings.textDefaults, ...editor.toolOptions.text };
     const fontId = defaults.fontId || settings.settings.defaultFontId;
     const font = fonts.byId(fontId);
-    const width = preset?.width ?? Math.min(280, Math.max(120, editor.pageSize.width * 0.35));
+    const fontSize = preset?.fontSize ?? defaults.fontSize;
+    // Новая текстовая область — маленькая, примерно под один символ: по мере
+    // набора её размер увеличивает оверлей-редактор (`TextInlineEditor`).
+    const width = preset?.width ?? Math.max(12, fontSize * 1.1);
     const object = createTextObject({
       page: editor.currentPage,
       x: at.x,
       y: at.y,
       width,
-      height: (preset?.fontSize ?? defaults.fontSize) * 1.4,
+      height: fontSize * 1.4,
       text: preset?.text ?? '',
       autoHeight: true,
       defaults: {
         fontId,
         fontFamily: font?.family ?? defaults.fontFamily,
-        fontSize: preset?.fontSize ?? defaults.fontSize,
+        fontSize,
         color: defaults.color,
         bold: defaults.bold ?? false,
         italic: defaults.italic ?? false,
@@ -208,9 +215,39 @@ export function useEditorTools(deps: {
       },
     });
     addFromCanvas([object], 'Добавление текста');
-    editor.editingTextId = object.id;
+    // Сразу открываем ввод с кареткой в начале текста.
+    editor.startTextEditing(object.id, 0);
     ui.setRightTab('properties');
     void fonts.ensureFontLoadedFor(fontId);
+  }
+
+  /** Текстовый объект под точкой (с учётом z-порядка и поворота). */
+  function findTextAt(point: Point): EditorObject | null {
+    const list = objects.forPage(editor.currentPage);
+    for (let index = list.length - 1; index >= 0; index -= 1) {
+      const obj = list[index];
+      if (obj.type !== 'text' || !obj.visible || obj.locked) continue;
+      const bounds = rotatedBounds(obj);
+      if (pointInRect(point, bounds)) return obj;
+    }
+    return null;
+  }
+
+  /** Вход в редактирование существующего текста с кареткой в месте клика. */
+  function editTextAt(obj: EditorObject, point: Point): void {
+    if (obj.type !== 'text') return;
+    // Точка в локальной системе объекта (без учёта поворота).
+    const local = rotatePoint(point, { x: obj.x, y: obj.y }, -obj.rotation);
+    const caret = caretOffsetAtPoint(
+      obj.payload,
+      obj.width,
+      obj.height,
+      local.x - obj.x,
+      local.y - obj.y,
+    );
+    objects.selectOne(obj.id);
+    editor.startTextEditing(obj.id, caret);
+    void fonts.ensureFontLoadedFor(obj.payload.fontId);
   }
 
   /** Вставка изображения из файла. */
@@ -348,7 +385,11 @@ export function useEditorTools(deps: {
         if (event.evt.altKey) {
           void replacePdfTextAt(point, event.evt.ctrlKey || event.evt.metaKey);
         } else {
-          insertText(point);
+          // Клик по готовому тексту — редактируем его с кареткой в месте клика,
+          // иначе создаём новый текст и сразу показываем каретку.
+          const existing = findTextAt(point);
+          if (existing) editTextAt(existing, point);
+          else insertText(point);
         }
         break;
       }
@@ -557,7 +598,7 @@ export function useEditorTools(deps: {
     if (!obj) return;
     objects.select([id]);
     if (obj.type === 'text') {
-      editor.editingTextId = id;
+      editor.startTextEditing(id);
       ui.setRightTab('properties');
     } else if (obj.type === 'stamp') {
       ui.openModal('stampEditor', { templateId: obj.payload.templateId, objectId: id });
@@ -752,7 +793,7 @@ export function useEditorTools(deps: {
         },
       });
       addFromCanvas([whiteout, textObject], 'Замена текста PDF');
-      editor.editingTextId = textObject.id;
+      editor.startTextEditing(textObject.id);
       ui.setRightTab('properties');
       ui.notify.info(
         'Режим корректурного слоя',

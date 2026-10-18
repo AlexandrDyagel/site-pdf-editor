@@ -151,7 +151,7 @@ function moveSelectedToEdge(edge: 'front' | 'back'): void {
           @click="objects.selectOne(layer.id, $event.shiftKey)"
           @dblclick="
             objects.select([layer.id]);
-            layer.type === 'text' ? (editor.editingTextId = layer.id) : undefined;
+            layer.type === 'text' ? (editor.startTextEditing(layer.id)) : undefined;
             ui.setRightTab('properties');
           "
         >

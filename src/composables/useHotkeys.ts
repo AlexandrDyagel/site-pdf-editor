@@ -102,7 +102,7 @@ export function useHotkeys(): { dispose: () => void } {
         editor.cancelDrafts();
         return;
       }
-      editor.editingTextId = null;
+      editor.stopTextEditing();
       objects.clearSelection();
       return;
     }
