@@ -157,6 +157,7 @@ const documentFontsUsed = computed(() => {
         :precision="1"
       />
       <AppColorPicker
+        v-if="editor.tool !== 'line' && editor.tool !== 'arrow'"
         :model-value="editor.toolOptions.shape.fill ?? ''"
         label="Заливка"
         allow-null

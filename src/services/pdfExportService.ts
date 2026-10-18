@@ -445,32 +445,39 @@ function drawShapeObject(
   if (payload.kind === 'arrow') {
     const headLength = Math.max(7, payload.strokeWidth * 3.4);
     const headWidth = Math.max(5, payload.strokeWidth * 2.6);
-    const lx1 = nx1 * obj.width;
-    const ly1 = ny1 * obj.height;
-    const lx2 = nx2 * obj.width;
-    const ly2 = ny2 * obj.height;
-    const dx = lx2 - lx1;
-    const dy = ly2 - ly1;
-    const length = Math.hypot(dx, dy) || 1;
-    const ux = dx / length;
-    const uy = dy / length;
-    const baseX = lx2 - ux * headLength;
-    const baseY = ly2 - uy * headLength;
-    const perpX = -uy;
-    const perpY = ux;
-    const path = [
-      `M ${lx2} ${ly2}`,
-      `L ${baseX + (perpX * headWidth) / 2} ${baseY + (perpY * headWidth) / 2}`,
-      `L ${baseX - (perpX * headWidth) / 2} ${baseY - (perpY * headWidth) / 2}`,
-      'Z',
-    ].join(' ');
-    page.drawSvgPath(path, {
-      x: frame.anchor.x,
-      y: frame.anchor.y,
-      rotate: degrees(frame.rotate),
-      color: rgb(stroke.r, stroke.g, stroke.b),
-      opacity,
-    });
+    const arrowHead = payload.arrowHead ?? 'end';
+    const startLocal: [number, number] = [nx1 * obj.width, ny1 * obj.height];
+    const endLocal: [number, number] = [nx2 * obj.width, ny2 * obj.height];
+    const color = rgb(stroke.r, stroke.g, stroke.b);
+
+    /** Треугольный наконечник: вершина `tip`, основание — со стороны `from`. */
+    const drawHead = (tip: [number, number], from: [number, number]): void => {
+      const dx = tip[0] - from[0];
+      const dy = tip[1] - from[1];
+      const length = Math.hypot(dx, dy) || 1;
+      const ux = dx / length;
+      const uy = dy / length;
+      const baseX = tip[0] - ux * headLength;
+      const baseY = tip[1] - uy * headLength;
+      const perpX = -uy;
+      const perpY = ux;
+      const headPath = [
+        `M ${tip[0]} ${tip[1]}`,
+        `L ${baseX + (perpX * headWidth) / 2} ${baseY + (perpY * headWidth) / 2}`,
+        `L ${baseX - (perpX * headWidth) / 2} ${baseY - (perpY * headWidth) / 2}`,
+        'Z',
+      ].join(' ');
+      page.drawSvgPath(headPath, {
+        x: frame.anchor.x,
+        y: frame.anchor.y,
+        rotate: degrees(frame.rotate),
+        color,
+        opacity,
+      });
+    };
+
+    if (arrowHead !== 'none') drawHead(endLocal, startLocal);
+    if (arrowHead === 'both') drawHead(startLocal, endLocal);
   }
 }
 

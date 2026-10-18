@@ -16,7 +16,7 @@ import type {
   VerticalAlign,
   WhiteoutPayload,
 } from '@/types';
-import { ZOOM_PRESETS } from '@/constants';
+import { DASH_OPTIONS, ZOOM_PRESETS } from '@/constants';
 import { useObjectsStore } from '@/stores/objects';
 import { useEditorStore } from '@/stores/editor';
 import { useFontsStore } from '@/stores/fonts';
@@ -703,6 +703,7 @@ void scaleStrokes;
           />
         </div>
         <AppColorPicker
+          v-if="shapePayload.kind !== 'line' && shapePayload.kind !== 'arrow'"
           label="Заливка"
           allow-null
           :model-value="shapePayload.fill ?? ''"
@@ -721,12 +722,7 @@ void scaleStrokes;
           label="Штриховая линия"
           size="sm"
           :model-value="shapePayload.dash.join(',')"
-          :options="[
-            { value: '', label: 'Сплошная' },
-            { value: '6,4', label: 'Пунктир' },
-            { value: '2,3', label: 'Точки' },
-            { value: '12,5', label: 'Штрих-пунктир' },
-          ]"
+          :options="DASH_OPTIONS"
           @update:model-value="
             single &&
             objects.update(

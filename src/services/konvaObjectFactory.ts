@@ -354,6 +354,9 @@ function buildChildren(group: Konva.Group, obj: EditorObject, options: ObjectBui
         const [nx1, ny1, nx2, ny2] = payload.points;
         const points = [nx1 * obj.width, ny1 * obj.height, nx2 * obj.width, ny2 * obj.height];
         if (payload.kind === 'arrow') {
+          // Наконечники: 'none' — просто линия, 'end' — на конце,
+          // 'both' — с двух сторон. Konva умеет оба наконечника.
+          const arrowHead = payload.arrowHead ?? 'end';
           group.add(
             new Konva.Arrow({
               points,
@@ -361,6 +364,8 @@ function buildChildren(group: Konva.Group, obj: EditorObject, options: ObjectBui
               fill: stroke,
               strokeWidth: effectiveWidth,
               dash,
+              pointerAtBeginning: arrowHead === 'both',
+              pointerAtEnding: arrowHead !== 'none',
               pointerLength: Math.max(6, strokeWidth * 3.4),
               pointerWidth: Math.max(5, strokeWidth * 2.6),
               lineCap: 'round',

@@ -31,8 +31,9 @@
     "check:hotkeys": "node scripts/make-test-pdf.mjs && node scripts/check-hotkeys.mjs",
     "check:canvas-tools": "node scripts/make-test-pdf.mjs && node scripts/check-canvas-tools.mjs",
     "check:layer-order": "node scripts/make-test-pdf.mjs && node scripts/check-layer-order.mjs",
+    "check:shape-styles": "node scripts/make-test-pdf.mjs && node scripts/check-shape-styles.mjs",
     "check:fonts": "node scripts/check-font-subsets.mjs",
-    "check:all": "pnpm typecheck && pnpm verify && pnpm check:components && pnpm check:workflow && pnpm check:interaction && pnpm check:corrector && pnpm check:rotation && pnpm check:user-font && pnpm check:font-ui && pnpm check:layout && pnpm check:tooltips && pnpm check:hotkeys && pnpm check:canvas-tools && pnpm check:layer-order"
+    "check:all": "pnpm typecheck && pnpm verify && pnpm check:components && pnpm check:workflow && pnpm check:interaction && pnpm check:corrector && pnpm check:rotation && pnpm check:user-font && pnpm check:font-ui && pnpm check:layout && pnpm check:tooltips && pnpm check:hotkeys && pnpm check:canvas-tools && pnpm check:layer-order && pnpm check:shape-styles"
   },
   "pnpm": {
     "onlyBuiltDependencies": ["esbuild"]
