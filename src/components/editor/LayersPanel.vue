@@ -5,6 +5,7 @@ import { useObjectsStore } from '@/stores/objects';
 import { useEditorStore } from '@/stores/editor';
 import { useUiStore } from '@/stores/ui';
 import { usePdfStore } from '@/stores/pdf';
+import { layerAccentColor, layerBaseName, layerDetail, layerLabels } from '@/utils/layers';
 import AppButton from '@/components/ui/AppButton.vue';
 import AppEmptyState from '@/components/ui/AppEmptyState.vue';
 import AppTooltip from '@/components/ui/AppTooltip.vue';
@@ -18,6 +19,34 @@ const pdf = usePdfStore();
 /** Объекты страницы: сверху — самые «верхние» слои. */
 const layers = computed(() => objects.forPage(editor.currentPage).slice().reverse());
 
+/**
+ * Подписи слоёв: название инструмента + номер для одинаковых («Эллипс 1»,
+ * «Прямоугольник 2»). Нумеруем снизу вверх, поэтому новые объекты сверху
+ * не сбивают номера у уже существующих.
+ */
+const labels = computed(() => layerLabels(objects.forPage(editor.currentPage)));
+
+function label(objectId: string): string {
+  const obj = objects.byId(objectId);
+  if (!obj) return '';
+  return labels.value.get(objectId) ?? layerBaseName(obj);
+}
+
+/** Подсказка строки: название + содержимое (текст, название штампа). */
+function hint(objectId: string): string {
+  const obj = objects.byId(objectId);
+  if (!obj) return '';
+  const detail = layerDetail(obj);
+  const base = label(objectId);
+  return detail ? `${base} · ${detail}` : base;
+}
+
+/** Цвет индикатора слоя. */
+function accent(objectId: string): string | null {
+  const obj = objects.byId(objectId);
+  return obj ? layerAccentColor(obj) : null;
+}
+
 const typeIcons: Record<string, string> = {
   text: 'type',
   image: 'image',
@@ -28,28 +57,6 @@ const typeIcons: Record<string, string> = {
   whiteout: 'whiteout',
   highlight: 'highlight',
 };
-
-const typeNames: Record<string, string> = {
-  text: 'Текст',
-  image: 'Изображение',
-  shape: 'Фигура',
-  drawing: 'Рисунок',
-  signature: 'Подпись',
-  stamp: 'Штамп',
-  whiteout: 'Закрашивание',
-  highlight: 'Выделение',
-};
-
-function label(objectId: string): string {
-  const obj = objects.byId(objectId);
-  if (!obj) return '';
-  if (obj.name) return obj.name;
-  if (obj.type === 'text') {
-    const text = (obj.payload as { text?: string }).text ?? '';
-    return text.slice(0, 40) || 'Текст';
-  }
-  return typeNames[obj.type] ?? obj.type;
-}
 
 async function removeSelected(objectId: string): Promise<void> {
   const confirmed = await ui.askConfirm({
@@ -140,6 +147,7 @@ function moveSelectedToEdge(edge: 'front' | 'back'): void {
         <button
           type="button"
           class="flex min-w-0 flex-1 items-center gap-2 text-left"
+          :title="hint(layer.id)"
           @click="objects.selectOne(layer.id, $event.shiftKey)"
           @dblclick="
             objects.select([layer.id]);
@@ -147,11 +155,26 @@ function moveSelectedToEdge(edge: 'front' | 'back'): void {
             ui.setRightTab('properties');
           "
         >
-          <span class="text-slate-400">
+          <!-- Индикатор основного цвета: заливка фигуры, цвет текста и т. п. -->
+          <span
+            v-if="accent(layer.id)"
+            class="flex h-[15px] w-[15px] shrink-0 items-center justify-center"
+            :title="accent(layer.id) ?? ''"
+          >
+            <span
+              data-layer-color
+              class="block h-3 w-3 rounded-full ring-1 ring-slate-300 dark:ring-slate-600"
+              :style="{ backgroundColor: accent(layer.id) ?? 'transparent' }"
+            />
+          </span>
+          <span v-else class="text-slate-400">
             <AppIcon :name="typeIcons[layer.type] ?? 'square'" :size="15" />
           </span>
           <span class="min-w-0 flex-1">
-            <span class="block truncate text-[12px] text-slate-700 dark:text-slate-200">
+            <span
+              data-layer-label
+              class="block truncate text-[12px] text-slate-700 dark:text-slate-200"
+            >
               {{ label(layer.id) }}
             </span>
             <span class="block truncate text-[10px] text-slate-400">

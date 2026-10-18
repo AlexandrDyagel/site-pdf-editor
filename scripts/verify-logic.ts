@@ -36,8 +36,9 @@ import {
 } from '@/utils/coordinates';
 import { decodeAuto, detectEncoding, encodeUtf8, buildCsv, sanitizeFileName } from '@/utils/encoding';
 import { wrapText } from '@/utils/textLayout';
+import { layerAccentColor, layerBaseName, layerLabels } from '@/utils/layers';
 import { getStrokeOutline, outlineToPath, strokesToSvg } from '@/services/strokeService';
-import type { EditorObject, StrokeData } from '@/types';
+import type { EditorObject, ShapeKind, StrokeData } from '@/types';
 
 let passed = 0;
 let failed = 0;
@@ -504,6 +505,108 @@ try {
 check('стандартный Helvetica не кодирует кириллицу (ожидаемая ошибка)', standardFontFailed);
 
 /* ==========================================================================
+ *  9. Подписи слоёв: названия по инструменту, нумерация и цвет
+ * ========================================================================== */
+
+console.log('\n9. Подписи слоёв и цветовые индикаторы');
+
+let objectSeq = 0;
+function baseObject(zIndex: number) {
+  objectSeq += 1;
+  return {
+    id: `obj-${objectSeq}`,
+    page: 0,
+    x: 0,
+    y: 0,
+    width: 10,
+    height: 10,
+    rotation: 0,
+    opacity: 1,
+    visible: true,
+    locked: false,
+    zIndex,
+    createdAt: '2024-01-01T00:00:00.000Z',
+    updatedAt: '2024-01-01T00:00:00.000Z',
+  };
+}
+function makeShape(
+  kind: ShapeKind,
+  fill: string | null,
+  stroke: string,
+  zIndex: number,
+): EditorObject {
+  return {
+    ...baseObject(zIndex),
+    type: 'shape',
+    payload: {
+      kind,
+      stroke,
+      strokeWidth: 1,
+      fill,
+      dash: [],
+      cornerRadius: 0,
+      arrowHead: 'none',
+      points: [0, 0, 1, 1],
+    },
+  };
+}
+function makeWhiteout(color: string, zIndex: number): EditorObject {
+  return { ...baseObject(zIndex), type: 'whiteout', payload: { color, solid: true } };
+}
+
+check('эллипс называется «Эллипс»', layerBaseName(makeShape('ellipse', null, '#000', 1)) === 'Эллипс');
+check(
+  'прямоугольник называется «Прямоугольник»',
+  layerBaseName(makeShape('rect', null, '#000', 1)) === 'Прямоугольник',
+);
+check('линия называется «Линия»', layerBaseName(makeShape('line', null, '#000', 1)) === 'Линия');
+check('стрелка называется «Стрелка»', layerBaseName(makeShape('arrow', null, '#000', 1)) === 'Стрелка');
+check('закрашивание называется «Закрашивание»', layerBaseName(makeWhiteout('#ffffff', 1)) === 'Закрашивание');
+
+const single = [makeShape('ellipse', '#ff0000', '#000000', 1)];
+const singleLabels = layerLabels(single);
+check('единственная фигура без номера', singleLabels.get(single[0].id) === 'Эллипс', singleLabels.get(single[0].id));
+
+const pair = [
+  makeShape('rect', '#ff0000', '#000000', 1),
+  makeShape('rect', '#00ff00', '#000000', 2),
+];
+const pairLabels = layerLabels(pair);
+check(
+  'одинаковые фигуры нумеруются снизу вверх',
+  pairLabels.get(pair[0].id) === 'Прямоугольник 1' && pairLabels.get(pair[1].id) === 'Прямоугольник 2',
+  `${pairLabels.get(pair[0].id)} / ${pairLabels.get(pair[1].id)}`,
+);
+
+const mixed = [
+  makeShape('rect', '#ff0000', '#000000', 1),
+  makeShape('ellipse', '#0000ff', '#000000', 2),
+  makeShape('rect', '#ff0000', '#000000', 3),
+];
+const mixedLabels = layerLabels(mixed);
+check(
+  'разные фигуры не смешиваются в нумерации',
+  mixedLabels.get(mixed[0].id) === 'Прямоугольник 1' &&
+    mixedLabels.get(mixed[1].id) === 'Эллипс' &&
+    mixedLabels.get(mixed[2].id) === 'Прямоугольник 2',
+  [...mixedLabels.values()].join(' / '),
+);
+
+check(
+  'индикатор цвета берёт заливку фигуры',
+  layerAccentColor(makeShape('rect', '#e11d48', '#000000', 1)) === '#e11d48',
+);
+check(
+  'без заливки индикатор берёт обводку',
+  layerAccentColor(makeShape('rect', null, '#16a34a', 1)) === '#16a34a',
+);
+check(
+  'прозрачная заливка не попадает в индикатор',
+  layerAccentColor(makeShape('ellipse', 'transparent', '#2563eb', 1)) === '#2563eb',
+);
+check('у закрашивания индикатор — его цвет', layerAccentColor(makeWhiteout('#ffffff', 1)) === '#ffffff');
+
+/* ==========================================================================
  *  Итог
  * ========================================================================== */
 
@@ -511,4 +614,3 @@ console.log(`\nПроверок пройдено: ${passed}, провалено:
 if (failed > 0) {
   process.exitCode = 1;
 }
-void (null as unknown as EditorObject);

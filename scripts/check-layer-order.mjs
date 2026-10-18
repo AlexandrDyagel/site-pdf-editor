@@ -333,6 +333,69 @@ try {
     JSON.stringify(flatAfter.rows.map((row) => row.z)),
   );
 
+  console.log('\n9. Названия слоёв по инструменту, нумерация и индикатор цвета');
+  await cdp.evaluate(`(async () => {
+    const app = window.__PDF_EDITOR__;
+    const factory = await import('/src/services/objectFactory.ts');
+    const make = (kind, fill) => factory.createShapeObject(kind, {
+      page: 0, x: 120, y: 300, width: 160, height: 100, name: 'Фигура',
+      defaults: { stroke: fill, strokeWidth: 1, fill },
+    });
+    app.objects.clearAll(false);
+    app.objects.add([
+      make('rect', '#dc2626'),
+      make('rect', '#16a34a'),
+      make('ellipse', '#2563eb'),
+    ], 'тест');
+    app.objects.select([]);
+    app.ui.setRightTab('layers');
+    return 'ok';
+  })()`);
+  await sleep(1400);
+
+  const rowsInfo = await cdp.evaluate(`(() => ({
+    rows: Array.from(document.querySelectorAll('[data-layer-id]')).map((row) => {
+      const labelElement = row.querySelector('[data-layer-label]');
+      const colorElement = row.querySelector('[data-layer-color]');
+      return {
+        label: labelElement ? labelElement.textContent.trim() : '',
+        color: colorElement ? getComputedStyle(colorElement).backgroundColor : null,
+        hint: row.querySelector('button[title]')?.getAttribute('title') ?? '',
+      };
+    }),
+  }))()`);
+  console.log('  строки панели:', JSON.stringify(rowsInfo.rows));
+  const panelLabels = rowsInfo.rows.map((row) => row.label);
+  check('сверху эллипс', panelLabels[0] === 'Эллипс', JSON.stringify(panelLabels));
+  check(
+    'одинаковые прямоугольники пронумерованы',
+    panelLabels[1] === 'Прямоугольник 2' && panelLabels[2] === 'Прямоугольник 1',
+    JSON.stringify(panelLabels),
+  );  check(
+    'индикаторы цвета соответствуют заливке',
+    rowsInfo.rows[0].color === 'rgb(37, 99, 235)' &&
+      rowsInfo.rows[1].color === 'rgb(22, 163, 74)' &&
+      rowsInfo.rows[2].color === 'rgb(220, 38, 38)',
+    JSON.stringify(rowsInfo.rows.map((row) => row.color)),
+  );
+
+  // Скриншот панели с названиями и индикаторами.
+  await cdp.screenshot(resolvePath(TMP, 'layers-labels.png'));
+
+  // Одиночная фигура остаётся без номера.
+  await cdp.evaluate(`(async () => {
+    const app = window.__PDF_EDITOR__;
+    const factory = await import('/src/services/objectFactory.ts');
+    app.objects.remove(app.objects.objects.slice(1).map((object) => object.id));
+    return 'ok';
+  })()`);
+  await sleep(1200);
+  const singleLabel = await cdp.evaluate(`(() => {
+    const element = document.querySelector('[data-layer-label]');
+    return element ? element.textContent.trim() : '';
+  })()`);
+  check('единственная фигура без номера', singleLabel === 'Прямоугольник', singleLabel);
+
   await cdp.screenshot(resolvePath(TMP, 'layers-order.png'));
 
   console.log('\nОшибки консоли:', cdp.errors.length ? cdp.errors.join('\n') : '(нет)');
