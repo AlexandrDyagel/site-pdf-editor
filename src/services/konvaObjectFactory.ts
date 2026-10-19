@@ -32,6 +32,7 @@ import { hashString } from '@/utils/id';
 import { normalizeSides, polygonPath } from '@/utils/shapePath';
 import { computeStampLayout, fitStampTemplate, paintStampLayout } from '@/services/stampRenderService';
 import { getStrokeOutline, paintStrokes } from '@/services/strokeService';
+import { getSmartMask } from '@/services/smartEraseService';
 import { ensureTextMetrics, hasTextMetrics, paintTextObject } from '@/services/textRenderService';
 import { computeTextBlockLayout } from '@/services/textRenderService';
 import { fontService } from '@/services/fontService';
@@ -40,6 +41,8 @@ import { fontService } from '@/services/fontService';
 export interface ObjectBuildOptions {
   /** Вызывается, когда асинхронный ресурс (картинка, шрифт) догрузился. */
   onReady?: () => void;
+  /** Масштаб растра для масок «умного корректора» (1 = 72 dpi). */
+  maskScale?: number;
   /** Список промисов ожидания — используется при растровом экспорте. */
   pending?: Promise<unknown>[];
 }
@@ -133,7 +136,7 @@ export function resolveFamily(fontId?: string): string {
  * ========================================================================== */
 
 /** Короткая подпись содержимого объекта (без координат и трансформаций). */
-export function objectStructureSignature(obj: EditorObject): string {
+export function objectStructureSignature(obj: EditorObject, maskScale = 1): string {
   const base = `${obj.type}|${obj.width.toFixed(2)}|${obj.height.toFixed(2)}`;
   let body = '';
   switch (obj.type) {
@@ -182,6 +185,11 @@ export function objectStructureSignature(obj: EditorObject): string {
     case 'drawing':
     case 'signature': {
       const p = obj.payload as DrawingPayload | SignaturePayload;
+      if ('smart' in p && p.smart) {
+        // Маска зависит от порога, цвета и масштаба растра.
+        body = `smart|${p.smart.threshold}|${p.smart.color}|${Math.round(maskScale * 2) / 2}|${p.strokes.length}`;
+        break;
+      }
       const points = p.strokes.reduce((sum, stroke) => sum + stroke.points.length, 0);
       // Точки не сериализуем: подпись строится по количеству и последней точке.
       const last = p.strokes[p.strokes.length - 1];
@@ -443,6 +451,22 @@ function buildChildren(group: Konva.Group, obj: EditorObject, options: ObjectBui
     case 'drawing':
     case 'signature': {
       const payload = obj.payload as DrawingPayload | SignaturePayload;
+      if ('smart' in payload && payload.smart) {
+        // «Умный корректор»: рисуем готовую маску (светлое закрашено, тёмное цело).
+        const maskImage = new Konva.Image({
+          x: 0,
+          y: 0,
+          width: obj.width,
+          height: obj.height,
+          image: undefined,
+          listening: true,
+        });
+        group.add(maskImage);
+        if (options.maskScale) {
+          void applySmartMask(maskImage, obj, payload, options);
+        }
+        break;
+      }
       const designWidth = payload.designWidth > 0 ? payload.designWidth : obj.width;
       const designHeight = payload.designHeight > 0 ? payload.designHeight : obj.height;
       const shape = new Konva.Shape({
@@ -521,7 +545,7 @@ export function syncObjectNode(
   group.setAttr('objectId', obj.id);
   group.setAttr('objectLocked', obj.locked);
 
-  const signature = `${objectStructureSignature(obj)}|${resourcesSignature(obj)}`;
+  const signature = `${objectStructureSignature(obj, options.maskScale)}|${resourcesSignature(obj)}`;
   if (group.getAttr(SIGNATURE_ATTR) !== signature) {
     group.destroyChildren();
     buildChildren(group, obj, options);
@@ -537,6 +561,38 @@ export function findNodeByObjectId(root: Konva.Container, objectId: string): Kon
     if (node.getAttr('objectId') === objectId && node instanceof Konva.Group) return node;
   }
   return null;
+}
+
+
+/**
+ * Строит маску «умного корректора» и подставляет её в Konva.Image.
+ * Маска зависит от содержимого страницы, поэтому считается асинхронно.
+ */
+function applySmartMask(
+  image: Konva.Image,
+  obj: EditorObject,
+  payload: DrawingPayload,
+  options: ObjectBuildOptions,
+): Promise<void> {
+  const task = (async (): Promise<void> => {
+    try {
+      const canvas = await getSmartMask({
+        object: obj as EditorObject & { payload: DrawingPayload },
+        scale: Math.min(6, Math.max(0.5, options.maskScale ?? 1)),
+      });
+      if (!canvas) return;
+      if (!image.getStage()) return;
+      image.image(canvas);
+      image.getLayer()?.batchDraw();
+      options.onReady?.();
+    } catch {
+      // Маска не критична: без неё объект просто не рисуется (как пустой штрих).
+    }
+  })();
+  // Растровый экспорт (PNG/JPEG/DOCX) ждёт асинхронные ресурсы — иначе маска
+  // не успела бы попасть в снимок.
+  options.pending?.push(task);
+  return task;
 }
 
 /** Сброс кэша изображений (при закрытии документа). */

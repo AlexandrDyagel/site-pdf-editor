@@ -247,6 +247,35 @@ const verticalOptions: { value: VerticalAlign; label: string }[] = [
   { value: 'bottom', label: 'Снизу' },
 ];
 
+/* ======================== Умный корректор ======================== */
+
+/** Настройки «умного корректора» у выбранного объекта (если это он). */
+const smartSettings = computed(() => {
+  const object = single.value;
+  if (!object || object.type !== 'drawing') return null;
+  return object.payload.smart ?? null;
+});
+
+function setSmartColor(color: string): void {
+  const object = single.value;
+  if (!object || object.type !== 'drawing' || !object.payload.smart) return;
+  objects.update(
+    object.id,
+    { payload: { smart: { ...object.payload.smart, color } } },
+    'Цвет заливки',
+  );
+}
+
+function setSmartThreshold(threshold: number): void {
+  const object = single.value;
+  if (!object || object.type !== 'drawing' || !object.payload.smart) return;
+  objects.update(
+    object.id,
+    { payload: { smart: { ...object.payload.smart, threshold: Math.round(threshold) } } },
+    'Порог светлого',
+  );
+}
+
 /* ======================== Штампы ======================== */
 
 function openStampEditor(): void {
@@ -826,7 +855,27 @@ void scaleStrokes;
         title="Штрихи"
         icon="signature"
       >
+        <template v-if="smartSettings">
+          <AppColorPicker
+            label="Цвет заливки"
+            :model-value="smartSettings.color"
+            @update:model-value="setSmartColor"
+          />
+          <AppSlider
+            label="Порог светлого"
+            :model-value="smartSettings.threshold"
+            :min="0"
+            :max="255"
+            :step="5"
+            @update:model-value="setSmartThreshold"
+          />
+          <p class="text-[11px] text-slate-400">
+            Закрашиваются только участки светлее порога — тёмный текст остаётся. Меньше порог —
+            закрашивается больше.
+          </p>
+        </template>
         <AppColorPicker
+          v-else
           label="Цвет"
           :model-value="drawingPayload.strokes[0]?.color ?? '#111827'"
           @update:model-value="setStrokeColor"

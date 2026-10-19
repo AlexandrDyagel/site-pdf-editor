@@ -378,6 +378,10 @@ export function useObjectRenderer(deps: {
     // пересобираем узлы: просто перерисовать недостаточно — у Konva.Image
     // битмап хранится в атрибуте узла, а не разрешается при отрисовке.
     const onReady = (): void => sync();
+    // Маски «умного корректора» строятся в масштабе экрана: так штрих остаётся
+    // чётким при любом зуме (шаг 0.5, чтобы не пересчитывать на каждый пиксель).
+    const maskScale = Math.min(6, Math.max(0.5, Math.round(editor.zoom * (window.devicePixelRatio || 1) * 2) / 2));
+    const buildOptions = { onReady, maskScale };
     /** Тексты с автовысотой: подгоняем высоту объекта под содержимое. */
     const autoHeightFixes: { id: string; patch: { height: number } }[] = [];
 
@@ -385,13 +389,13 @@ export function useObjectRenderer(deps: {
       seen.add(obj.id);
       let node = nodes.get(obj.id);
       if (!node || !node.getParent()) {
-        node = createObjectNode(obj, { onReady });
+        node = createObjectNode(obj, buildOptions);
         node.setAttr('objectId', obj.id);
         bindNodeEvents(node, obj.id);
         nodes.set(obj.id, node);
         currentLayer.add(node);
       } else {
-        syncObjectNode(node, obj, { onReady });
+        syncObjectNode(node, obj, buildOptions);
       }
       node.draggable(editor.tool === 'select' && !obj.locked && !editor.viewOnly);
       node.listening(!editor.viewOnly || editor.tool === 'select');

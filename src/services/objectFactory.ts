@@ -18,6 +18,7 @@ import type {
   ImageObject,
   ObjectPayload,
   ShapeKind,
+  SmartEraseSettings,
   ShapeObject,
   ShiftObjectType,
   SignatureObject,
@@ -215,6 +216,8 @@ export function createDrawingObject(
     name?: string;
     /** Если true — «стирание»: штрихи закрашивают область цветом фона. */
     eraser?: boolean;
+    /** Режим «умного корректора»: маска по светлым участкам страницы. */
+    smart?: SmartEraseSettings | null;
   },
 ): DrawingObject | null {
   const allPoints = strokes.flatMap((stroke) => stroke.points);
@@ -223,21 +226,32 @@ export function createDrawingObject(
   const offsetX = Math.min(...strokes.flatMap((stroke) => stroke.points.map((p) => p.x)));
   const offsetY = Math.min(...strokes.flatMap((stroke) => stroke.points.map((p) => p.y)));
 
+  // «Умному корректору» нужен запас под толщину штриха: маска строится ровно
+  // по рамке объекта, и без запаса края stroke обрезались бы.
+  const margin = options.smart
+    ? Math.max(1, ...strokes.map((stroke) => stroke.width / 2 + 1))
+    : 0;
+
   const payload: DrawingPayload = {
     strokes: strokes.map((stroke) => ({
       ...stroke,
-      points: stroke.points.map((point) => ({ ...point, x: point.x - offsetX, y: point.y - offsetY })),
+      points: stroke.points.map((point) => ({
+        ...point,
+        x: point.x - offsetX + margin,
+        y: point.y - offsetY + margin,
+      })),
     })),
-    designWidth: Math.max(1, normalized.width),
-    designHeight: Math.max(1, normalized.height),
+    designWidth: Math.max(1, normalized.width + margin * 2),
+    designHeight: Math.max(1, normalized.height + margin * 2),
     erasable: Boolean(options.eraser),
+    smart: options.smart ?? null,
   };
 
   return {
     ...baseFields({
       page: options.page,
-      x: offsetX,
-      y: offsetY,
+      x: offsetX - margin,
+      y: offsetY - margin,
       width: payload.designWidth,
       height: payload.designHeight,
       zIndex: options.zIndex ?? 1,

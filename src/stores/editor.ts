@@ -15,6 +15,7 @@ import type {
   ArrowHead,
   DrawTool,
   MarqueeRect,
+  SmartEraseSettings,
   StrokeData,
   StrokePoint,
   TextAlign,
@@ -29,6 +30,7 @@ export interface EditorToolOptions {
   draw: { color: string; width: number; opacity: number; smooth: boolean };
   marker: { color: string; width: number; opacity: number };
   eraser: { color: string; width: number };
+  smartEraser: SmartEraseSettings & { width: number };
   shape: {
     stroke: string | null;
     strokeWidth: number;
@@ -87,6 +89,7 @@ export const useEditorStore = defineStore('editor', () => {
     draw: { color: '#1d4ed8', width: 2, opacity: 1, smooth: true },
     marker: { color: '#facc15', width: 12, opacity: 0.35 },
     eraser: { color: '#ffffff', width: 16 },
+    smartEraser: { color: '#ffffff', width: 18, threshold: 170 },
     shape: {
       stroke: '#dc2626',
       strokeWidth: 2,
@@ -143,6 +146,13 @@ export const useEditorStore = defineStore('editor', () => {
             tool: 'eraser',
             color: toolOptions.value.eraser.color,
             width: toolOptions.value.eraser.width,
+            opacity: 1,
+          };
+        case 'smart-eraser':
+          return {
+            tool: 'smart-eraser',
+            color: toolOptions.value.smartEraser.color,
+            width: toolOptions.value.smartEraser.width,
             opacity: 1,
           };
         case 'brush':

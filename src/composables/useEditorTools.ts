@@ -413,6 +413,7 @@ export function useEditorTools(deps: {
       case 'brush':
       case 'marker':
       case 'eraser':
+      case 'smart-eraser':
         editor.startStroke(pointToStroke(point, event.evt));
         break;
       case 'rect':
@@ -503,12 +504,20 @@ export function useEditorTools(deps: {
     if (editor.activeStroke) {
       const stroke = editor.takeStroke();
       if (stroke && stroke.points.length > 0) {
+        const isSmart = stroke.tool === 'smart-eraser';
+        const smartOptions = editor.toolOptions.smartEraser;
         const drawing = createDrawingObject([stroke], {
           page: editor.currentPage,
           eraser: stroke.tool === 'eraser',
-          name: stroke.tool === 'eraser' ? 'Корректор' : 'Рисунок',
+          smart: isSmart ? { threshold: smartOptions.threshold, color: smartOptions.color } : null,
+          name: isSmart ? 'Умный корректор' : stroke.tool === 'eraser' ? 'Корректор' : 'Рисунок',
         });
-        if (drawing) addFromCanvas([drawing], stroke.tool === 'eraser' ? 'Стирание' : 'Рисование');
+        if (drawing) {
+          addFromCanvas(
+            [drawing],
+            isSmart ? 'Осветление' : stroke.tool === 'eraser' ? 'Стирание' : 'Рисование',
+          );
+        }
       }
       return;
     }

@@ -56,6 +56,7 @@ import { getStrokeOutline, outlineToPath } from '@/services/strokeService';
 import { fitStampTemplate } from '@/services/stampRenderService';
 import { drawStampToPdfPage } from '@/services/stampPdfRenderer';
 import { computeTextBlockLayout } from '@/services/textRenderService';
+import { getSmartMask } from '@/services/smartEraseService';
 import { justifyOffsets, measureTextWidth } from '@/utils/textLayout';
 import { normalizeSides, polygonPath } from '@/utils/shapePath';
 import { renderPageCanvas } from '@/services/imageExportService';
@@ -561,6 +562,32 @@ function drawFlatRect(
   });
 }
 
+/**
+ * «Умный корректор» в PDF: маска строится по растру страницы в 300 dpi,
+ * поэтому в PDF она попадает картинкой (остальные объекты остаются векторными).
+ */
+async function drawSmartMaskObject(
+  page: PDFPage,
+  obj: EditorObject & { payload: DrawingPayload },
+  geo: PageGeometry,
+): Promise<void> {
+  const canvas = await getSmartMask({ object: obj, scale: 300 / 72 });
+  if (!canvas) return;
+  const frame = frameOf(obj, geo);
+  const bottomLeft = frame.toPdf(0, obj.height);
+  const bytes = dataUrlToBytes(canvas.toDataURL('image/png'));
+  const image = await page.doc.embedPng(bytes);
+  page.drawImage(image, {
+    x: bottomLeft.x,
+    y: bottomLeft.y,
+    width: obj.width,
+    height: obj.height,
+    rotate: degrees(frame.rotate),
+    opacity: 1,
+    blendMode: BlendMode.Normal,
+  });
+}
+
 /** Рукописные штрихи (рисунки и подписи) — векторно. */
 function drawStrokesObject(
   page: PDFPage,
@@ -657,6 +684,13 @@ async function drawObject(
       });
       break;
     case 'drawing':
+      // «Умный корректор»: вместо штрихов — маска по светлым участкам страницы.
+      if ((obj as EditorObject & { payload: DrawingPayload }).payload.smart) {
+        await drawSmartMaskObject(page, obj as EditorObject & { payload: DrawingPayload }, geo);
+        break;
+      }
+      drawStrokesObject(page, obj as EditorObject & { payload: DrawingPayload }, geo);
+      break;
     case 'signature':
       drawStrokesObject(page, obj as EditorObject & { payload: DrawingPayload | SignaturePayload }, geo);
       break;

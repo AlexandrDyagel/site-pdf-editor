@@ -38,7 +38,8 @@ export function layerBaseName(obj: EditorObject): string {
     case 'signature':
       return 'Подпись';
     case 'drawing':
-      return 'Рисунок';
+      // «Умный корректор» — тот же рисунок, но с маской по светлым участкам.
+      return obj.payload.smart ? 'Умный корректор' : 'Рисунок';
     case 'whiteout':
       return 'Закрашивание';
     case 'highlight':

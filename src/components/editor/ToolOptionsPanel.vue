@@ -150,6 +150,30 @@ const documentFontsUsed = computed(() => {
         </p>
       </template>
 
+      <template v-else-if="editor.tool === 'smart-eraser'">
+        <AppColorPicker v-model="editor.toolOptions.smartEraser.color" label="Цвет заливки" />
+        <AppSlider
+          v-model="editor.toolOptions.smartEraser.width"
+          label="Ширина штриха"
+          unit="pt"
+          :min="4"
+          :max="80"
+          :step="1"
+        />
+        <AppSlider
+          v-model="editor.toolOptions.smartEraser.threshold"
+          label="Порог светлого"
+          unit=""
+          :min="0"
+          :max="255"
+          :step="5"
+        />
+        <p class="text-[11px] text-slate-400">
+          Закрашивает только участки светлее порога (по умолчанию 170), поэтому тёмный текст
+          остаётся нетронутым. Меньше порог — закрашивается больше, включая серый фон.
+        </p>
+      </template>
+
       <template v-else>
         <AppSlider
           v-model="editor.toolOptions.eraser.width"

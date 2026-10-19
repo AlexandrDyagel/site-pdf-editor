@@ -30,6 +30,7 @@ export type ToolType =
   | 'brush'
   | 'marker'
   | 'eraser'
+  | 'smart-eraser'
   | 'whiteout'
   | 'highlight'
   | 'rect'
@@ -44,7 +45,7 @@ export type ToolType =
   | 'marquee';
 
 /** Инструменты рисования от руки. */
-export type DrawTool = 'brush' | 'marker' | 'eraser';
+export type DrawTool = 'brush' | 'marker' | 'eraser' | 'smart-eraser';
 
 /** Инструменты, создающие объект перетаскиванием рамки. */
 export type BoxToolType = Extract<
@@ -224,6 +225,17 @@ export interface StrokeData {
 }
 
 /** Содержимое рукописного рисунка. */
+/**
+ * Настройки «умного корректора»: закрашивает только светлые участки, тёмный
+ * текст остаётся. Маска строится по растру страницы (см. services/smartErase).
+ */
+export interface SmartEraseSettings {
+  /** Порог яркости 0..255: пиксели светлее закрашиваются, темнее остаются. */
+  threshold: number;
+  /** Цвет заливки, #rrggbb. */
+  color: string;
+}
+
 export interface DrawingPayload {
   strokes: StrokeData[];
   /** Размеры «дизайнерской» области, в которой заданы точки, pt. */
@@ -231,6 +243,8 @@ export interface DrawingPayload {
   designHeight: number;
   /** Рисунок нарисован в режиме корректора (белый цвет). */
   erasable: boolean;
+  /** Режим «умного корректора» (null/undefined — обычный рисунок). */
+  smart?: SmartEraseSettings | null;
 }
 
 /** Содержимое подписи. */

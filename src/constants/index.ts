@@ -171,6 +171,14 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
     hint: 'Стирание штрихом: закрашивает область цветом фона',
   },
   {
+    id: 'smart-eraser',
+    label: 'Умный корректор',
+    icon: 'magicEraser',
+    shortcut: 'C',
+    group: 'draw',
+    hint: 'Закрашивает только светлый фон — тёмный текст остаётся',
+  },
+  {
     id: 'whiteout',
     label: 'Закрасить',
     icon: 'whiteout',
