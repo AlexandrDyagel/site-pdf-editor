@@ -394,7 +394,11 @@ export function useEditorTools(deps: {
     switch (editor.tool) {
       case 'select': {
         // Клик по объекту обрабатывается узлом; клик по пустому месту — рамка.
-        const isObject = objectIdFromTarget(event.target) !== null;
+        // Закрашенный участок (корректор) ведёт себя как пустое место: сам он
+        // не выделяется, но и не мешает снять рамку с другого объекта.
+        const targetId = objectIdFromTarget(event.target);
+        const targetObject = targetId ? objects.byId(targetId) : null;
+        const isObject = targetId !== null && !isMaskingStroke(targetObject);
         if (!isObject && !isStageChrome(event.target)) {
           if (!event.evt.shiftKey) objects.clearSelection();
           marqueeStart = point;

@@ -239,6 +239,42 @@ try {
   console.log('  выделение после клика «Выбором»:', JSON.stringify(smartClick));
   check('умный корректор выделяется кликом', smartClick.includes(smart.id), JSON.stringify(smartClick));
 
+  console.log('\n7. Клик «Выбором» по пятну корректора снимает рамку');
+  const blurDeselect = await cdp.evaluate(`(async () => {
+    const app = window.__PDF_EDITOR__;
+    const factory = await import('/src/services/objectFactory.ts');
+    app.objects.clearAll(false);
+    const blur = factory.createDrawingObject([{
+      tool: 'eraser', color: '#ffffff', width: 26, opacity: 1, smooth: false,
+      points: [
+        { x: 80, y: 120, pressure: 0.5, time: 0 },
+        { x: 200, y: 120, pressure: 0.5, time: 10 },
+        { x: 320, y: 120, pressure: 0.5, time: 20 },
+      ],
+    }], { page: 0, eraser: true, name: 'Корректор' });
+    const smart = factory.createDrawingObject([{
+      tool: 'smart-eraser', color: '#ffffff', width: 20, opacity: 1, smooth: false,
+      points: [
+        { x: 80, y: 200, pressure: 0.5, time: 0 },
+        { x: 200, y: 200, pressure: 0.5, time: 10 },
+        { x: 320, y: 200, pressure: 0.5, time: 20 },
+      ],
+    }], { page: 0, smart: { threshold: 170, color: '#ffffff', autoColor: true }, name: 'Умный корректор' });
+    app.objects.add([blur, smart], 'тест');
+    app.objects.select([smart.id]);
+    app.editor.setTool('select');
+    return { smartId: smart.id };
+  })()`);
+  await sleep(1000);
+  await clickAt(await screenPoint(200, 120));
+  const afterBlur = await cdp.evaluate(`(() => [...window.__PDF_EDITOR__.objects.selectedIds])()`);
+  console.log('  выделение после клика по пятну корректора:', JSON.stringify(afterBlur));
+  check(
+    'клик по пятну корректора снимает рамку с другого объекта',
+    afterBlur.length === 0,
+    JSON.stringify(afterBlur) + ' (умный корректор ' + blurDeselect.smartId + ')',
+  );
+
   await cdp.screenshot(resolvePath(TMP, 'masking-selection.png'));
   console.log('\nОшибки консоли:', cdp.errors.length ? cdp.errors.join('\n') : '(нет)');
 } catch (error) {

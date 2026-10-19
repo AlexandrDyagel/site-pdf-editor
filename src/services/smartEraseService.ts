@@ -161,64 +161,142 @@ async function buildSmartMask(request: SmartMaskRequest): Promise<HTMLCanvasElem
   /**
    * Цвет заливки.
    *
-   * По умолчанию берём тон бумаги из-под самого штриха: на сканах бумага почти
-   * никогда не чисто-белая, и заливка «белым» оставляла видимый след мазка.
-   * Если пользователь выбрал цвет вручную («авто» выключено) — уважаем выбор.
+   * По умолчанию заливка повторяет бумагу **в каждой точке**: строим сетку
+   * среднего тона светлых пикселей (ячейка 16 px маски) и берём цвет из неё
+   * билинейно. Плоская заливка оставляла видимое пятно там, где у скана
+   * неравномерная бумага (тени, градиент от края), а такая заливка сливается
+   * с фоном. Если пользователь выбрал цвет вручную — заливаем ровно им.
    */
   const autoColor = settings.autoColor !== false;
-  let fill = hexToRgb(settings.color || '#ffffff');
+  const uniform = hexToRgb(settings.color || '#ffffff');
+  const uniformR = Math.round(uniform.r * 255);
+  const uniformG = Math.round(uniform.g * 255);
+  const uniformB = Math.round(uniform.b * 255);
+
+  const cell = 16;
+  const cols = Math.max(1, Math.ceil(pixelWidth / cell));
+  const rows = Math.max(1, Math.ceil(pixelHeight / cell));
+  const gridCount = new Float32Array(cols * rows);
+  const gridR = new Float32Array(cols * rows);
+  const gridG = new Float32Array(cols * rows);
+  const gridB = new Float32Array(cols * rows);
+  const gridLum = new Float32Array(cols * rows);
+
   if (autoColor) {
-    // Тон бумаги берём по всей странице, а не только под штрихом: иначе один
-    // тёмный участок под мазком уводил заливку в грязный цвет. Считаем моду
-    // яркости светлых пикселей — это и есть бумага документа.
-    const histogram = new Float64Array(256);
-    const sumR = new Float64Array(256);
-    const sumG = new Float64Array(256);
-    const sumB = new Float64Array(256);
-    // Шаг 4 пикселя по каждой оси: точности хватает, а считается быстро.
-    const strideY = Math.max(1, Math.round(pixelHeight / 400));
-    const strideX = Math.max(1, Math.round(pixelWidth / 400));
-    for (let y = 0; y < pixelHeight; y += strideY) {
-      for (let x = 0; x < pixelWidth; x += strideX) {
+    // 1. Накапливаем светлые (бумажные) пиксели по ячейкам.
+    for (let y = 0; y < pixelHeight; y += 1) {
+      const rowBase = Math.floor(y / cell) * cols;
+      for (let x = 0; x < pixelWidth; x += 1) {
         const index = (y * pixelWidth + x) * 4;
         const luminance =
           0.299 * pageData[index] + 0.587 * pageData[index + 1] + 0.114 * pageData[index + 2];
         if (luminance < threshold) continue;
-        const bucket = Math.min(255, Math.max(0, Math.round(luminance)));
-        histogram[bucket] += 1;
-        sumR[bucket] += pageData[index];
-        sumG[bucket] += pageData[index + 1];
-        sumB[bucket] += pageData[index + 2];
+        const cellIndex = rowBase + Math.floor(x / cell);
+        gridCount[cellIndex] += 1;
+        gridR[cellIndex] += pageData[index];
+        gridG[cellIndex] += pageData[index + 1];
+        gridB[cellIndex] += pageData[index + 2];
+        gridLum[cellIndex] += luminance;
       }
     }
-    let best = -1;
-    let bestCount = 0;
-    for (let bucket = 0; bucket < 256; bucket += 1) {
-      if (histogram[bucket] > bestCount) {
-        bestCount = histogram[bucket];
-        best = bucket;
-      }
+    // 2. Пустые ячейки (сплошной текст, картинка) — берём средний тон страницы.
+    let totalR = 0;
+    let totalG = 0;
+    let totalB = 0;
+    let totalCount = 0;
+    for (let index = 0; index < gridCount.length; index += 1) {
+      if (gridCount[index] === 0) continue;
+      totalR += gridR[index];
+      totalG += gridG[index];
+      totalB += gridB[index];
+      totalCount += gridCount[index];
     }
-    if (best >= 0 && bestCount > 0) {
-      // Усредняем окрестность моды — сглаживает шум сканирования.
-      let count = 0;
-      let totalR = 0;
-      let totalG = 0;
-      let totalB = 0;
-      for (let bucket = Math.max(0, best - 6); bucket <= Math.min(255, best + 6); bucket += 1) {
-        count += histogram[bucket];
-        totalR += sumR[bucket];
-        totalG += sumG[bucket];
-        totalB += sumB[bucket];
-      }
+    const fallbackR = totalCount > 0 ? totalR / totalCount : uniformR;
+    const fallbackG = totalCount > 0 ? totalG / totalCount : uniformG;
+    const fallbackB = totalCount > 0 ? totalB / totalCount : uniformB;
+    for (let index = 0; index < gridCount.length; index += 1) {
+      const count = gridCount[index];
       if (count > 0) {
-        fill = { r: totalR / count / 255, g: totalG / count / 255, b: totalB / count / 255 };
+        gridR[index] /= count;
+        gridG[index] /= count;
+        gridB[index] /= count;
+        gridLum[index] /= count;
+      } else {
+        gridR[index] = fallbackR;
+        gridG[index] = fallbackG;
+        gridB[index] = fallbackB;
+        gridLum[index] = 0.299 * fallbackR + 0.587 * fallbackG + 0.114 * fallbackB;
       }
+    }
+    // 3. Несколько проходов сглаживания сетки: без резких переходов между
+    // ячейками, иначе на заливке видны прямоугольные ступени.
+    const smoothR = new Float32Array(gridR);
+    const smoothG = new Float32Array(gridG);
+    const smoothB = new Float32Array(gridB);
+    for (let pass = 0; pass < 2; pass += 1) {
+      for (let row = 0; row < rows; row += 1) {
+        for (let col = 0; col < cols; col += 1) {
+          const index = row * cols + col;
+          let count = 0;
+          let sumR = 0;
+          let sumG = 0;
+          let sumB = 0;
+          for (let dy = -1; dy <= 1; dy += 1) {
+            const ny = row + dy;
+            if (ny < 0 || ny >= rows) continue;
+            for (let dx = -1; dx <= 1; dx += 1) {
+              const nx = col + dx;
+              if (nx < 0 || nx >= cols) continue;
+              const neighbour = ny * cols + nx;
+              sumR += smoothR[neighbour];
+              sumG += smoothG[neighbour];
+              sumB += smoothB[neighbour];
+              count += 1;
+            }
+          }
+          gridR[index] = sumR / count;
+          gridG[index] = sumG / count;
+          gridB[index] = sumB / count;
+        }
+      }
+      smoothR.set(gridR);
+      smoothG.set(gridG);
+      smoothB.set(gridB);
     }
   }
-  const red = Math.round(fill.r * 255);
-  const green = Math.round(fill.g * 255);
-  const blue = Math.round(fill.b * 255);
+
+  /** Билинейный цвет «бумаги» в пикселе маски. */
+  function paperAt(x: number, y: number): [number, number, number] {
+    if (!autoColor) return [uniformR, uniformG, uniformB];
+    const gx = Math.min(cols - 1, Math.max(0, x / cell - 0.5));
+    const gy = Math.min(rows - 1, Math.max(0, y / cell - 0.5));
+    const x0 = Math.floor(gx);
+    const y0 = Math.floor(gy);
+    const x1 = Math.min(cols - 1, x0 + 1);
+    const y1 = Math.min(rows - 1, y0 + 1);
+    const fx = gx - x0;
+    const fy = gy - y0;
+    const i00 = y0 * cols + x0;
+    const i10 = y0 * cols + x1;
+    const i01 = y1 * cols + x0;
+    const i11 = y1 * cols + x1;
+    const top = [
+      gridR[i00] * (1 - fx) + gridR[i10] * fx,
+      gridG[i00] * (1 - fx) + gridG[i10] * fx,
+      gridB[i00] * (1 - fx) + gridB[i10] * fx,
+    ];
+    const bottom = [
+      gridR[i01] * (1 - fx) + gridR[i11] * fx,
+      gridG[i01] * (1 - fx) + gridG[i11] * fx,
+      gridB[i01] * (1 - fx) + gridB[i11] * fx,
+    ];
+    return [
+      top[0] * (1 - fy) + bottom[0] * fy,
+      top[1] * (1 - fy) + bottom[1] * fy,
+      top[2] * (1 - fy) + bottom[2] * fy,
+    ];
+  }
+
   /**
    * Мягкий переход к порогу.
    *
@@ -230,21 +308,25 @@ async function buildSmartMask(request: SmartMaskRequest): Promise<HTMLCanvasElem
   const softness = 55;
   const lowEdge = threshold - softness;
 
-  for (let index = 0; index < shapeData.length; index += 4) {
-    const coverage = shapeData[index + 3];
-    if (coverage === 0) continue;
-    // Цвет заливки пишем во все пиксели под штрихом, включая прозрачные:
-    // у частично прозрачного края иначе остаётся чёрный RGB, и в PDF вокруг
-    // закрашенной области появляется тёмная кайма.
-    mask.data[index] = red;
-    mask.data[index + 1] = green;
-    mask.data[index + 2] = blue;
-    const luminance =
-      0.299 * pageData[index] + 0.587 * pageData[index + 1] + 0.114 * pageData[index + 2];
-    // Тёмный текст под штрихом остаётся нетронутым (альфа 0 — видно страницу).
-    if (luminance <= lowEdge) continue;
-    const ramp = Math.min(1, (luminance - lowEdge) / softness);
-    mask.data[index + 3] = Math.round((coverage / 255) * opacity * ramp * 255);
+  for (let y = 0; y < pixelHeight; y += 1) {
+    for (let x = 0; x < pixelWidth; x += 1) {
+      const index = (y * pixelWidth + x) * 4;
+      const coverage = shapeData[index + 3];
+      if (coverage === 0) continue;
+      const [red, green, blue] = paperAt(x, y);
+      // Цвет заливки пишем во все пиксели под штрихом, включая прозрачные:
+      // у частично прозрачного края иначе остаётся чёрный RGB, и в PDF вокруг
+      // закрашенной области появляется тёмная кайма.
+      mask.data[index] = Math.round(red);
+      mask.data[index + 1] = Math.round(green);
+      mask.data[index + 2] = Math.round(blue);
+      const luminance =
+        0.299 * pageData[index] + 0.587 * pageData[index + 1] + 0.114 * pageData[index + 2];
+      // Тёмный текст под штрихом остаётся нетронутым (альфа 0 — видно страницу).
+      if (luminance <= lowEdge) continue;
+      const ramp = Math.min(1, (luminance - lowEdge) / softness);
+      mask.data[index + 3] = Math.round((coverage / 255) * opacity * ramp * 255);
+    }
   }
   maskCtx.putImageData(mask, 0, 0);
   return maskCanvas;
