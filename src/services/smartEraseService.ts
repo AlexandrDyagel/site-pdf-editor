@@ -62,6 +62,7 @@ export function smartMaskKey(object: EditorObject & { payload: DrawingPayload },
     object.opacity.toFixed(2),
     payload.smart?.threshold ?? 170,
     payload.smart?.color ?? '#ffffff',
+    payload.smart?.autoColor === false ? 'manual' : 'auto',
     payload.designWidth.toFixed(1),
     payload.designHeight.toFixed(1),
     strokeSignature,
@@ -167,22 +168,52 @@ async function buildSmartMask(request: SmartMaskRequest): Promise<HTMLCanvasElem
   const autoColor = settings.autoColor !== false;
   let fill = hexToRgb(settings.color || '#ffffff');
   if (autoColor) {
-    let sumR = 0;
-    let sumG = 0;
-    let sumB = 0;
-    let count = 0;
-    for (let index = 0; index < shapeData.length; index += 4) {
-      if (shapeData[index + 3] === 0) continue;
-      const luminance =
-        0.299 * pageData[index] + 0.587 * pageData[index + 1] + 0.114 * pageData[index + 2];
-      if (luminance < threshold) continue;
-      sumR += pageData[index];
-      sumG += pageData[index + 1];
-      sumB += pageData[index + 2];
-      count += 1;
+    // Тон бумаги берём по всей странице, а не только под штрихом: иначе один
+    // тёмный участок под мазком уводил заливку в грязный цвет. Считаем моду
+    // яркости светлых пикселей — это и есть бумага документа.
+    const histogram = new Float64Array(256);
+    const sumR = new Float64Array(256);
+    const sumG = new Float64Array(256);
+    const sumB = new Float64Array(256);
+    // Шаг 4 пикселя по каждой оси: точности хватает, а считается быстро.
+    const strideY = Math.max(1, Math.round(pixelHeight / 400));
+    const strideX = Math.max(1, Math.round(pixelWidth / 400));
+    for (let y = 0; y < pixelHeight; y += strideY) {
+      for (let x = 0; x < pixelWidth; x += strideX) {
+        const index = (y * pixelWidth + x) * 4;
+        const luminance =
+          0.299 * pageData[index] + 0.587 * pageData[index + 1] + 0.114 * pageData[index + 2];
+        if (luminance < threshold) continue;
+        const bucket = Math.min(255, Math.max(0, Math.round(luminance)));
+        histogram[bucket] += 1;
+        sumR[bucket] += pageData[index];
+        sumG[bucket] += pageData[index + 1];
+        sumB[bucket] += pageData[index + 2];
+      }
     }
-    if (count > 0) {
-      fill = { r: sumR / count / 255, g: sumG / count / 255, b: sumB / count / 255 };
+    let best = -1;
+    let bestCount = 0;
+    for (let bucket = 0; bucket < 256; bucket += 1) {
+      if (histogram[bucket] > bestCount) {
+        bestCount = histogram[bucket];
+        best = bucket;
+      }
+    }
+    if (best >= 0 && bestCount > 0) {
+      // Усредняем окрестность моды — сглаживает шум сканирования.
+      let count = 0;
+      let totalR = 0;
+      let totalG = 0;
+      let totalB = 0;
+      for (let bucket = Math.max(0, best - 6); bucket <= Math.min(255, best + 6); bucket += 1) {
+        count += histogram[bucket];
+        totalR += sumR[bucket];
+        totalG += sumG[bucket];
+        totalB += sumB[bucket];
+      }
+      if (count > 0) {
+        fill = { r: totalR / count / 255, g: totalG / count / 255, b: totalB / count / 255 };
+      }
     }
   }
   const red = Math.round(fill.r * 255);

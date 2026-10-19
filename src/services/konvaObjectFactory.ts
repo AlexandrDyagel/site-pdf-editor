@@ -187,7 +187,7 @@ export function objectStructureSignature(obj: EditorObject, maskScale = 1): stri
       const p = obj.payload as DrawingPayload | SignaturePayload;
       if ('smart' in p && p.smart) {
         // Маска зависит от порога, цвета и масштаба растра.
-        body = `smart|${p.smart.threshold}|${p.smart.color}|${Math.round(maskScale * 2) / 2}|${p.strokes.length}`;
+        body = `smart|${p.smart.threshold}|${p.smart.color}|${p.smart.autoColor === false ? 'manual' : 'auto'}|${Math.round(maskScale * 2) / 2}|${p.strokes.length}`;
         break;
       }
       const points = p.strokes.reduce((sum, stroke) => sum + stroke.points.length, 0);
@@ -216,6 +216,39 @@ export function objectStructureSignature(obj: EditorObject, maskScale = 1): stri
 /* ==========================================================================
  *  Сборка дочерних узлов
  * ========================================================================== */
+
+/**
+ * Попадание по контуру штрихов.
+ *
+ * Раньше попаданием считался весь прямоугольник объекта: у толстого штриха
+ * (корректор, умный корректор) пустое поле вокруг ловило клики, и снять рамку
+ * нажатием рядом со штрихом получалось не сразу. Теперь область попадания —
+ * точный контур заливки штриха.
+ */
+function strokeHitFunc(
+  context: Konva.Context,
+  shape: Konva.Shape,
+  payload: DrawingPayload | SignaturePayload,
+): void {
+  const designWidth = payload.designWidth > 0 ? payload.designWidth : shape.width();
+  const designHeight = payload.designHeight > 0 ? payload.designHeight : shape.height();
+  const scaleX = shape.width() / (designWidth || shape.width() || 1);
+  const scaleY = shape.height() / (designHeight || shape.height() || 1);
+  context.save();
+  context.scale(scaleX, scaleY);
+  for (const stroke of payload.strokes) {
+    const outline = getStrokeOutline(stroke);
+    if (outline.length < 3) continue;
+    context.beginPath();
+    context.moveTo(outline[0].x, outline[0].y);
+    for (let index = 1; index < outline.length; index += 1) {
+      context.lineTo(outline[index].x, outline[index].y);
+    }
+    context.closePath();
+    context.fillStrokeShape(shape);
+  }
+  context.restore();
+}
 
 /** Прямоугольник попадания (для выделения объектов нестандартной формы). */
 function rectHitFunc(context: Konva.Context, shape: Konva.Shape): void {
@@ -459,9 +492,19 @@ function buildChildren(group: Konva.Group, obj: EditorObject, options: ObjectBui
           width: obj.width,
           height: obj.height,
           image: undefined,
-          listening: true,
+          // Клик считается попаданием только по самой маске: иначе пустое поле
+          // вокруг штриха перехватывало клики и рамка не снималась.
+          listening: false,
         });
         group.add(maskImage);
+        group.add(
+          new Konva.Shape({
+            width: obj.width,
+            height: obj.height,
+            hitFunc: (context, shape) => strokeHitFunc(context, shape, payload),
+            sceneFunc: () => undefined,
+          }),
+        );
         void applySmartMask(maskImage, obj, payload, options);
         break;
       }
@@ -479,7 +522,9 @@ function buildChildren(group: Konva.Group, obj: EditorObject, options: ObjectBui
           paintStrokes(raw, payload.strokes);
           raw.restore();
         },
-        hitFunc: rectHitFunc,
+        // Попадание — по самому штриху: клик рядом со штрихом (в габаритах
+        // объекта) больше не считается кликом по объекту.
+        hitFunc: (context, shape) => strokeHitFunc(context, shape, payload),
       });
       group.add(shape);
       break;
