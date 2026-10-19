@@ -339,7 +339,7 @@ function setStrokeWidthScale(factor: number): void {
   const payload = drawingPayload.value;
   if (!obj || !payload) return;
   const reference = payload.strokes[0]?.width ?? 2;
-  const target = Math.max(0.5, reference * factor);
+  const target = Math.max(0.2, reference * factor);
   const ratio = target / Math.max(0.1, reference);
   edit('Толщина линий', () =>
     patch(obj.id, {

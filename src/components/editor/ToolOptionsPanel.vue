@@ -111,9 +111,9 @@ const documentFontsUsed = computed(() => {
           v-model="editor.toolOptions.draw.width"
           label="Толщина"
           unit="pt"
-          :min="0.5"
+          :min="0.2"
           :max="40"
-          :step="0.5"
+          :step="0.1"
           :precision="1"
         />
         <AppSlider
@@ -133,9 +133,10 @@ const documentFontsUsed = computed(() => {
           v-model="editor.toolOptions.marker.width"
           label="Толщина"
           unit="pt"
-          :min="2"
+          :min="0.2"
           :max="60"
-          :step="1"
+          :step="0.1"
+          :precision="1"
         />
         <AppSlider
           v-model="editor.toolOptions.marker.opacity"
@@ -156,9 +157,10 @@ const documentFontsUsed = computed(() => {
           v-model="editor.toolOptions.smartEraser.width"
           label="Ширина штриха"
           unit="pt"
-          :min="4"
+          :min="0.2"
           :max="80"
-          :step="1"
+          :step="0.1"
+          :precision="1"
         />
         <AppSlider
           v-model="editor.toolOptions.smartEraser.threshold"
@@ -179,9 +181,10 @@ const documentFontsUsed = computed(() => {
           v-model="editor.toolOptions.eraser.width"
           label="Ширина корректора"
           unit="pt"
-          :min="4"
+          :min="0.2"
           :max="80"
-          :step="1"
+          :step="0.1"
+          :precision="1"
         />
         <AppColorPicker v-model="editor.toolOptions.eraser.color" label="Цвет закрашивания" />
         <p class="text-[11px] text-slate-400">

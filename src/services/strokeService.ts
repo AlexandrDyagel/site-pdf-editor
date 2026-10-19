@@ -50,7 +50,7 @@ export function getStrokeOutline(
   if (stroke.points.length === 1) {
     // Точка-«клякса» — рисуем маленький круг.
     const point = stroke.points[0];
-    const radius = Math.max(stroke.width / 2, 0.35);
+    const radius = Math.max(stroke.width / 2, 0.1);
     const circle: Point[] = [];
     for (let i = 0; i < 12; i += 1) {
       const angle = (i / 12) * Math.PI * 2;
@@ -60,7 +60,7 @@ export function getStrokeOutline(
   }
 
   const outline = getStroke(toFreehandPoints(stroke.points), {
-    size: Math.max(stroke.width, 0.4),
+    size: Math.max(stroke.width, 0.2),
     thinning: stroke.tool === 'eraser' ? 0 : 0.55,
     smoothing: opts.smoothing,
     streamline: opts.streamline,
@@ -72,7 +72,7 @@ export function getStrokeOutline(
 
   const points: Point[] = outline.map(([x, y]) => ({ x, y }));
   // Слишком подробный контур раздувает PDF, поэтому упрощаем геометрию.
-  return simplifyPolyline(points, Math.max(0.12, stroke.width / 24));
+  return simplifyPolyline(points, Math.max(0.05, stroke.width / 24));
 }
 
 /** SVG-путь замкнутого контура (только M/L/Z — совместимо с pdf-lib). */
