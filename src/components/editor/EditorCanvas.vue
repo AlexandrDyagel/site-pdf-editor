@@ -209,7 +209,7 @@ watch(
 <template>
   <div
     class="relative h-full w-full overflow-hidden"
-    :class="[backgroundClass, cursorClass, eyedropperActive ? 'cursor-crosshair' : '']"
+    :class="[backgroundClass, cursorClass, eyedropperActive ? 'eyedropper-active cursor-crosshair' : '']"
     data-testid="editor-canvas"
     @pointermove="onPointerMove"
     @pointerdown="onPointerMove"
@@ -263,3 +263,11 @@ watch(
     </div>
   </div>
 </template>
+
+<style scoped>
+/* Пока включена пипетка, системный курсор не скрываем: иначе прицела не видно. */
+.eyedropper-active :deep(.konvajs-content),
+.eyedropper-active :deep(canvas) {
+  cursor: crosshair !important;
+}
+</style>

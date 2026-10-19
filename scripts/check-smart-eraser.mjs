@@ -73,6 +73,7 @@ try {
     app.editor.toolOptions.smartEraser.color = ${JSON.stringify(FILL)};
     app.editor.toolOptions.smartEraser.threshold = 200;
     app.editor.toolOptions.smartEraser.width = 26;
+    app.editor.toolOptions.smartEraser.autoColor = false;
     app.ui.setRightTab('tool');
     document.activeElement?.blur?.();
     return {
@@ -317,7 +318,7 @@ try {
       };
       const drawing = factory.createDrawingObject([stroke], {
         page: 0,
-        smart: { threshold: 200, color: '${FILL}' },
+        smart: { threshold: 200, color: '${FILL}', autoColor: false },
         name: 'Умный корректор',
       });
       if (!drawing) return { ok: false, error: 'не создан объект' };
@@ -393,6 +394,62 @@ try {
       'на краях маски нет чёрного цвета (кайма в PDF)',
       edges !== null && edges.darkRgb === 0,
       JSON.stringify(edges),
+    );
+
+    console.log('\n7. Авто-цвет: заливка под тон бумаги');
+    const auto = await cdp.evaluate(`(async () => {
+      const app = window.__PDF_EDITOR__;
+      const factory = await import('/src/services/objectFactory.ts');
+      app.objects.clearAll(false);
+      // Серая «бумага» под штрихом: авто-режим должен взять её тон, а не белый.
+      const drawing = factory.createDrawingObject([{
+        tool: 'smart-eraser', color: '#ffffff', width: 24, opacity: 1, smooth: false,
+        points: [
+          { x: 130, y: 160, pressure: 0.5, time: 0 },
+          { x: 200, y: 160, pressure: 0.5, time: 10 },
+          { x: 270, y: 160, pressure: 0.5, time: 20 },
+        ],
+      }], {
+        page: 0,
+        // Палитра — красная, но при авто-режиме заливка должна взять тон бумаги
+        // страницы (в тестовом PDF бумага белая).
+        smart: { threshold: 200, color: '#e11d48', autoColor: true },
+        name: 'Умный корректор',
+      });
+      app.objects.add([drawing], 'тест');
+      app.objects.clearSelection();
+      for (let attempt = 0; attempt < 40; attempt += 1) {
+        const node = window.__PDF_EDITOR_STAGE__.findOne((item) => item.getAttr && item.getAttr('objectId') === drawing.id);
+        const image = node ? node.findOne('Image') : null;
+        if (image && image.image()) {
+          const canvas = image.image();
+          const ctx = canvas.getContext('2d');
+          const data = ctx.getImageData(0, 0, canvas.width, canvas.height).data;
+          let opaque = 0;
+          let sumR = 0;
+          let sumG = 0;
+          let sumB = 0;
+          for (let index = 0; index < data.length; index += 4) {
+            if (data[index + 3] < 200) continue;
+            opaque += 1;
+            sumR += data[index];
+            sumG += data[index + 1];
+            sumB += data[index + 2];
+          }
+          return opaque > 0
+            ? { opaque, r: Math.round(sumR / opaque), g: Math.round(sumG / opaque), b: Math.round(sumB / opaque) }
+            : { opaque: 0 };
+        }
+        await new Promise((resolve) => setTimeout(resolve, 250));
+      }
+      return { opaque: 0 };
+    })()`);
+    console.log('  авто-заливка:', JSON.stringify(auto));
+    check('авто-режим закрашивает область', (auto.opaque ?? 0) > 500, JSON.stringify(auto));
+    check(
+      'авто-режим игнорирует палитру и берёт тон бумаги',
+      auto.r > 240 && auto.g > 240 && auto.b > 240,
+      JSON.stringify(auto),
     );
 
     await cdp.screenshot(resolvePath(TMP, 'smart-eraser.png'));

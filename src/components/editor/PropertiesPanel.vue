@@ -266,6 +266,16 @@ function setSmartColor(color: string): void {
   );
 }
 
+function setSmartAutoColor(autoColor: boolean): void {
+  const object = single.value;
+  if (!object || object.type !== 'drawing' || !object.payload.smart) return;
+  objects.update(
+    object.id,
+    { payload: { smart: { ...object.payload.smart, autoColor } } },
+    'Цвет заливки',
+  );
+}
+
 function setSmartThreshold(threshold: number): void {
   const object = single.value;
   if (!object || object.type !== 'drawing' || !object.payload.smart) return;
@@ -856,8 +866,13 @@ void scaleStrokes;
         icon="signature"
       >
         <template v-if="smartSettings">
+          <AppToggle
+            label="Под цвет бумаги"
+            :model-value="smartSettings.autoColor !== false"
+            @update:model-value="setSmartAutoColor"
+          />
           <AppColorPicker
-            label="Цвет заливки"
+            :label="smartSettings.autoColor !== false ? 'Цвет заливки (вручную)' : 'Цвет заливки'"
             :model-value="smartSettings.color"
             @update:model-value="setSmartColor"
           />

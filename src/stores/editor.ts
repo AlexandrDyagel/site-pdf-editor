@@ -89,7 +89,7 @@ export const useEditorStore = defineStore('editor', () => {
     draw: { color: '#1d4ed8', width: 2, opacity: 1, smooth: true },
     marker: { color: '#facc15', width: 12, opacity: 0.35 },
     eraser: { color: '#ffffff', width: 16 },
-    smartEraser: { color: '#ffffff', width: 18, threshold: 170 },
+    smartEraser: { color: '#ffffff', width: 18, threshold: 170, autoColor: true },
     shape: {
       stroke: '#dc2626',
       strokeWidth: 2,

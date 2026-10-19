@@ -521,11 +521,19 @@ export function useEditorTools(deps: {
         const drawing = createDrawingObject([stroke], {
           page: editor.currentPage,
           eraser: stroke.tool === 'eraser',
-          smart: isSmart ? { threshold: smartOptions.threshold, color: smartOptions.color } : null,
+          smart: isSmart
+            ? {
+                threshold: smartOptions.threshold,
+                color: smartOptions.color,
+                autoColor: smartOptions.autoColor !== false,
+              }
+            : null,
           name: isSmart ? 'Умный корректор' : stroke.tool === 'eraser' ? 'Корректор' : 'Рисунок',
         });
         if (drawing) {
-          const isMasking = isSmart || stroke.tool === 'eraser';
+          // Невыделяемым оставляем только корректор; умный корректор ведёт
+          // себя как обычный объект и сразу становится активным.
+          const isMasking = stroke.tool === 'eraser';
           addFromCanvas(
             [drawing],
             isSmart ? 'Осветление' : stroke.tool === 'eraser' ? 'Стирание' : 'Рисование',

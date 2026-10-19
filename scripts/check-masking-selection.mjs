@@ -205,6 +205,40 @@ try {
   console.log('  выделено после клика по прямоугольнику:', JSON.stringify(normalSelected));
   check('прямоугольник выделяется кликом', normalSelected.includes(normal), JSON.stringify(normalSelected));
 
+  console.log('\n6. Умный корректор ведёт себя как обычный объект');
+  const smart = await cdp.evaluate(`(async () => {
+    const app = window.__PDF_EDITOR__;
+    const factory = await import('/src/services/objectFactory.ts');
+    app.objects.clearAll(false);
+    app.editor.setTool('smart-eraser');
+    app.editor.toolOptions.smartEraser.color = '#e11d48';
+    app.editor.toolOptions.smartEraser.threshold = 200;
+    app.editor.toolOptions.smartEraser.width = 20;
+    app.editor.toolOptions.smartEraser.autoColor = false;
+    const drawing = factory.createDrawingObject([{
+      tool: 'smart-eraser', color: '#e11d48', width: 20, opacity: 1, smooth: false,
+      points: [
+        { x: 150, y: 250, pressure: 0.5, time: 0 },
+        { x: 250, y: 250, pressure: 0.5, time: 10 },
+        { x: 350, y: 250, pressure: 0.5, time: 20 },
+      ],
+    }], { page: 0, smart: { threshold: 200, color: '#e11d48', autoColor: false }, name: 'Умный корректор' });
+    app.objects.add([drawing], 'тест');
+    app.editor.setTool('select');
+    return { id: drawing.id };
+  })()`);
+  await sleep(1200);
+  const smartAuto = await cdp.evaluate(`(() => [...window.__PDF_EDITOR__.objects.selectedIds])()`);
+  console.log('  выделение после создания:', JSON.stringify(smartAuto));
+  check('умный корректор выделяется сразу после мазка', smartAuto.includes(smart.id), JSON.stringify(smartAuto));
+
+  await cdp.evaluate(`window.__PDF_EDITOR__.objects.clearSelection(); 'ok'`);
+  await sleep(400);
+  await clickAt(await screenPoint(250, 250));
+  const smartClick = await cdp.evaluate(`(() => [...window.__PDF_EDITOR__.objects.selectedIds])()`);
+  console.log('  выделение после клика «Выбором»:', JSON.stringify(smartClick));
+  check('умный корректор выделяется кликом', smartClick.includes(smart.id), JSON.stringify(smartClick));
+
   await cdp.screenshot(resolvePath(TMP, 'masking-selection.png'));
   console.log('\nОшибки консоли:', cdp.errors.length ? cdp.errors.join('\n') : '(нет)');
 } catch (error) {

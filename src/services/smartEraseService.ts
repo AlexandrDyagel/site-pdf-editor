@@ -154,12 +154,40 @@ async function buildSmartMask(request: SmartMaskRequest): Promise<HTMLCanvasElem
   const maskCtx = maskCanvas.getContext('2d');
   if (!maskCtx) return null;
   const mask = maskCtx.createImageData(pixelWidth, pixelHeight);
-  const fill = hexToRgb(settings.color || '#ffffff');
+  const threshold = Math.max(0, Math.min(255, settings.threshold));
+  const opacity = Math.max(0, Math.min(1, object.opacity));
+
+  /**
+   * Цвет заливки.
+   *
+   * По умолчанию берём тон бумаги из-под самого штриха: на сканах бумага почти
+   * никогда не чисто-белая, и заливка «белым» оставляла видимый след мазка.
+   * Если пользователь выбрал цвет вручную («авто» выключено) — уважаем выбор.
+   */
+  const autoColor = settings.autoColor !== false;
+  let fill = hexToRgb(settings.color || '#ffffff');
+  if (autoColor) {
+    let sumR = 0;
+    let sumG = 0;
+    let sumB = 0;
+    let count = 0;
+    for (let index = 0; index < shapeData.length; index += 4) {
+      if (shapeData[index + 3] === 0) continue;
+      const luminance =
+        0.299 * pageData[index] + 0.587 * pageData[index + 1] + 0.114 * pageData[index + 2];
+      if (luminance < threshold) continue;
+      sumR += pageData[index];
+      sumG += pageData[index + 1];
+      sumB += pageData[index + 2];
+      count += 1;
+    }
+    if (count > 0) {
+      fill = { r: sumR / count / 255, g: sumG / count / 255, b: sumB / count / 255 };
+    }
+  }
   const red = Math.round(fill.r * 255);
   const green = Math.round(fill.g * 255);
   const blue = Math.round(fill.b * 255);
-  const threshold = Math.max(0, Math.min(255, settings.threshold));
-  const opacity = Math.max(0, Math.min(1, object.opacity));
   /**
    * Мягкий переход к порогу.
    *

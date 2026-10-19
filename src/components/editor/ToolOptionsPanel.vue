@@ -152,7 +152,15 @@ const documentFontsUsed = computed(() => {
       </template>
 
       <template v-else-if="editor.tool === 'smart-eraser'">
-        <AppColorPicker v-model="editor.toolOptions.smartEraser.color" label="Цвет заливки" />
+        <AppToggle
+          :model-value="editor.toolOptions.smartEraser.autoColor !== false"
+          label="Под цвет бумаги"
+          @update:model-value="editor.toolOptions.smartEraser.autoColor = $event"
+        />
+        <AppColorPicker
+          v-model="editor.toolOptions.smartEraser.color"
+          :label="editor.toolOptions.smartEraser.autoColor !== false ? 'Цвет заливки (вручную)' : 'Цвет заливки'"
+        />
         <AppSlider
           v-model="editor.toolOptions.smartEraser.width"
           label="Ширина штриха"

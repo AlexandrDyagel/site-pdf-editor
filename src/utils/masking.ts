@@ -12,5 +12,7 @@ import type { EditorObject } from '@/types';
 /** Является ли объект закрашенным участком (корректор/умный корректор). */
 export function isMaskingStroke(obj: EditorObject | null | undefined): boolean {
   if (!obj || obj.type !== 'drawing') return false;
-  return Boolean(obj.payload.erasable || obj.payload.smart);
+  // Умный корректор ведёт себя как обычный объект: выделяется сразу после
+  // мазка и выбирается «Выбором». Невыделяемым остаётся только корректор.
+  return Boolean(obj.payload.erasable);
 }
