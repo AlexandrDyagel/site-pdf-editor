@@ -121,7 +121,7 @@ export const useEditorStore = defineStore('editor', () => {
 
   const zoomPercent = computed(() => Math.round(zoom.value * 100));
   const isDrawingTool = computed(() =>
-    ['brush', 'marker', 'eraser'].includes(tool.value),
+    ['brush', 'marker', 'eraser', 'smart-eraser'].includes(tool.value),
   );
   const isShapeTool = computed(() =>
     ['rect', 'ellipse', 'triangle', 'polygon', 'line', 'arrow', 'whiteout'].includes(tool.value),

@@ -73,6 +73,7 @@ try {
     app.editor.toolOptions.smartEraser.color = ${JSON.stringify(FILL)};
     app.editor.toolOptions.smartEraser.threshold = 200;
     app.editor.toolOptions.smartEraser.width = 26;
+    app.ui.setRightTab('tool');
     document.activeElement?.blur?.();
     return {
       tool: app.editor.tool,
@@ -83,6 +84,36 @@ try {
   console.log('  состояние:', JSON.stringify(toolState));
   check('инструмент включён', toolState.tool === 'smart-eraser', toolState.tool);
   check('цвет заливки из палитры применяется', toolState.fill === FILL, toolState.fill);
+
+  console.log('\n1б. Панель «Инструменты» и курсор');
+  // Наводим указатель на холст, чтобы появился кружок-курсор.
+  const hover = await screenPoint(200, 150);
+  await cdp.send('Input.dispatchMouseEvent', { type: 'mouseMoved', x: hover.x, y: hover.y, button: 'none', buttons: 0, pointerType: 'mouse' });
+  await sleep(500);
+  const panel = await cdp.evaluate(`(() => {
+    const text = (document.body.innerText || '').toLowerCase();
+    const cursor = document.querySelector('[data-testid=brush-cursor]');
+    const style = cursor ? getComputedStyle(cursor) : null;
+    return {
+      hasWidthOption: text.includes('ширина штриха'),
+      hasColorOption: text.includes('цвет заливки'),
+      hasThreshold: text.includes('порог светлого'),
+      cursorVisible: Boolean(cursor),
+      cursorSize: style ? Number.parseFloat(style.width) : 0,
+      zoom: window.__PDF_EDITOR__.editor.zoom,
+      width: window.__PDF_EDITOR__.editor.toolOptions.smartEraser.width,
+    };
+  })()`);
+  console.log('  панель и курсор:', JSON.stringify(panel));
+  check('в «Инструментах» есть ширина штриха', panel.hasWidthOption === true);
+  check('в «Инструментах» есть цвет заливки', panel.hasColorOption === true);
+  check('в «Инструментах» есть порог светлого', panel.hasThreshold === true);
+  check('курсор-кружок как у корректора', panel.cursorVisible === true);
+  check(
+    'диаметр курсора равен ширине штриха',
+    Math.abs(panel.cursorSize - Math.max(4, panel.width * panel.zoom)) < 1.5,
+    `курсор ${panel.cursorSize} px, ожидалось ${(panel.width * panel.zoom).toFixed(1)}`,
+  );
 
   console.log('\n2. Штрих через строку текста');
   const start = await screenPoint(ROW.from, ROW.y);
