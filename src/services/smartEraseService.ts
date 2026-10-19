@@ -183,6 +183,33 @@ async function buildSmartMask(request: SmartMaskRequest): Promise<HTMLCanvasElem
   const gridLum = new Float32Array(cols * rows);
 
   if (autoColor) {
+    // 0. Мода яркости страницы — это и есть бумага. Нужна как опорная точка:
+    // при низком пороге (100–120) в выборку попадают серые элементы (линии
+    // формы, штампы), и «бумага» получалась грязнее настоящей.
+    const histogram = new Float64Array(256);
+    const strideX = Math.max(1, Math.round(pixelWidth / 600));
+    const strideY = Math.max(1, Math.round(pixelHeight / 600));
+    for (let y = 0; y < pixelHeight; y += strideY) {
+      for (let x = 0; x < pixelWidth; x += strideX) {
+        const index = (y * pixelWidth + x) * 4;
+        const luminance =
+          0.299 * pageData[index] + 0.587 * pageData[index + 1] + 0.114 * pageData[index + 2];
+        if (luminance < threshold) continue;
+        histogram[Math.min(255, Math.max(0, Math.round(luminance)))] += 1;
+      }
+    }
+    let paperLum = 255;
+    let paperBest = 0;
+    for (let bucket = 0; bucket < 256; bucket += 1) {
+      if (histogram[bucket] > paperBest) {
+        paperBest = histogram[bucket];
+        paperLum = bucket;
+      }
+    }
+    // Допускаем в оценку только пиксели не темнее бумаги на 40 единиц: тени
+    // скана проходят, а серый текст и линии — нет.
+    const paperFloor = Math.max(threshold, paperLum - 40);
+
     // 1. Накапливаем светлые (бумажные) пиксели по ячейкам.
     for (let y = 0; y < pixelHeight; y += 1) {
       const rowBase = Math.floor(y / cell) * cols;
@@ -190,7 +217,7 @@ async function buildSmartMask(request: SmartMaskRequest): Promise<HTMLCanvasElem
         const index = (y * pixelWidth + x) * 4;
         const luminance =
           0.299 * pageData[index] + 0.587 * pageData[index + 1] + 0.114 * pageData[index + 2];
-        if (luminance < threshold) continue;
+        if (luminance < paperFloor) continue;
         const cellIndex = rowBase + Math.floor(x / cell);
         gridCount[cellIndex] += 1;
         gridR[cellIndex] += pageData[index];
@@ -305,7 +332,10 @@ async function buildSmartMask(request: SmartMaskRequest): Promise<HTMLCanvasElem
    * незакрашенными — в PDF с аннотациями эта кайма видна как обводка. Теперь
    * такие пиксели закрашиваются частично, и граница получается плавной.
    */
-  const softness = 55;
+  // Переход только в узкой полосе у порога: всё, что светлее порога, закрашено
+  // полностью — иначе на скане сквозь полупрозрачную заливку просвечивала
+  // текстура бумаги и мазок выглядел пятнистым.
+  const softness = 40;
   const lowEdge = threshold - softness;
 
   for (let y = 0; y < pixelHeight; y += 1) {
@@ -324,7 +354,7 @@ async function buildSmartMask(request: SmartMaskRequest): Promise<HTMLCanvasElem
         0.299 * pageData[index] + 0.587 * pageData[index + 1] + 0.114 * pageData[index + 2];
       // Тёмный текст под штрихом остаётся нетронутым (альфа 0 — видно страницу).
       if (luminance <= lowEdge) continue;
-      const ramp = Math.min(1, (luminance - lowEdge) / softness);
+      const ramp = luminance >= threshold ? 1 : Math.min(1, (luminance - lowEdge) / softness);
       mask.data[index + 3] = Math.round((coverage / 255) * opacity * ramp * 255);
     }
   }
