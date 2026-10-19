@@ -53,6 +53,7 @@ import { useSettingsStore } from '@/stores/settings';
 import { useLibraryStore } from '@/stores/library';
 import { useUiStore } from '@/stores/ui';
 import { useFontsStore } from '@/stores/fonts';
+import { isMaskingStroke } from '@/utils/masking';
 import type { ObjectRendererApi } from '@/composables/useObjectRenderer';
 
 /** Обработчики указателя для сцены. */
@@ -101,9 +102,20 @@ export function useEditorTools(deps: {
    * Выделение строки в панели «Слои» сюда не попадает — там свойства
    * открываются двойным кликом.
    */
-  function addFromCanvas(items: EditorObject[], label: string): void {
+  function addFromCanvas(
+    items: EditorObject[],
+    label: string,
+    options: { select?: boolean; openProperties?: boolean } = {},
+  ): void {
+    const { select = true, openProperties = true } = options;
     objects.add(items, label);
-    ui.setRightTab('properties');
+    // Закрашенные участки не становятся активными: рамку пользователь увидит,
+    // только если выберет их в панели «Слои».
+    if (!select) {
+      objects.clearSelection();
+      return;
+    }
+    if (openProperties) ui.setRightTab('properties');
   }
 
   /* ======================== Захват указателя ======================== */
@@ -513,9 +525,12 @@ export function useEditorTools(deps: {
           name: isSmart ? 'Умный корректор' : stroke.tool === 'eraser' ? 'Корректор' : 'Рисунок',
         });
         if (drawing) {
+          const isMasking = isSmart || stroke.tool === 'eraser';
           addFromCanvas(
             [drawing],
             isSmart ? 'Осветление' : stroke.tool === 'eraser' ? 'Стирание' : 'Рисование',
+            // Закрашенное не выделяем: рамки после штриха быть не должно.
+            { select: !isMasking, openProperties: !isMasking },
           );
         }
       }
@@ -560,6 +575,8 @@ export function useEditorTools(deps: {
         const inside = objects
           .forPage(editor.currentPage)
           .filter((obj) => obj.visible)
+          // Закрашенные участки рамкой не выделяются: только через «Слои».
+          .filter((obj) => !isMaskingStroke(obj))
           .filter((obj) => {
             const bounds = boundsOfTransforms([obj]);
             return (
@@ -619,6 +636,7 @@ export function useEditorTools(deps: {
     if (!id) return;
     const obj = objects.byId(id);
     if (!obj) return;
+    if (isMaskingStroke(obj)) return;
     objects.select([id]);
     if (obj.type === 'text') {
       editor.startTextEditing(id);
@@ -648,6 +666,8 @@ export function useEditorTools(deps: {
     }
     const obj = objects.byId(id);
     if (!obj) return;
+    // Закрашенные участки на холсте не выделяются — и меню у них нет.
+    if (isMaskingStroke(obj) && !objects.selectedIds.includes(id)) return;
     if (!objects.selectedIds.includes(id)) {
       objects.select(obj.groupId ? groupMembersOf(obj) : [id]);
     }

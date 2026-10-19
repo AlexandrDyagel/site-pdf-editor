@@ -14,6 +14,7 @@ import { defineStore } from 'pinia';
 import type { EditorObject, ObjectTransform, ShiftObjectType } from '@/types';
 import { normalizeObjectToPage, type PageGeometry } from '@/utils/coordinates';
 import { boundsOfTransforms, type Rect } from '@/utils/geometry';
+import { isMaskingStroke } from '@/utils/masking';
 import { duplicateObject } from '@/services/objectFactory';
 import { useHistoryStore } from '@/stores/history';
 
@@ -241,6 +242,8 @@ export const useObjectsStore = defineStore('objects', () => {
   function selectAll(page?: number): void {
     selectedIds.value = objects.value
       .filter((obj) => (page === undefined ? true : obj.page === page) && obj.visible)
+      // Закрашенные участки выбираются только в панели «Слои».
+      .filter((obj) => !isMaskingStroke(obj))
       .map((obj) => obj.id);
   }
 

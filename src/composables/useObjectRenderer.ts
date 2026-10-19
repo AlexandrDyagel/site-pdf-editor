@@ -17,6 +17,7 @@ import { displayToLocal } from '@/utils/coordinates';
 import { createObjectNode, syncObjectNode } from '@/services/konvaObjectFactory';
 import { computeTextBlockLayout } from '@/services/textRenderService';
 import { useEditorStore } from '@/stores/editor';
+import { isMaskingStroke } from '@/utils/masking';
 import { useObjectsStore } from '@/stores/objects';
 import { useSettingsStore } from '@/stores/settings';
 
@@ -84,6 +85,8 @@ export function useObjectRenderer(deps: {
     const list = objects
       .forPage(editor.currentPage)
       .filter((obj) => obj.visible)
+      // Закрашенные участки на холсте не выделяются: только через «Слои».
+      .filter((obj) => !isMaskingStroke(obj))
       .slice()
       .reverse();
     for (const obj of list) {
@@ -118,10 +121,12 @@ export function useObjectRenderer(deps: {
   function bindNodeEvents(node: Konva.Group, objectId: string): void {
     node.on('pointerdown', () => {
       if (editor.tool !== 'select' || editor.viewOnly) return;
+      if (objects.selectedIds.includes(objectId)) return;
+      // Закрашенный участок выбирается только в панели «Слои».
+      const target = objects.byId(objectId);
+      if (isMaskingStroke(target)) return;
       // При клике вне текущего выделения — выделяем этот объект (не всю группу).
-      if (!objects.selectedIds.includes(objectId)) {
-        objects.select([objectId]);
-      }
+      objects.select([objectId]);
     });
 
     node.on('mouseenter', () => {
@@ -397,7 +402,12 @@ export function useObjectRenderer(deps: {
       } else {
         syncObjectNode(node, obj, buildOptions);
       }
-      node.draggable(editor.tool === 'select' && !obj.locked && !editor.viewOnly);
+      node.draggable(
+        editor.tool === 'select' &&
+          !obj.locked &&
+          !editor.viewOnly &&
+          (!isMaskingStroke(obj) || objects.selectedIds.includes(obj.id)),
+      );
       node.listening(!editor.viewOnly || editor.tool === 'select');
       node.opacity(obj.opacity);
 
