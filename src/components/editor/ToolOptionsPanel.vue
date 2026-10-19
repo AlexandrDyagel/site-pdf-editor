@@ -157,6 +157,11 @@ const documentFontsUsed = computed(() => {
           label="Под цвет бумаги"
           @update:model-value="editor.toolOptions.smartEraser.autoColor = $event"
         />
+        <AppToggle
+          :model-value="editor.toolOptions.smartEraser.eraseAll === true"
+          label="Стирать всё под мазком"
+          @update:model-value="editor.toolOptions.smartEraser.eraseAll = $event"
+        />
         <AppColorPicker
           v-model="editor.toolOptions.smartEraser.color"
           :label="editor.toolOptions.smartEraser.autoColor !== false ? 'Цвет заливки (вручную)' : 'Цвет заливки'"

@@ -396,6 +396,51 @@ try {
       JSON.stringify(edges),
     );
 
+    console.log('\n6б. Режим «Стирать всё под мазком»');
+    const eraseAllStats = await cdp.evaluate(`(async () => {
+      const app = window.__PDF_EDITOR__;
+      const factory = await import('/src/services/objectFactory.ts');
+      app.objects.clearAll(false);
+      const build = (eraseAll) => factory.createDrawingObject([{
+        tool: 'smart-eraser', color: '#ffffff', width: 26, opacity: 1, smooth: false,
+        points: [
+          { x: 120, y: 150, pressure: 0.5, time: 0 },
+          { x: 260, y: 150, pressure: 0.5, time: 10 },
+          { x: 420, y: 150, pressure: 0.5, time: 20 },
+        ],
+      }], { page: 0, smart: { threshold: 200, color: '#ffffff', autoColor: false, eraseAll }, name: 'Умный корректор' });
+      const read = async (object) => {
+        for (let attempt = 0; attempt < 40; attempt += 1) {
+          const node = window.__PDF_EDITOR_STAGE__.findOne((item) => item.getAttr && item.getAttr('objectId') === object.id);
+          const image = node ? node.findOne('Image') : null;
+          if (image && image.image()) {
+            const data = image.image().getContext('2d').getImageData(0, 0, image.image().width, image.image().height).data;
+            let opaque = 0;
+            for (let index = 0; index < data.length; index += 4) if (data[index + 3] > 200) opaque += 1;
+            return opaque;
+          }
+          await new Promise((resolve) => setTimeout(resolve, 250));
+        }
+        return 0;
+      };
+      const keep = build(false);
+      app.objects.add([keep], 'тест');
+      app.objects.clearSelection();
+      const kept = await read(keep);
+      app.objects.clearAll(false);
+      const all = build(true);
+      app.objects.add([all], 'тест');
+      app.objects.clearSelection();
+      const erased = await read(all);
+      return { kept, erased };
+    })()`);
+    console.log('  пикселей заливки: с сохранением текста', eraseAllStats.kept, ', со стиранием всего', eraseAllStats.erased);
+    check(
+      '«Стирать всё» покрывает больше, чем режим сохранения текста',
+      eraseAllStats.erased > eraseAllStats.kept,
+      JSON.stringify(eraseAllStats),
+    );
+
     console.log('\n7. Авто-цвет: заливка под тон бумаги');
     const auto = await cdp.evaluate(`(async () => {
       const app = window.__PDF_EDITOR__;

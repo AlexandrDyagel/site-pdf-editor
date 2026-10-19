@@ -276,6 +276,16 @@ function setSmartAutoColor(autoColor: boolean): void {
   );
 }
 
+function setSmartEraseAll(eraseAll: boolean): void {
+  const object = single.value;
+  if (!object || object.type !== 'drawing' || !object.payload.smart) return;
+  objects.update(
+    object.id,
+    { payload: { smart: { ...object.payload.smart, eraseAll } } },
+    'Стирать всё',
+  );
+}
+
 function setSmartThreshold(threshold: number): void {
   const object = single.value;
   if (!object || object.type !== 'drawing' || !object.payload.smart) return;
@@ -870,6 +880,11 @@ void scaleStrokes;
             label="Под цвет бумаги"
             :model-value="smartSettings.autoColor !== false"
             @update:model-value="setSmartAutoColor"
+          />
+          <AppToggle
+            label="Стирать всё под мазком"
+            :model-value="smartSettings.eraseAll === true"
+            @update:model-value="setSmartEraseAll"
           />
           <AppColorPicker
             :label="smartSettings.autoColor !== false ? 'Цвет заливки (вручную)' : 'Цвет заливки'"

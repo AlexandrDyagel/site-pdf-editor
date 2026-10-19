@@ -530,6 +530,7 @@ export function useEditorTools(deps: {
                 threshold: smartOptions.threshold,
                 color: smartOptions.color,
                 autoColor: smartOptions.autoColor !== false,
+                eraseAll: smartOptions.eraseAll === true,
               }
             : null,
           name: isSmart ? 'Умный корректор' : stroke.tool === 'eraser' ? 'Корректор' : 'Рисунок',

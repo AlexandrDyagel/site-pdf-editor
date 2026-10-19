@@ -63,6 +63,7 @@ export function smartMaskKey(object: EditorObject & { payload: DrawingPayload },
     payload.smart?.threshold ?? 170,
     payload.smart?.color ?? '#ffffff',
     payload.smart?.autoColor === false ? 'manual' : 'auto',
+    payload.smart?.eraseAll ? 'all' : 'keep',
     payload.designWidth.toFixed(1),
     payload.designHeight.toFixed(1),
     strokeSignature,
@@ -337,6 +338,40 @@ async function buildSmartMask(request: SmartMaskRequest): Promise<HTMLCanvasElem
   // текстура бумаги и мазок выглядел пятнистым.
   const softness = 40;
   const lowEdge = threshold - softness;
+  const eraseAll = settings.eraseAll === true;
+
+  /**
+   * Защита тёмного с ореолом.
+   *
+   * Без неё у букв закрашивались сглаженные края, а ядро оставалось — текст
+   * выглядел «изъеденным». Сначала помечаем тёмные пиксели, затем расширяем
+   * пометку на 1 пиксель и такие пиксели не трогаем совсем.
+   */
+  let protect: Uint8Array | null = null;
+  if (!eraseAll) {
+    const dark = new Uint8Array(pixelWidth * pixelHeight);
+    for (let y = 0; y < pixelHeight; y += 1) {
+      for (let x = 0; x < pixelWidth; x += 1) {
+        const index = (y * pixelWidth + x) * 4;
+        const luminance =
+          0.299 * pageData[index] + 0.587 * pageData[index + 1] + 0.114 * pageData[index + 2];
+        if (luminance < threshold) dark[y * pixelWidth + x] = 1;
+      }
+    }
+    protect = new Uint8Array(pixelWidth * pixelHeight);
+    for (let y = 0; y < pixelHeight; y += 1) {
+      for (let x = 0; x < pixelWidth; x += 1) {
+        if (!dark[y * pixelWidth + x]) continue;
+        const y0 = Math.max(0, y - 1);
+        const y1 = Math.min(pixelHeight - 1, y + 1);
+        const x0 = Math.max(0, x - 1);
+        const x1 = Math.min(pixelWidth - 1, x + 1);
+        for (let ny = y0; ny <= y1; ny += 1) {
+          for (let nx = x0; nx <= x1; nx += 1) protect[ny * pixelWidth + nx] = 1;
+        }
+      }
+    }
+  }
 
   for (let y = 0; y < pixelHeight; y += 1) {
     for (let x = 0; x < pixelWidth; x += 1) {
@@ -350,12 +385,17 @@ async function buildSmartMask(request: SmartMaskRequest): Promise<HTMLCanvasElem
       mask.data[index] = Math.round(red);
       mask.data[index + 1] = Math.round(green);
       mask.data[index + 2] = Math.round(blue);
-      const luminance =
-        0.299 * pageData[index] + 0.587 * pageData[index + 1] + 0.114 * pageData[index + 2];
-      // Тёмный текст под штрихом остаётся нетронутым (альфа 0 — видно страницу).
-      if (luminance <= lowEdge) continue;
-      const ramp = luminance >= threshold ? 1 : Math.min(1, (luminance - lowEdge) / softness);
-      mask.data[index + 3] = Math.round((coverage / 255) * opacity * ramp * 255);
+      if (protect && protect[y * pixelWidth + x]) continue;
+      if (!eraseAll) {
+        const luminance =
+          0.299 * pageData[index] + 0.587 * pageData[index + 1] + 0.114 * pageData[index + 2];
+        // Тёмный текст под штрихом остаётся нетронутым (альфа 0 — видно страницу).
+        if (luminance <= lowEdge) continue;
+        const ramp = luminance >= threshold ? 1 : Math.min(1, (luminance - lowEdge) / softness);
+        mask.data[index + 3] = Math.round((coverage / 255) * opacity * ramp * 255);
+        continue;
+      }
+      mask.data[index + 3] = Math.round((coverage / 255) * opacity * 255);
     }
   }
   maskCtx.putImageData(mask, 0, 0);
