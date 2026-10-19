@@ -59,11 +59,15 @@ export function getStrokeOutline(
     return circle;
   }
 
+  // Корректор и умный корректор заливают ровно то, что провели: без
+  // «утягивания» (streamline) и почти без сглаживания, поэтому штрих не
+  // отстаёт от курсора и не уползает за ним хвостом.
+  const isMasking = stroke.tool === 'eraser' || stroke.tool === 'smart-eraser';
   const outline = getStroke(toFreehandPoints(stroke.points), {
     size: Math.max(stroke.width, 0.2),
-    thinning: stroke.tool === 'eraser' ? 0 : 0.55,
-    smoothing: opts.smoothing,
-    streamline: opts.streamline,
+    thinning: isMasking ? 0 : 0.55,
+    smoothing: isMasking ? 0.2 : opts.smoothing,
+    streamline: isMasking ? 0 : opts.streamline,
     simulatePressure: stroke.points.every((point) => point.pressure === 0.5),
     last: true,
     start: { taper: 0, cap: true },
@@ -116,6 +120,47 @@ export function paintStroke(
   ctx.globalCompositeOperation = 'source-over';
   ctx.fillStyle = stroke.color;
   ctx.fill();
+  ctx.restore();
+}
+
+/**
+ * Быстрая отрисовка штриха обычной линией с круглыми концами.
+ *
+ * Для корректора это и точнее, и в разы дешевле контура perfect-freehand:
+ * пока ведёшь мышь, каждый кадр считается заново, и «дорогой» контур давал
+ * видимый хвост позади курсора.
+ */
+export function paintStrokeFast(
+  ctx: CanvasRenderingContext2D,
+  stroke: StrokeData,
+  options: { scale?: number; alpha?: number } = {},
+): void {
+  const { scale = 1, alpha = 1 } = options;
+  if (stroke.points.length === 0) return;
+  const width = Math.max(0.2, stroke.width) * scale;
+  ctx.save();
+  ctx.globalAlpha *= Math.max(0, Math.min(1, stroke.opacity * alpha));
+  ctx.globalCompositeOperation = 'source-over';
+  ctx.strokeStyle = stroke.color;
+  ctx.fillStyle = stroke.color;
+  ctx.lineCap = 'round';
+  ctx.lineJoin = 'round';
+  const first = stroke.points[0];
+  if (stroke.points.length === 1) {
+    ctx.beginPath();
+    ctx.arc(first.x * scale, first.y * scale, width / 2, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.restore();
+    return;
+  }
+  ctx.lineWidth = width;
+  ctx.beginPath();
+  ctx.moveTo(first.x * scale, first.y * scale);
+  for (let index = 1; index < stroke.points.length; index += 1) {
+    const point = stroke.points[index];
+    ctx.lineTo(point.x * scale, point.y * scale);
+  }
+  ctx.stroke();
   ctx.restore();
 }
 

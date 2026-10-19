@@ -27,7 +27,7 @@ import {
 } from '@/utils/geometry';
 import { ROTATE_CURSOR } from '@/utils/cursors';
 import { normalizeSides, polygonPath } from '@/utils/shapePath';
-import { paintStroke } from '@/services/strokeService';
+import { paintStroke, paintStrokeFast } from '@/services/strokeService';
 
 /** Публичный интерфейс сцены (все узлы — реактивные ссылки). */
 export interface KonvaStageApi {
@@ -262,7 +262,10 @@ export function useKonvaStage(containerRef: Ref<HTMLDivElement | null>): KonvaSt
     // Текущий штрих.
     const stroke = editor.activeStroke;
     if (stroke && stroke.points.length > 0) {
-      paintStroke(ctx, stroke);
+      // Корректоры заливают сразу за курсором: для них быстрый путь отрисовки.
+      const isMasking = stroke.tool === 'eraser' || stroke.tool === 'smart-eraser';
+      if (isMasking) paintStrokeFast(ctx, stroke);
+      else paintStroke(ctx, stroke);
     }
 
     // Резиновая рамка инструмента.
