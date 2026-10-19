@@ -16,7 +16,7 @@ import { pdfService } from '@/services/pdfService';
 import { extraPageRotation } from '@/utils/coordinates';
 
 /** Ступени масштаба растеризации. */
-const RENDER_STEPS = [1, 1.5, 2, 3, 4, 6];
+const RENDER_STEPS = [1, 1.5, 2, 3, 4, 6, 8];
 
 export function usePdfPage(options: {
   setBackground: (image: CanvasImageSource | null, width: number, height: number) => void;

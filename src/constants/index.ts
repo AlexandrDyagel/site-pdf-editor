@@ -22,9 +22,9 @@ export const CSS_PX_PER_INCH = 96;
 
 /** Ограничения зума. */
 export const MIN_ZOOM = 0.1;
-export const MAX_ZOOM = 8;
+export const MAX_ZOOM = 30;
 export const ZOOM_STEP = 1.2;
-export const ZOOM_PRESETS = [0.25, 0.5, 0.75, 1, 1.25, 1.5, 2, 3, 4];
+export const ZOOM_PRESETS = [0.25, 0.5, 0.75, 1, 1.25, 1.5, 2, 3, 4, 6, 8, 12, 16, 20, 24, 30];
 
 /** Масштабы растрового экспорта. */
 export const SCALE_PRESETS = [1, 1.5, 2, 3, 4];

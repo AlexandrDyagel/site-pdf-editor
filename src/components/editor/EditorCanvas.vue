@@ -12,6 +12,14 @@ import { useObjectsStore } from '@/stores/objects';
 import { usePdfStore } from '@/stores/pdf';
 import { useSettingsStore } from '@/stores/settings';
 import TextInlineEditor from '@/components/editor/TextInlineEditor.vue';
+import {
+  bindEyedropperStage,
+  cancelEyedropper,
+  isEyedropperActive,
+  onEyedropperChange,
+  readColorAt,
+  resolveEyedropper,
+} from '@/services/eyedropperService';
 
 const editor = useEditorStore();
 const objects = useObjectsStore();
@@ -112,9 +120,43 @@ const backgroundClass = computed(() => {
   }
 });
 
+/** Пипетка: активна ли и какой цвет сейчас под курсором. */
+const eyedropperActive = ref(false);
+const eyedropperPreview = ref('#ffffff');
+
+onEyedropperChange(() => {
+  const wasActive = eyedropperActive.value;
+  eyedropperActive.value = isEyedropperActive();
+  if (!eyedropperActive.value && wasActive) eyedropperPreview.value = '#ffffff';
+});
+
+/**
+ * Клик пипеткой перехватывается до Konva (фаза перехвата), иначе клик создал бы
+ * объект или начал штрих.
+ */
+function onEyedropperPointerDown(event: PointerEvent): void {
+  if (!isEyedropperActive()) return;
+  event.preventDefault();
+  event.stopPropagation();
+  event.stopImmediatePropagation();
+  resolveEyedropper(event.clientX, event.clientY);
+}
+
+function onEyedropperPointerMove(event: PointerEvent): void {
+  if (!isEyedropperActive()) return;
+  const color = readColorAt(event.clientX, event.clientY);
+  if (color) eyedropperPreview.value = color;
+}
+
 function bindStage(): void {
   const stage = stageApi.stage.value;
   if (!stage) return;
+  bindEyedropperStage(stage);
+  const element = container.value;
+  if (element) {
+    element.addEventListener('pointerdown', onEyedropperPointerDown, true);
+    element.addEventListener('pointermove', onEyedropperPointerMove, true);
+  }
   stage.on('pointerdown', tools.onPointerDown);
   stage.on('pointermove', tools.onPointerMove);
   stage.on('pointerup', tools.onPointerUp);
@@ -134,6 +176,13 @@ onMounted(() => {
 });
 
 onBeforeUnmount(() => {
+  cancelEyedropper();
+  bindEyedropperStage(null);
+  const element = container.value;
+  if (element) {
+    element.removeEventListener('pointerdown', onEyedropperPointerDown, true);
+    element.removeEventListener('pointermove', onEyedropperPointerMove, true);
+  }
   stageApi.destroy();
 });
 
@@ -160,7 +209,7 @@ watch(
 <template>
   <div
     class="relative h-full w-full overflow-hidden"
-    :class="[backgroundClass, cursorClass]"
+    :class="[backgroundClass, cursorClass, eyedropperActive ? 'cursor-crosshair' : '']"
     data-testid="editor-canvas"
     @pointermove="onPointerMove"
     @pointerdown="onPointerMove"
@@ -168,12 +217,28 @@ watch(
   >
     <div ref="container" class="absolute inset-0" />
 
+    <!-- Пипетка: подсказка и цвет под курсором -->
+    <div
+      v-if="eyedropperActive"
+      class="pointer-events-none absolute left-1/2 top-3 z-30 -translate-x-1/2 rounded-xl border border-brand-300/70 bg-white/95 px-3 py-2 text-[11px] text-slate-700 shadow-floating dark:border-brand-500/40 dark:bg-slate-900/95 dark:text-slate-200"
+      data-testid="eyedropper-hint"
+    >
+      <span class="flex items-center gap-2">
+        <span
+          class="h-4 w-4 rounded ring-1 ring-inset ring-slate-900/20"
+          :style="{ backgroundColor: eyedropperPreview }"
+        />
+        <span class="font-mono uppercase">{{ eyedropperPreview }}</span>
+        <span class="text-slate-400">· клик по холсту — взять цвет · Esc — отмена</span>
+      </span>
+    </div>
+
     <!-- Редактирование текста на холсте: каретка, ввод, рост рамки -->
     <TextInlineEditor />
 
     <!-- Курсор кисти: кружок по размеру выбранного инструмента -->
     <div
-      v-if="showBrushCursor"
+      v-if="showBrushCursor && !eyedropperActive"
       class="brush-cursor pointer-events-none absolute z-10 rounded-full"
       :style="brushCursorStyle"
       data-testid="brush-cursor"

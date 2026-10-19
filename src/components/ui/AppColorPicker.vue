@@ -3,6 +3,7 @@
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue';
 import { COLOR_PALETTE } from '@/constants';
 import { isLightColor } from '@/utils/pdf';
+import { startEyedropper } from '@/services/eyedropperService';
 import AppIcon from '@/components/ui/AppIcon.vue';
 
 const model = defineModel<string>({ default: '#000000' });
@@ -38,6 +39,13 @@ function onNativeColor(event: Event): void {
   model.value = (event.target as HTMLInputElement).value;
 }
 
+/** Пипетка: закрываем палитру и берём цвет со следующего клика по холсту. */
+async function pickFromCanvas(): Promise<void> {
+  open.value = false;
+  const color = await startEyedropper();
+  if (color) model.value = color;
+}
+
 function onDocumentClick(event: MouseEvent): void {
   if (!open.value) return;
   if (root.value && !root.value.contains(event.target as Node)) open.value = false;
@@ -58,6 +66,7 @@ onBeforeUnmount(() => document.removeEventListener('mousedown', onDocumentClick)
     <button
       type="button"
       class="flex w-full items-center gap-2 rounded-lg border border-slate-200 bg-white px-2 py-1.5 text-left transition-colors hover:bg-slate-50 dark:border-slate-700 dark:bg-slate-950 dark:hover:bg-slate-900"
+      data-testid="color-trigger"
       @click="open = !open"
     >
       <span
@@ -92,7 +101,16 @@ onBeforeUnmount(() => document.removeEventListener('mousedown', onDocumentClick)
           @click="pick(color)"
         />
       </div>
-      <div class="mt-3 flex items-center gap-2">
+      <button
+        type="button"
+        class="mt-3 flex w-full items-center gap-2 rounded-lg border border-slate-200 bg-white px-2 py-1.5 text-[11px] text-slate-600 transition-colors hover:bg-slate-50 dark:border-slate-700 dark:bg-slate-950 dark:text-slate-300 dark:hover:bg-slate-900"
+        data-testid="color-eyedropper"
+        @click="pickFromCanvas"
+      >
+        <AppIcon name="pipette" :size="13" class="text-brand-600 dark:text-brand-300" />
+        Пипетка — взять цвет с холста
+      </button>
+      <div class="mt-2 flex items-center gap-2">
         <input
           type="color"
           :value="current"
