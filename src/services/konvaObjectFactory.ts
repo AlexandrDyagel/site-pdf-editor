@@ -462,9 +462,7 @@ function buildChildren(group: Konva.Group, obj: EditorObject, options: ObjectBui
           listening: true,
         });
         group.add(maskImage);
-        if (options.maskScale) {
-          void applySmartMask(maskImage, obj, payload, options);
-        }
+        void applySmartMask(maskImage, obj, payload, options);
         break;
       }
       const designWidth = payload.designWidth > 0 ? payload.designWidth : obj.width;
@@ -578,7 +576,7 @@ function applySmartMask(
     try {
       const canvas = await getSmartMask({
         object: obj as EditorObject & { payload: DrawingPayload },
-        scale: Math.min(6, Math.max(0.5, options.maskScale ?? 1)),
+        scale: Math.min(6, Math.max(0.5, options.maskScale ?? 2)),
       });
       if (!canvas) return;
       if (!image.getStage()) return;

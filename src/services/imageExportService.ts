@@ -118,7 +118,8 @@ export async function renderPageCanvas(request: PageCanvasRequest): Promise<HTML
       .sort((a, b) => a.zIndex - b.zIndex);
 
     for (const obj of visibleObjects) {
-      const node = createObjectNode(obj, { pending });
+      // maskScale нужен «умному корректору»: его маска строится под масштаб экспорта.
+    const node = createObjectNode(obj, { pending, maskScale: scale });
       node.listening(false);
       layer.add(node);
     }

@@ -295,6 +295,106 @@ try {
     console.log('  в готовом PDF:', JSON.stringify(exportedInk));
     check('маска попала в экспортированный PDF', exportedInk.red > 300, String(exportedInk.red));
     check('тёмный текст в PDF не закрашен', exportedInk.dark > 100, String(exportedInk.dark));
+
+    console.log('\n5. Растровый экспорт (JPEG) тоже содержит маску');
+    const raster = await cdp.evaluate(`(async () => {
+      // Возвращаемся в редактор с нашим документом и экспортируем JPEG.
+      const app = window.__PDF_EDITOR__;
+      const factory = await import('/src/services/objectFactory.ts');
+      app.objects.clearAll(false);
+      app.editor.setTool('smart-eraser');
+      app.editor.toolOptions.smartEraser.color = '${FILL}';
+      app.editor.toolOptions.smartEraser.threshold = 200;
+      app.editor.toolOptions.smartEraser.width = 26;
+      // Штрих строим напрямую фабрикой: та же геометрия, что даёт мышь.
+      const stroke = {
+        tool: 'smart-eraser', color: '${FILL}', width: 26, opacity: 1, smooth: false,
+        points: [
+          { x: 150, y: 150, pressure: 0.5, time: 0 },
+          { x: 250, y: 150, pressure: 0.5, time: 10 },
+          { x: 350, y: 150, pressure: 0.5, time: 20 },
+        ],
+      };
+      const drawing = factory.createDrawingObject([stroke], {
+        page: 0,
+        smart: { threshold: 200, color: '${FILL}' },
+        name: 'Умный корректор',
+      });
+      if (!drawing) return { ok: false, error: 'не создан объект' };
+      app.objects.add([drawing], 'тест');
+      app.objects.clearSelection();
+      app.exporter.setFormat('jpeg');
+      app.exporter.update({ pageRange: 'current', dpi: 96, scale: 1, quality: 0.95, zip: false, singleImage: true });
+      const result = await app.exporter.run({ download: false });
+      if (!result.ok) return { ok: false, error: result.error };
+      const bytes = new Uint8Array(await result.blob.arrayBuffer());
+      let binary = '';
+      for (let i = 0; i < bytes.length; i += 0x8000) {
+        binary += String.fromCharCode.apply(null, bytes.subarray(i, i + 0x8000));
+      }
+      return { ok: true, b64: btoa(binary) };
+    })()`);
+    check('JPEG собран', raster.ok === true, raster.error ?? '');
+    if (raster.ok) {
+      const jpegInk = await cdp.evaluate(`(async () => {
+        const image = new Image();
+        image.src = 'data:image/jpeg;base64,' + ${JSON.stringify(raster.b64)};
+        await image.decode();
+        const canvas = document.createElement('canvas');
+        canvas.width = image.naturalWidth;
+        canvas.height = image.naturalHeight;
+        const ctx = canvas.getContext('2d');
+        ctx.drawImage(image, 0, 0);
+        const data = ctx.getImageData(0, 0, canvas.width, canvas.height).data;
+        let red = 0;
+        let dark = 0;
+        for (let index = 0; index < data.length; index += 4) {
+          const r = data[index];
+          const g = data[index + 1];
+          const b = data[index + 2];
+          if (r > 150 && g < 120 && b > 40 && b < 140) red += 1;
+          else if (r < 100 && g < 100 && b < 100) dark += 1;
+        }
+        return { width: canvas.width, height: canvas.height, red, dark };
+      })()`);
+      console.log('  JPEG:', JSON.stringify(jpegInk));
+      check('в JPEG есть закрашенная область', jpegInk.red > 300, String(jpegInk.red));
+      check('в JPEG текст под штрихом цел', jpegInk.dark > 100, String(jpegInk.dark));
+    }
+
+    console.log('\n6. Края маски без чёрной каймы');
+    const edges = await cdp.evaluate(`(async () => {
+      const app = window.__PDF_EDITOR__;
+      const object = app.objects.objects.find((item) => item.type === 'drawing');
+      if (!object) return null;
+      for (let attempt = 0; attempt < 40; attempt += 1) {
+        const node = window.__PDF_EDITOR_STAGE__.findOne((item) => item.getAttr && item.getAttr('objectId') === object.id);
+        const image = node ? node.findOne('Image') : null;
+        if (image && image.image()) {
+          const canvas = image.image();
+          const ctx = canvas.getContext('2d');
+          const data = ctx.getImageData(0, 0, canvas.width, canvas.height).data;
+          let partial = 0;
+          let darkRgb = 0;
+          for (let index = 0; index < data.length; index += 4) {
+            const alpha = data[index + 3];
+            if (alpha === 0 || alpha === 255) continue;
+            partial += 1;
+            if (data[index] < 40 && data[index + 1] < 40 && data[index + 2] < 40) darkRgb += 1;
+          }
+          return { partial, darkRgb };
+        }
+        await new Promise((resolve) => setTimeout(resolve, 250));
+      }
+      return null;
+    })()`);
+    console.log('  края маски:', JSON.stringify(edges));
+    check(
+      'на краях маски нет чёрного цвета (кайма в PDF)',
+      edges !== null && edges.darkRgb === 0,
+      JSON.stringify(edges),
+    );
+
     await cdp.screenshot(resolvePath(TMP, 'smart-eraser.png'));
   }
   console.log('\nОшибки консоли:', cdp.errors.length ? cdp.errors.join('\n') : '(нет)');

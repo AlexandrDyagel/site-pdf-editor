@@ -164,13 +164,16 @@ async function buildSmartMask(request: SmartMaskRequest): Promise<HTMLCanvasElem
   for (let index = 0; index < shapeData.length; index += 4) {
     const coverage = shapeData[index + 3];
     if (coverage === 0) continue;
-    const luminance =
-      0.299 * pageData[index] + 0.587 * pageData[index + 1] + 0.114 * pageData[index + 2];
-    // Тёмный текст под штрихом остаётся нетронутым.
-    if (luminance < threshold) continue;
+    // Цвет заливки пишем во все пиксели под штрихом, включая прозрачные:
+    // у частично прозрачного края иначе остаётся чёрный RGB, и в PDF вокруг
+    // закрашенной области появляется тёмная кайма.
     mask.data[index] = red;
     mask.data[index + 1] = green;
     mask.data[index + 2] = blue;
+    const luminance =
+      0.299 * pageData[index] + 0.587 * pageData[index + 1] + 0.114 * pageData[index + 2];
+    // Тёмный текст под штрихом остаётся нетронутым (альфа 0 — видно страницу).
+    if (luminance < threshold) continue;
     mask.data[index + 3] = Math.round((coverage / 255) * opacity * 255);
   }
   maskCtx.putImageData(mask, 0, 0);
