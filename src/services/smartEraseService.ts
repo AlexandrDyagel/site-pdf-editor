@@ -160,6 +160,16 @@ async function buildSmartMask(request: SmartMaskRequest): Promise<HTMLCanvasElem
   const blue = Math.round(fill.b * 255);
   const threshold = Math.max(0, Math.min(255, settings.threshold));
   const opacity = Math.max(0, Math.min(1, object.opacity));
+  /**
+   * Мягкий переход к порогу.
+   *
+   * Жёсткий порог оставлял вокруг букв тонкую кайму: сглаженные края глифов
+   * (смесь чёрного и белого) попадают между «тёмным» и «светлым» и остаются
+   * незакрашенными — в PDF с аннотациями эта кайма видна как обводка. Теперь
+   * такие пиксели закрашиваются частично, и граница получается плавной.
+   */
+  const softness = 55;
+  const lowEdge = threshold - softness;
 
   for (let index = 0; index < shapeData.length; index += 4) {
     const coverage = shapeData[index + 3];
@@ -173,8 +183,9 @@ async function buildSmartMask(request: SmartMaskRequest): Promise<HTMLCanvasElem
     const luminance =
       0.299 * pageData[index] + 0.587 * pageData[index + 1] + 0.114 * pageData[index + 2];
     // Тёмный текст под штрихом остаётся нетронутым (альфа 0 — видно страницу).
-    if (luminance < threshold) continue;
-    mask.data[index + 3] = Math.round((coverage / 255) * opacity * 255);
+    if (luminance <= lowEdge) continue;
+    const ramp = Math.min(1, (luminance - lowEdge) / softness);
+    mask.data[index + 3] = Math.round((coverage / 255) * opacity * ramp * 255);
   }
   maskCtx.putImageData(mask, 0, 0);
   return maskCanvas;
