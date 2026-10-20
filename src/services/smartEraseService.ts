@@ -183,6 +183,8 @@ async function buildSmartMask(request: SmartMaskRequest): Promise<HTMLCanvasElem
    * с фоном. Если пользователь выбрал цвет вручную — заливаем ровно им.
    */
   const autoColor = settings.autoColor !== false;
+  /** Тон бумаги (0 — не определён). Нужен и в цикле: чистую бумагу не трогаем. */
+  let paperTone = 0;
   const uniform = hexToRgb(settings.color || '#ffffff');
   const uniformR = Math.round(uniform.r * 255);
   const uniformG = Math.round(uniform.g * 255);
@@ -228,6 +230,7 @@ async function buildSmartMask(request: SmartMaskRequest): Promise<HTMLCanvasElem
         paperLum = bucket;
       }
     }
+    paperTone = paperLum;
     // В оценку бумаги берём только пиксели вплотную к самому светлому тону
     // (8 единиц): сглаженные края букв на 200–250 иначе занижали заливку, и
     // она выглядела серой полосой на белой бумаге.
@@ -465,6 +468,10 @@ async function buildSmartMask(request: SmartMaskRequest): Promise<HTMLCanvasElem
       if (!eraseAll) {
         const luminance =
           0.299 * pageData[index] + 0.587 * pageData[index + 1] + 0.114 * pageData[index + 2];
+        // Чистая бумага остаётся как была: закрашивать её плоским цветом нельзя —
+        // на текстуре скана ровное пятно видно кромкой. Закрашиваем только то,
+        // что светлее порога, но темнее бумаги (серые линии, пятна, штрихи).
+        if (autoColor && paperTone > 0 && luminance >= paperTone - 2) continue;
         // Тёмный текст под штрихом остаётся нетронутым (альфа 0 — видно страницу).
         if (luminance <= lowEdge) continue;
         const ramp = luminance >= threshold ? 1 : Math.min(1, (luminance - lowEdge) / softness);
