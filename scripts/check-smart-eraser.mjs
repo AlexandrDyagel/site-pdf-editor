@@ -504,10 +504,14 @@ try {
       return { opaque: 0 };
     })()`);
     console.log('  авто-заливка:', JSON.stringify(auto));
-    check('авто-режим закрашивает область', (auto.opaque ?? 0) > 500, JSON.stringify(auto));
     check(
-      'авто-режим игнорирует палитру и берёт тон бумаги',
-      auto.r > 240 && auto.g > 240 && auto.b > 240,
+      'на чистой бумаге мазок ничего не закрашивает (нет пятна)',
+      (auto.opaque ?? 0) < 200,
+      JSON.stringify(auto),
+    );
+    check(
+      'бумага остаётся исходной — заливки нет вовсе',
+      (auto.opaque ?? 0) === 0 || (auto.r > 240 && auto.g > 240 && auto.b > 240),
       JSON.stringify(auto),
     );
 
