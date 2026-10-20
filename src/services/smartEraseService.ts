@@ -486,6 +486,17 @@ async function buildSmartMask(request: SmartMaskRequest): Promise<HTMLCanvasElem
         gridCount[index] = 0;
       }
     }
+    // Движок модели даёт контентную маску: заливке достаточно одного тона бумаги,
+    // иначе на ровных местах видна «полосатость» 250–255.
+    if (settings.engine === 'model') {
+      for (let index = 0; index < gridCount.length; index += 1) {
+        gridR[index] = modalR;
+        gridG[index] = modalG;
+        gridB[index] = modalB;
+        gridLum[index] = 0.299 * modalR + 0.587 * modalG + 0.114 * modalB;
+        gridCount[index] = Math.max(1, gridCount[index]);
+      }
+    }
     // 2б. Пустые ячейки (сплошная печать) заполняем тоном соседей: так заливка
     // продолжает бумагу, а не становится светлее её.
     for (let pass = 0; pass < 6; pass += 1) {
