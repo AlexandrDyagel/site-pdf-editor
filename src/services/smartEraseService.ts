@@ -215,6 +215,8 @@ async function buildSmartMask(request: SmartMaskRequest): Promise<HTMLCanvasElem
   const autoColor = settings.autoColor !== false;
   /** Тон бумаги (0 — не определён). Нужен и в цикле: чистую бумагу не трогаем. */
   let paperTone = 0;
+  /** Средняя насыщенность бумаги: у скана она не нулевая (желтизна, синева). */
+  let paperSaturation = 0.02;
   const uniform = hexToRgb(settings.color || '#ffffff');
   const uniformR = Math.round(uniform.r * 255);
   const uniformG = Math.round(uniform.g * 255);
@@ -261,6 +263,26 @@ async function buildSmartMask(request: SmartMaskRequest): Promise<HTMLCanvasElem
       }
     }
     paperTone = paperLum;
+    {
+      // Средняя насыщенность светлых пикселей = «цветность» самой бумаги.
+      let satSum = 0;
+      let satCount = 0;
+      const strideX2 = Math.max(1, Math.round(pixelWidth / 400));
+      const strideY2 = Math.max(1, Math.round(pixelHeight / 400));
+      for (let y = 0; y < pixelHeight; y += strideY2) {
+        for (let x = 0; x < pixelWidth; x += strideX2) {
+          const index = (y * pixelWidth + x) * 4;
+          const r = pageData[index];
+          const g = pageData[index + 1];
+          const b = pageData[index + 2];
+          const max = Math.max(r, g, b);
+          if (max < 200) continue;
+          satSum += (max - Math.min(r, g, b)) / max;
+          satCount += 1;
+        }
+      }
+      if (satCount > 0) paperSaturation = Math.min(0.2, satSum / satCount);
+    }
     // В оценку бумаги берём только пиксели вплотную к самому светлому тону
     // (8 единиц): сглаженные края букв на 200–250 иначе занижали заливку, и
     // она выглядела серой полосой на белой бумаге.
@@ -548,7 +570,7 @@ async function buildSmartMask(request: SmartMaskRequest): Promise<HTMLCanvasElem
           autoColor &&
           paperTone > 0 &&
           luminance >= paperTone - 25 &&
-          saturationAt(index) <= 0.06
+          saturationAt(index) <= paperSaturation + 0.04
         ) {
           continue;
         }
