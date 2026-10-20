@@ -310,26 +310,16 @@ async function buildSmartMask(request: SmartMaskRequest): Promise<HTMLCanvasElem
         gridLum[index] = 0.299 * fallbackR + 0.587 * fallbackG + 0.114 * fallbackB;
       }
     }
-    // 3. Решаем, нужна ли локальная сетка вообще.
+    // 3. Заливаем одним тоном — цветом моды бумаги.
     //
-    // На ровной бумаге (а это почти все сканы форм) сетка только вредит: у
-    // краёв текста ячейки чуть темнее, и мазок выглядит пятнистой полосой
-    // 250–255 на белом 255. Поэтому считаем разброс тона по ячейкам и, если он
-    // невелик, заливаем всё цветом моды — он совпадает с бумагой и мазка не
-    // видно. У страниц с тенью или градиентом разброс больше, и работает сетка.
-    const cellTones: number[] = [];
+    // Локальная сетка считалась бы «умнее», но на практике давала перепад в
+    // 3–6 единиц яркости (у краёв текста ячейки темнее), а на белом листе такой
+    // перепад читается как сероватая полоса вокруг мазка. Один тон совпадает с
+    // бумагой — мазка не видно совсем.
     for (let index = 0; index < gridCount.length; index += 1) {
-      if (gridCount[index] > 0) cellTones.push(gridLum[index] / gridCount[index]);
-    }
-    cellTones.sort((a, b) => a - b);
-    const p05 = cellTones.length ? cellTones[Math.floor(cellTones.length * 0.05)] : 0;
-    const p95 = cellTones.length ? cellTones[Math.floor(cellTones.length * 0.95)] : 0;
-    if (cellTones.length === 0 || p95 - p05 <= 10) {
-      for (let index = 0; index < gridCount.length; index += 1) {
-        gridR[index] = modalR;
-        gridG[index] = modalG;
-        gridB[index] = modalB;
-      }
+      gridR[index] = modalR;
+      gridG[index] = modalG;
+      gridB[index] = modalB;
     }
 
     // 4. Несколько проходов сглаживания сетки: без резких переходов между
