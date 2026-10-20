@@ -563,15 +563,17 @@ function drawFlatRect(
 }
 
 /**
- * «Умный корректор» в PDF: маска строится по растру страницы в 300 dpi,
+ * «Умный корректор» в PDF: маска строится по растру страницы в 600 dpi,
  * поэтому в PDF она попадает картинкой (остальные объекты остаются векторными).
+ * 600 dpi, а не 300: маска покрывает только габариты штриха, раст небольшой, а
+ * кромка мазка при сильном увеличении не «лестничает».
  */
 async function drawSmartMaskObject(
   page: PDFPage,
   obj: EditorObject & { payload: DrawingPayload },
   geo: PageGeometry,
 ): Promise<void> {
-  const canvas = await getSmartMask({ object: obj, scale: 300 / 72 });
+  const canvas = await getSmartMask({ object: obj, scale: 600 / 72 });
   if (!canvas) return;
   const frame = frameOf(obj, geo);
   const bottomLeft = frame.toPdf(0, obj.height);

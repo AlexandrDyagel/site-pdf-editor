@@ -93,12 +93,26 @@ export function clearSmartMaskCache(): void {
 
 /** Строит маску: участок страницы ∩ штрихи, только светлые пиксели. */
 async function buildSmartMask(request: SmartMaskRequest): Promise<HTMLCanvasElement | null> {
-  const { object, scale } = request;
+  const { object } = request;
   const page = request.page ?? usePdfStore().pages[object.page] ?? null;
   const payload = object.payload;
   const settings = payload.smart;
   if (!settings) return null;
   if (typeof document === 'undefined') return null;
+
+  /**
+   * Ограничение масштаба.
+   *
+   * Растр страницы рендерится целиком, и у него есть предел по числу пикселей.
+   * Если запросить больше, pdf.js отдаст картинку меньше — и маска окажется
+   * сдвинутой: текст под штрихом перестанет защищаться и в PDF будет закрашен.
+   * Поэтому заранее урезаем масштаб под этот предел.
+   */
+  const pageWidthPt = page?.width ?? 595;
+  const pageHeightPt = page?.height ?? 842;
+  const maxPagePixels = 24_000_000;
+  const maxScale = Math.sqrt(maxPagePixels / Math.max(1, pageWidthPt * pageHeightPt));
+  const scale = Math.max(0.25, Math.min(request.scale, maxScale));
 
   const widthPt = Math.max(1, object.width);
   const heightPt = Math.max(1, object.height);
@@ -338,6 +352,15 @@ async function buildSmartMask(request: SmartMaskRequest): Promise<HTMLCanvasElem
   // текстура бумаги и мазок выглядел пятнистым.
   const softness = 40;
   const lowEdge = threshold - softness;
+  /**
+   * Кромка маски.
+   *
+   * Полупрозрачный край — источник тёмной каймы: он смешивается с содержимым
+   * страницы под ним (буква, линия), и в PDF вокруг мазка появляется полоска.
+   * Поэтому альфа бинарная: пиксель либо закрашен полностью, либо не закрашен.
+   * На 300 dpi ступенька в 1 пиксель маски незаметна.
+   */
+  const edgeCoverage = 110;
   const eraseAll = settings.eraseAll === true;
 
   /**
@@ -385,6 +408,7 @@ async function buildSmartMask(request: SmartMaskRequest): Promise<HTMLCanvasElem
       mask.data[index] = Math.round(red);
       mask.data[index + 1] = Math.round(green);
       mask.data[index + 2] = Math.round(blue);
+      if (coverage < edgeCoverage) continue;
       if (protect && protect[y * pixelWidth + x]) continue;
       if (!eraseAll) {
         const luminance =
@@ -392,10 +416,10 @@ async function buildSmartMask(request: SmartMaskRequest): Promise<HTMLCanvasElem
         // Тёмный текст под штрихом остаётся нетронутым (альфа 0 — видно страницу).
         if (luminance <= lowEdge) continue;
         const ramp = luminance >= threshold ? 1 : Math.min(1, (luminance - lowEdge) / softness);
-        mask.data[index + 3] = Math.round((coverage / 255) * opacity * ramp * 255);
+        mask.data[index + 3] = Math.round(opacity * ramp * 255);
         continue;
       }
-      mask.data[index + 3] = Math.round((coverage / 255) * opacity * 255);
+      mask.data[index + 3] = Math.round(opacity * 255);
     }
   }
   maskCtx.putImageData(mask, 0, 0);

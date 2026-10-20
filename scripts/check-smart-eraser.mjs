@@ -177,20 +177,34 @@ try {
     const maskCanvas = image && image.image() ? image.image() : null;
     let maskRed = 0;
     let maskTransparent = 0;
+    let maskPartial = 0;
     if (maskCanvas && maskCanvas.width) {
       const ctx = maskCanvas.getContext('2d');
       const data = ctx.getImageData(0, 0, maskCanvas.width, maskCanvas.height).data;
       for (let index = 0; index < data.length; index += 4) {
-        if (data[index + 3] < 20) maskTransparent += 1;
+        const alpha = data[index + 3];
+        if (alpha < 20) maskTransparent += 1;
+        else if (alpha < 250) maskPartial += 1;
         else if (data[index] > 150 && data[index + 1] < 110) maskRed += 1;
       }
     }
-    return { hasMask: Boolean(maskCanvas), maskRed, maskTransparent, maskWidth: maskCanvas ? maskCanvas.width : 0 };
+    return {
+      hasMask: Boolean(maskCanvas),
+      maskRed,
+      maskTransparent,
+      maskPartial,
+      maskWidth: maskCanvas ? maskCanvas.width : 0,
+    };
   })()`);
   console.log('  маска:', JSON.stringify(pixels));
   check('маска построена', pixels.hasMask === true);
   check('в маске есть закрашенные участки', pixels.maskRed > 500, String(pixels.maskRed));
   check('часть пикселей прозрачна (тёмный текст)', pixels.maskTransparent > 500, String(pixels.maskTransparent));
+  check(
+    'у маски жёсткая кромка: полупрозрачных пикселей нет (иначе тёмная кайма в PDF)',
+    pixels.maskPartial === 0,
+    String(pixels.maskPartial),
+  );
 
   const ink = await cdp.evaluate(`(() => {
     const app = window.__PDF_EDITOR__;
