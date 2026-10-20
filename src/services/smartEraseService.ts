@@ -416,7 +416,9 @@ async function buildSmartMask(request: SmartMaskRequest): Promise<HTMLCanvasElem
    * На 300 dpi ступенька в 1 пиксель маски незаметна.
    */
   const edgeCoverage = 110;
-  const eraseAll = settings.eraseAll === true;
+  // По умолчанию стираем всё под мазком: остатки тёмного под кистью выглядели
+  // как мусор и точки. Кому нужно сохранить текст — выключает переключатель.
+  const eraseAll = settings.eraseAll !== false;
 
   /**
    * Защита тёмного с ореолом.

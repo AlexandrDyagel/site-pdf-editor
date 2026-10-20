@@ -158,7 +158,7 @@ const documentFontsUsed = computed(() => {
           @update:model-value="editor.toolOptions.smartEraser.autoColor = $event"
         />
         <AppToggle
-          :model-value="editor.toolOptions.smartEraser.eraseAll === true"
+          :model-value="editor.toolOptions.smartEraser.eraseAll !== false"
           label="Стирать всё под мазком"
           @update:model-value="editor.toolOptions.smartEraser.eraseAll = $event"
         />

@@ -883,7 +883,7 @@ void scaleStrokes;
           />
           <AppToggle
             label="Стирать всё под мазком"
-            :model-value="smartSettings.eraseAll === true"
+            :model-value="smartSettings.eraseAll !== false"
             @update:model-value="setSmartEraseAll"
           />
           <AppColorPicker

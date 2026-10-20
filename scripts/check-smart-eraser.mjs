@@ -74,6 +74,8 @@ try {
     app.editor.toolOptions.smartEraser.threshold = 200;
     app.editor.toolOptions.smartEraser.width = 26;
     app.editor.toolOptions.smartEraser.autoColor = false;
+    // Проверяем режим «сохранить тёмное» — он теперь не по умолчанию.
+    app.editor.toolOptions.smartEraser.eraseAll = false;
     app.ui.setRightTab('tool');
     document.activeElement?.blur?.();
     return {
@@ -332,7 +334,7 @@ try {
       };
       const drawing = factory.createDrawingObject([stroke], {
         page: 0,
-        smart: { threshold: 200, color: '${FILL}', autoColor: false },
+        smart: { threshold: 200, color: '${FILL}', autoColor: false, eraseAll: false },
         name: 'Умный корректор',
       });
       if (!drawing) return { ok: false, error: 'не создан объект' };
@@ -472,7 +474,7 @@ try {
         page: 0,
         // Палитра — красная, но при авто-режиме заливка должна взять тон бумаги
         // страницы (в тестовом PDF бумага белая).
-        smart: { threshold: 200, color: '#e11d48', autoColor: true },
+        smart: { threshold: 200, color: '#e11d48', autoColor: true, eraseAll: false },
         name: 'Умный корректор',
       });
       app.objects.add([drawing], 'тест');
