@@ -436,14 +436,17 @@ async function buildSmartMask(request: SmartMaskRequest): Promise<HTMLCanvasElem
         if (luminance < threshold) dark[y * pixelWidth + x] = 1;
       }
     }
+    // Ореол в пикселях маски: около 1.2 pt — столько занимает сглаженный край
+    // глифа. Без него буквы «худеют» и выглядят обкусанными прямоугольниками.
+    const halo = Math.max(2, Math.round(scale * 1.2));
     protect = new Uint8Array(pixelWidth * pixelHeight);
     for (let y = 0; y < pixelHeight; y += 1) {
       for (let x = 0; x < pixelWidth; x += 1) {
         if (!dark[y * pixelWidth + x]) continue;
-        const y0 = Math.max(0, y - 1);
-        const y1 = Math.min(pixelHeight - 1, y + 1);
-        const x0 = Math.max(0, x - 1);
-        const x1 = Math.min(pixelWidth - 1, x + 1);
+        const y0 = Math.max(0, y - halo);
+        const y1 = Math.min(pixelHeight - 1, y + halo);
+        const x0 = Math.max(0, x - halo);
+        const x1 = Math.min(pixelWidth - 1, x + halo);
         for (let ny = y0; ny <= y1; ny += 1) {
           for (let nx = x0; nx <= x1; nx += 1) protect[ny * pixelWidth + nx] = 1;
         }
