@@ -419,21 +419,39 @@ async function buildSmartMask(request: SmartMaskRequest): Promise<HTMLCanvasElem
   const eraseAll = settings.eraseAll === true;
 
   /**
-   * Цветной ли пиксель.
+   * Карта «цветного» содержимого.
    *
-   * Печать, штампы и рукописные пометки цветные, а машинописный текст — нейтрально
-   * чёрный. Это различие позволяет стирать печать под мазком и сохранять текст:
-   * цветное закрашивается, нейтрально тёмное остаётся.
+   * Печать, штампы и рукописные пометки цветные, а машинописный текст —
+   * нейтрально чёрный. В сжатом скане отдельные пиксели печати выглядят
+   * нейтральными, поэтому карту цветного расширяем на пару пикселей: иначе
+   * внутри стёртой печати оставались точки.
    */
-  function isColoredPixel(index: number): boolean {
+  const colored = new Uint8Array(pixelWidth * pixelHeight);
+  for (let index = 0, pixel = 0; index < pageData.length; index += 4, pixel += 1) {
     const r = pageData[index];
     const g = pageData[index + 1];
     const b = pageData[index + 2];
     const max = Math.max(r, g, b);
     const min = Math.min(r, g, b);
-    if (max < 60) return false; // почти чёрный — считаем нейтральным
-    return (max - min) / max > 0.35;
+    if (max < 60) continue; // почти чёрный — нейтральный
+    if ((max - min) / max > 0.35) colored[pixel] = 1;
   }
+  const colorSpread = Math.max(2, Math.round(scale * 0.5));
+  {
+    const spread = new Uint8Array(colored);
+    for (let y = 0; y < pixelHeight; y += 1) {
+      for (let x = 0; x < pixelWidth; x += 1) {
+        if (!colored[y * pixelWidth + x]) continue;
+        for (let ny = Math.max(0, y - colorSpread); ny <= Math.min(pixelHeight - 1, y + colorSpread); ny += 1) {
+          for (let nx = Math.max(0, x - colorSpread); nx <= Math.min(pixelWidth - 1, x + colorSpread); nx += 1) {
+            spread[ny * pixelWidth + nx] = 1;
+          }
+        }
+      }
+    }
+    colored.set(spread);
+  }
+  const isColoredPixel = (x: number, y: number): boolean => colored[y * pixelWidth + x] === 1;
 
   /**
    * Защита тёмного с ореолом.
@@ -450,7 +468,7 @@ async function buildSmartMask(request: SmartMaskRequest): Promise<HTMLCanvasElem
         const index = (y * pixelWidth + x) * 4;
         const luminance =
           0.299 * pageData[index] + 0.587 * pageData[index + 1] + 0.114 * pageData[index + 2];
-        if (luminance < threshold && !isColoredPixel(index)) dark[y * pixelWidth + x] = 1;
+        if (luminance < threshold && !isColoredPixel(x, y)) dark[y * pixelWidth + x] = 1;
       }
     }
     // Ореол в пикселях маски: около 0.8 pt — столько занимает сглаженный край
@@ -494,7 +512,7 @@ async function buildSmartMask(request: SmartMaskRequest): Promise<HTMLCanvasElem
         if (autoColor && paperTone > 0 && luminance >= paperTone - 2) continue;
         // Цветное (печать, штампы, пометки) стираем всегда, а нейтрально тёмный
         // текст под штрихом остаётся нетронутым (альфа 0 — видно страницу).
-        if (luminance <= lowEdge && !isColoredPixel(index)) continue;
+        if (luminance <= lowEdge && !isColoredPixel(x, y)) continue;
         const ramp = luminance >= threshold ? 1 : Math.min(1, (luminance - lowEdge) / softness);
         mask.data[index + 3] = Math.round(opacity * ramp * 255);
         continue;
