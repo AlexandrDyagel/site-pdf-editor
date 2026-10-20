@@ -187,7 +187,7 @@ export function objectStructureSignature(obj: EditorObject, maskScale = 1): stri
       const p = obj.payload as DrawingPayload | SignaturePayload;
       if ('smart' in p && p.smart) {
         // Маска зависит от порога, цвета и масштаба растра.
-        body = `smart|${p.smart.threshold}|${p.smart.color}|${p.smart.autoColor === false ? 'manual' : 'auto'}|${p.smart.eraseAll !== false ? 'all' : 'keep'}|${Math.round(maskScale * 2) / 2}|${p.strokes.length}`;
+        body = `smart|${p.smart.threshold}|${p.smart.color}|${p.smart.autoColor === false ? 'manual' : 'auto'}|${p.smart.eraseAll ? 'all' : 'keep'}|${Math.round(maskScale * 2) / 2}|${p.strokes.length}`;
         break;
       }
       const points = p.strokes.reduce((sum, stroke) => sum + stroke.points.length, 0);
