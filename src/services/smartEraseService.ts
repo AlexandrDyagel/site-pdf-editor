@@ -537,9 +537,10 @@ async function buildSmartMask(request: SmartMaskRequest): Promise<HTMLCanvasElem
         const luminance =
           0.299 * pageData[index] + 0.587 * pageData[index + 1] + 0.114 * pageData[index + 2];
         // Чистая бумага остаётся как была: закрашивать её плоским цветом нельзя —
-        // на текстуре скана ровное пятно видно кромкой. Закрашиваем только то,
-        // что светлее порога, но темнее бумаги (серые линии, пятна, штрихи).
-        if (autoColor && paperTone > 0 && luminance >= paperTone - 2) continue;
+        // на текстуре скана ровное пятно видно кромкой. Допуск 25 единиц: у скана
+        // бумага «дышит» на 10–20 единиц, и без запаса её шум превращался в
+        // крошку из закрашенных точек.
+        if (autoColor && paperTone > 0 && luminance >= paperTone - 25) continue;
         // Цветное (печать, штампы, пометки) стираем всегда, а нейтрально тёмный
         // текст под штрихом остаётся нетронутым (альфа 0 — видно страницу).
         if (luminance <= lowEdge && !isColoredPixel(x, y)) continue;
