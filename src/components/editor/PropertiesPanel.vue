@@ -37,6 +37,7 @@ import AppToggle from '@/components/ui/AppToggle.vue';
 import AppEmptyState from '@/components/ui/AppEmptyState.vue';
 import AppTooltip from '@/components/ui/AppTooltip.vue';
 import AppIcon from '@/components/ui/AppIcon.vue';
+import { startEyedropper } from '@/services/eyedropperService';
 
 const objects = useObjectsStore();
 const editor = useEditorStore();
@@ -273,6 +274,32 @@ function setSmartAutoColor(autoColor: boolean): void {
     object.id,
     { payload: { smart: { ...object.payload.smart, autoColor } } },
     'Цвет заливки',
+  );
+}
+
+/** Взять цвет под мазком пипеткой (для выбранного объекта). */
+async function pickSmartTarget(): Promise<void> {
+  const color = await startEyedropper();
+  if (color) setSmartTarget(color);
+}
+
+function setSmartTarget(targetColor: string | null): void {
+  const object = single.value;
+  if (!object || object.type !== 'drawing' || !object.payload.smart) return;
+  objects.update(
+    object.id,
+    { payload: { smart: { ...object.payload.smart, targetColor } } },
+    'Цвет под мазком',
+  );
+}
+
+function setSmartColorTolerance(colorTolerance: number): void {
+  const object = single.value;
+  if (!object || object.type !== 'drawing' || !object.payload.smart) return;
+  objects.update(
+    object.id,
+    { payload: { smart: { ...object.payload.smart, colorTolerance } } },
+    'Разброс цветов',
   );
 }
 
@@ -886,6 +913,41 @@ void scaleStrokes;
             :model-value="smartSettings.eraseAll === true"
             @update:model-value="setSmartEraseAll"
           />
+          <div class="space-y-2 rounded-lg border border-slate-200 p-2 dark:border-slate-700">
+            <div class="flex items-center justify-between gap-2">
+              <span class="text-[11px] uppercase tracking-wide text-slate-400">Убрать цвет под мазком</span>
+              <span
+                v-if="smartSettings.targetColor"
+                class="h-4 w-4 rounded border border-slate-300 dark:border-slate-600"
+                :style="{ backgroundColor: smartSettings.targetColor }"
+                :title="smartSettings.targetColor"
+              />
+            </div>
+            <div class="flex items-center gap-1.5">
+              <AppButton size="sm" variant="secondary" data-testid="object-pick-color" @click="pickSmartTarget">
+                Взять пипеткой
+              </AppButton>
+              <AppButton
+                v-if="smartSettings.targetColor"
+                size="sm"
+                variant="ghost"
+                data-testid="object-clear-color"
+                @click="setSmartTarget(null)"
+              >
+                Сбросить
+              </AppButton>
+            </div>
+            <AppSlider
+              v-if="smartSettings.targetColor"
+              label="Разброс цветов"
+              unit="%"
+              :min="0"
+              :max="60"
+              :step="1"
+              :model-value="smartSettings.colorTolerance ?? 22"
+              @update:model-value="setSmartColorTolerance"
+            />
+          </div>
           <AppColorPicker
             :label="smartSettings.autoColor !== false ? 'Цвет заливки (вручную)' : 'Цвет заливки'"
             :model-value="smartSettings.color"

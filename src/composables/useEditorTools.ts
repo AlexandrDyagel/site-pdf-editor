@@ -531,6 +531,8 @@ export function useEditorTools(deps: {
                 color: smartOptions.color,
                 autoColor: smartOptions.autoColor !== false,
                 eraseAll: smartOptions.eraseAll === true,
+                targetColor: smartOptions.targetColor ?? null,
+                colorTolerance: smartOptions.colorTolerance ?? 22,
               }
             : null,
           name: isSmart ? 'Умный корректор' : stroke.tool === 'eraser' ? 'Корректор' : 'Рисунок',

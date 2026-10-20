@@ -9,6 +9,7 @@ import { useUiStore } from '@/stores/ui';
 import { useObjectsStore } from '@/stores/objects';
 import { usePdfStore } from '@/stores/pdf';
 import { useFontsStore } from '@/stores/fonts';
+import { startEyedropper } from '@/services/eyedropperService';
 import AppSection from '@/components/ui/AppSection.vue';
 import AppInput from '@/components/ui/AppInput.vue';
 import AppSelect from '@/components/ui/AppSelect.vue';
@@ -19,6 +20,17 @@ import AppIcon from '@/components/ui/AppIcon.vue';
 import AppToggle from '@/components/ui/AppToggle.vue';
 
 const editor = useEditorStore();
+
+/** Взять цвет под мазком пипеткой: стирается именно он (и близкие оттенки). */
+async function pickSmartTargetColor(): Promise<void> {
+  const color = await startEyedropper();
+  if (color) editor.toolOptions.smartEraser.targetColor = color;
+}
+
+/** Вернуть обычный режим (по светлому порогу). */
+function clearSmartTargetColor(): void {
+  editor.toolOptions.smartEraser.targetColor = null;
+}
 const settings = useSettingsStore();
 const library = useLibraryStore();
 const ui = useUiStore();
@@ -166,6 +178,50 @@ const documentFontsUsed = computed(() => {
           v-model="editor.toolOptions.smartEraser.color"
           :label="editor.toolOptions.smartEraser.autoColor !== false ? 'Цвет заливки (вручную)' : 'Цвет заливки'"
         />
+        <div class="space-y-2 rounded-lg border border-slate-200 p-2 dark:border-slate-700">
+          <div class="flex items-center justify-between gap-2">
+            <span class="text-[11px] uppercase tracking-wide text-slate-400">Убрать цвет под мазком</span>
+            <span
+              v-if="editor.toolOptions.smartEraser.targetColor"
+              class="h-4 w-4 rounded border border-slate-300 dark:border-slate-600"
+              :style="{ backgroundColor: editor.toolOptions.smartEraser.targetColor }"
+              :title="editor.toolOptions.smartEraser.targetColor"
+            />
+          </div>
+          <div class="flex items-center gap-1.5">
+            <AppButton
+              size="sm"
+              variant="secondary"
+              data-testid="smart-pick-color"
+              @click="pickSmartTargetColor"
+            >
+              Взять пипеткой
+            </AppButton>
+            <AppButton
+              v-if="editor.toolOptions.smartEraser.targetColor"
+              size="sm"
+              variant="ghost"
+              data-testid="smart-clear-color"
+              @click="clearSmartTargetColor"
+            >
+              Сбросить
+            </AppButton>
+          </div>
+          <AppSlider
+            v-if="editor.toolOptions.smartEraser.targetColor"
+            v-model="editor.toolOptions.smartEraser.colorTolerance"
+            label="Разброс цветов"
+            unit="%"
+            :min="0"
+            :max="60"
+            :step="1"
+            data-testid="smart-color-tolerance"
+          />
+          <p class="text-[11px] text-slate-400">
+            Проведите мазок, нажмите «Взять пипеткой» и кликните по цвету: под мазком уберётся этот
+            цвет и близкие оттенки. «Разброс» расширяет захват похожих цветов.
+          </p>
+        </div>
         <AppSlider
           v-model="editor.toolOptions.smartEraser.width"
           label="Ширина штриха"

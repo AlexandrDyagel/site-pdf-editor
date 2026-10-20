@@ -64,6 +64,8 @@ export function smartMaskKey(object: EditorObject & { payload: DrawingPayload },
     payload.smart?.color ?? '#ffffff',
     payload.smart?.autoColor === false ? 'manual' : 'auto',
     payload.smart?.eraseAll ? 'all' : 'keep',
+    payload.smart?.targetColor ?? 'none',
+    payload.smart?.colorTolerance ?? 0,
     payload.designWidth.toFixed(1),
     payload.designHeight.toFixed(1),
     strokeSignature,
@@ -89,6 +91,15 @@ export async function getSmartMask(request: SmartMaskRequest): Promise<HTMLCanva
 /** Сбрасывает кэш (например, при смене документа). */
 export function clearSmartMaskCache(): void {
   cache.clear();
+}
+
+/** #rrggbb → { r, g, b } (0–255) или null. */
+function parseHexColor(value: string | null): { r: number; g: number; b: number } | null {
+  if (!value) return null;
+  const match = /^#?([0-9a-f]{6})$/i.exec(value.trim());
+  if (!match) return null;
+  const int = Number.parseInt(match[1], 16);
+  return { r: (int >> 16) & 255, g: (int >> 8) & 255, b: int & 255 };
 }
 
 /** Строит маску: участок страницы ∩ штрихи, только светлые пиксели. */
@@ -172,6 +183,38 @@ async function buildSmartMask(request: SmartMaskRequest): Promise<HTMLCanvasElem
    * 3×3: у скана заметный шум, и поштучный порог давал рваную маску с точками
    * и прямоугольными обрывками.
    */
+  /**
+   * Дистанция до целевого цвета (режим «по цвету пипетки»).
+   *
+   * Считается как доля от максимального расстояния в RGB и сглаживается 3×3 —
+   * иначе на сжатом скане по краю печати остаются точки.
+   */
+  const target = parseHexColor(settings.targetColor ?? null);
+  const colorTolerance = Math.max(0, Math.min(100, settings.colorTolerance ?? 22)) / 100;
+  const colorDistance = new Float32Array(pixelWidth * pixelHeight);
+  if (target) {
+    const raw = new Float32Array(pixelWidth * pixelHeight);
+    for (let index = 0, pixel = 0; index < pageData.length; index += 4, pixel += 1) {
+      const dr = pageData[index] - target.r;
+      const dg = pageData[index + 1] - target.g;
+      const db = pageData[index + 2] - target.b;
+      raw[pixel] = Math.sqrt(dr * dr + dg * dg + db * db) / 441.673;
+    }
+    for (let y = 0; y < pixelHeight; y += 1) {
+      for (let x = 0; x < pixelWidth; x += 1) {
+        let sum = 0;
+        let count = 0;
+        for (let ny = Math.max(0, y - 1); ny <= Math.min(pixelHeight - 1, y + 1); ny += 1) {
+          for (let nx = Math.max(0, x - 1); nx <= Math.min(pixelWidth - 1, x + 1); nx += 1) {
+            sum += raw[ny * pixelWidth + nx];
+            count += 1;
+          }
+        }
+        colorDistance[y * pixelWidth + x] = sum / count;
+      }
+    }
+  }
+
   const smoothLum = new Float32Array(pixelWidth * pixelHeight);
   {
     const raw = new Float32Array(pixelWidth * pixelHeight);
@@ -558,6 +601,13 @@ async function buildSmartMask(request: SmartMaskRequest): Promise<HTMLCanvasElem
       mask.data[index + 1] = Math.round(green);
       mask.data[index + 2] = Math.round(blue);
       if (coverage < edgeCoverage) continue;
+      if (target) {
+        // Режим «по цвету пипетки»: стираем только близкие к целевому цвета.
+        if (colorDistance[y * pixelWidth + x] <= colorTolerance) {
+          mask.data[index + 3] = Math.round(opacity * 255);
+        }
+        continue;
+      }
       if (protect && protect[y * pixelWidth + x]) continue;
       if (!eraseAll) {
         const luminance =
