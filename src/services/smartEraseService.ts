@@ -406,7 +406,52 @@ async function buildSmartMask(request: SmartMaskRequest): Promise<HTMLCanvasElem
         gridG[index] = fallbackG;
         gridB[index] = fallbackB;
         gridLum[index] = 0.299 * fallbackR + 0.587 * fallbackG + 0.114 * fallbackB;
+        gridCount[index] = 0;
       }
+    }
+    // 2б. Пустые ячейки (сплошная печать) заполняем тоном соседей: так заливка
+    // продолжает бумагу, а не становится светлее её.
+    for (let pass = 0; pass < 6; pass += 1) {
+      let filledAny = false;
+      const nextR = new Float32Array(gridR);
+      const nextG = new Float32Array(gridG);
+      const nextB = new Float32Array(gridB);
+      const nextCount = new Float32Array(gridCount);
+      for (let row = 0; row < rows; row += 1) {
+        for (let col = 0; col < cols; col += 1) {
+          const index = row * cols + col;
+          if (gridCount[index] > 0) continue;
+          let count = 0;
+          let sumR = 0;
+          let sumG = 0;
+          let sumB = 0;
+          for (let dy = -1; dy <= 1; dy += 1) {
+            const ny = row + dy;
+            if (ny < 0 || ny >= rows) continue;
+            for (let dx = -1; dx <= 1; dx += 1) {
+              const nx = col + dx;
+              if (nx < 0 || nx >= cols) continue;
+              const neighbour = ny * cols + nx;
+              if (gridCount[neighbour] <= 0) continue;
+              sumR += gridR[neighbour];
+              sumG += gridG[neighbour];
+              sumB += gridB[neighbour];
+              count += 1;
+            }
+          }
+          if (count === 0) continue;
+          nextR[index] = sumR / count;
+          nextG[index] = sumG / count;
+          nextB[index] = sumB / count;
+          nextCount[index] = 1;
+          filledAny = true;
+        }
+      }
+      gridR.set(nextR);
+      gridG.set(nextG);
+      gridB.set(nextB);
+      gridCount.set(nextCount);
+      if (!filledAny) break;
     }
     // 3. Заливка берёт локальный тон бумаги из сетки (см. `paperAt`).
     //
@@ -573,6 +618,40 @@ async function buildSmartMask(request: SmartMaskRequest): Promise<HTMLCanvasElem
     // Ореол в пикселях маски: около 0.8 pt — столько занимает сглаженный край
     // глифа. Без него буквы «худеют» и выглядят обкусанными прямоугольниками.
     const halo = Math.max(2, Math.round(scale * 0.8));
+    // Открытие (эрозия → дилатация) убирает мелкие тёмные острова: иначе они
+    // защищались как текст и оставались крошкой внутри мазка.
+    {
+      const radius = Math.max(1, Math.round(scale * 0.25));
+      const eroded = new Uint8Array(pixelWidth * pixelHeight);
+      for (let y = 0; y < pixelHeight; y += 1) {
+        for (let x = 0; x < pixelWidth; x += 1) {
+          if (!dark[y * pixelWidth + x]) continue;
+          let keep = 1;
+          for (let ny = Math.max(0, y - radius); ny <= Math.min(pixelHeight - 1, y + radius) && keep; ny += 1) {
+            for (let nx = Math.max(0, x - radius); nx <= Math.min(pixelWidth - 1, x + radius); nx += 1) {
+              if (!dark[ny * pixelWidth + nx]) {
+                keep = 0;
+                break;
+              }
+            }
+          }
+          eroded[y * pixelWidth + x] = keep;
+        }
+      }
+      const opened = new Uint8Array(pixelWidth * pixelHeight);
+      for (let y = 0; y < pixelHeight; y += 1) {
+        for (let x = 0; x < pixelWidth; x += 1) {
+          if (!eroded[y * pixelWidth + x]) continue;
+          for (let ny = Math.max(0, y - radius); ny <= Math.min(pixelHeight - 1, y + radius); ny += 1) {
+            for (let nx = Math.max(0, x - radius); nx <= Math.min(pixelWidth - 1, x + radius); nx += 1) {
+              opened[ny * pixelWidth + nx] = 1;
+            }
+          }
+        }
+      }
+      dark.set(opened);
+    }
+
     protect = new Uint8Array(pixelWidth * pixelHeight);
     for (let y = 0; y < pixelHeight; y += 1) {
       for (let x = 0; x < pixelWidth; x += 1) {
@@ -643,18 +722,22 @@ async function buildSmartMask(request: SmartMaskRequest): Promise<HTMLCanvasElem
       if (mask.data[pixel * 4 + 3] > 120) filled[pixel] = 1;
     }
     const cleaned = new Uint8Array(filled);
-    for (let y = 1; y < pixelHeight - 1; y += 1) {
-      for (let x = 1; x < pixelWidth - 1; x += 1) {
+    const radius = 2;
+    for (let y = radius; y < pixelHeight - radius; y += 1) {
+      for (let x = radius; x < pixelWidth - radius; x += 1) {
         const pixel = y * pixelWidth + x;
         let neighbours = 0;
-        for (let ny = y - 1; ny <= y + 1; ny += 1) {
-          for (let nx = x - 1; nx <= x + 1; nx += 1) {
+        let total = 0;
+        for (let ny = y - radius; ny <= y + radius; ny += 1) {
+          for (let nx = x - radius; nx <= x + radius; nx += 1) {
             if (ny === y && nx === x) continue;
+            total += 1;
             neighbours += filled[ny * pixelWidth + nx];
           }
         }
-        if (filled[pixel] && neighbours <= 1) cleaned[pixel] = 0;
-        else if (!filled[pixel] && neighbours >= 7) cleaned[pixel] = 1;
+        // Одиночный островок (меньше трети окружения) убираем, «дырку» закрываем.
+        if (filled[pixel] && neighbours <= Math.floor(total * 0.34)) cleaned[pixel] = 0;
+        else if (!filled[pixel] && neighbours >= Math.ceil(total * 0.8)) cleaned[pixel] = 1;
       }
     }
     for (let pixel = 0; pixel < pixelWidth * pixelHeight; pixel += 1) {
