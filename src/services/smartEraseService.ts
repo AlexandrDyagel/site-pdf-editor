@@ -202,6 +202,9 @@ async function buildSmartMask(request: SmartMaskRequest): Promise<HTMLCanvasElem
     // при низком пороге (100–120) в выборку попадают серые элементы (линии
     // формы, штампы), и «бумага» получалась грязнее настоящей.
     const histogram = new Float64Array(256);
+    const bucketR = new Float64Array(256);
+    const bucketG = new Float64Array(256);
+    const bucketB = new Float64Array(256);
     const strideX = Math.max(1, Math.round(pixelWidth / 600));
     const strideY = Math.max(1, Math.round(pixelHeight / 600));
     for (let y = 0; y < pixelHeight; y += strideY) {
@@ -210,7 +213,11 @@ async function buildSmartMask(request: SmartMaskRequest): Promise<HTMLCanvasElem
         const luminance =
           0.299 * pageData[index] + 0.587 * pageData[index + 1] + 0.114 * pageData[index + 2];
         if (luminance < threshold) continue;
-        histogram[Math.min(255, Math.max(0, Math.round(luminance)))] += 1;
+        const bucket = Math.min(255, Math.max(0, Math.round(luminance)));
+        histogram[bucket] += 1;
+        bucketR[bucket] += pageData[index];
+        bucketG[bucket] += pageData[index + 1];
+        bucketB[bucket] += pageData[index + 2];
       }
     }
     let paperLum = 255;
@@ -225,6 +232,28 @@ async function buildSmartMask(request: SmartMaskRequest): Promise<HTMLCanvasElem
     // (8 единиц): сглаженные края букв на 200–250 иначе занижали заливку, и
     // она выглядела серой полосой на белой бумаге.
     const paperFloor = Math.max(threshold, paperLum - 8);
+
+    /**
+     * Однородная ли бумага на странице.
+     *
+     * Если почти все светлые пиксели лежат в узком коридоре у моды, локальная
+     * сетка только вредит: у краёв текста она чуть темнее, и мазок получается
+     * пятнистым (перепад 250–255 на белом видно). В этом случае заливаем одним
+     * тоном. У сканов с тенью и градиентом доля таких пикселей меньше, и
+     * работает локальная сетка.
+     */
+    let lightTotal = 0;
+    let nearMode = 0;
+    for (let bucket = 0; bucket < 256; bucket += 1) {
+      lightTotal += histogram[bucket];
+      if (Math.abs(bucket - paperLum) <= 6) nearMode += histogram[bucket];
+    }
+    const uniformPaper = lightTotal > 0 && nearMode / lightTotal >= 0.85;
+    // Цвет самой моды — ровно тот тон, которого больше всего на странице.
+    const modalCount = histogram[paperLum];
+    const modalR = modalCount > 0 ? bucketR[paperLum] / modalCount : uniformR;
+    const modalG = modalCount > 0 ? bucketG[paperLum] / modalCount : uniformG;
+    const modalB = modalCount > 0 ? bucketB[paperLum] / modalCount : uniformB;
 
     // 1. Накапливаем светлые (бумажные) пиксели по ячейкам.
     for (let y = 0; y < pixelHeight; y += 1) {
@@ -264,9 +293,9 @@ async function buildSmartMask(request: SmartMaskRequest): Promise<HTMLCanvasElem
         brightestCount += gridCount[index];
       }
     }
-    const fallbackR = brightestCount > 0 ? brightestR / brightestCount : totalCount > 0 ? totalR / totalCount : uniformR;
-    const fallbackG = brightestCount > 0 ? brightestG / brightestCount : totalCount > 0 ? totalG / totalCount : uniformG;
-    const fallbackB = brightestCount > 0 ? brightestB / brightestCount : totalCount > 0 ? totalB / totalCount : uniformB;
+    const fallbackR = uniformPaper ? modalR : brightestCount > 0 ? brightestR / brightestCount : totalCount > 0 ? totalR / totalCount : uniformR;
+    const fallbackG = uniformPaper ? modalG : brightestCount > 0 ? brightestG / brightestCount : totalCount > 0 ? totalG / totalCount : uniformG;
+    const fallbackB = uniformPaper ? modalB : brightestCount > 0 ? brightestB / brightestCount : totalCount > 0 ? totalB / totalCount : uniformB;
     for (let index = 0; index < gridCount.length; index += 1) {
       const count = gridCount[index];
       if (count > 0) {
@@ -281,7 +310,29 @@ async function buildSmartMask(request: SmartMaskRequest): Promise<HTMLCanvasElem
         gridLum[index] = 0.299 * fallbackR + 0.587 * fallbackG + 0.114 * fallbackB;
       }
     }
-    // 3. Несколько проходов сглаживания сетки: без резких переходов между
+    // 3. Решаем, нужна ли локальная сетка вообще.
+    //
+    // На ровной бумаге (а это почти все сканы форм) сетка только вредит: у
+    // краёв текста ячейки чуть темнее, и мазок выглядит пятнистой полосой
+    // 250–255 на белом 255. Поэтому считаем разброс тона по ячейкам и, если он
+    // невелик, заливаем всё цветом моды — он совпадает с бумагой и мазка не
+    // видно. У страниц с тенью или градиентом разброс больше, и работает сетка.
+    const cellTones: number[] = [];
+    for (let index = 0; index < gridCount.length; index += 1) {
+      if (gridCount[index] > 0) cellTones.push(gridLum[index] / gridCount[index]);
+    }
+    cellTones.sort((a, b) => a - b);
+    const p05 = cellTones.length ? cellTones[Math.floor(cellTones.length * 0.05)] : 0;
+    const p95 = cellTones.length ? cellTones[Math.floor(cellTones.length * 0.95)] : 0;
+    if (cellTones.length === 0 || p95 - p05 <= 10) {
+      for (let index = 0; index < gridCount.length; index += 1) {
+        gridR[index] = modalR;
+        gridG[index] = modalG;
+        gridB[index] = modalB;
+      }
+    }
+
+    // 4. Несколько проходов сглаживания сетки: без резких переходов между
     // ячейками, иначе на заливке видны прямоугольные ступени.
     const smoothR = new Float32Array(gridR);
     const smoothG = new Float32Array(gridG);
