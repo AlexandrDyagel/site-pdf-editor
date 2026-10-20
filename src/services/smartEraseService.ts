@@ -477,6 +477,15 @@ async function buildSmartMask(request: SmartMaskRequest): Promise<HTMLCanvasElem
     colored.set(spread);
   }
   const isColoredPixel = (x: number, y: number): boolean => colored[y * pixelWidth + x] === 1;
+  /** Насыщенность пикселя 0..1 (нужна, чтобы отличить бумагу от бледного тона печати). */
+  const saturationAt = (index: number): number => {
+    const r = pageData[index];
+    const g = pageData[index + 1];
+    const b = pageData[index + 2];
+    const max = Math.max(r, g, b);
+    if (max === 0) return 0;
+    return (max - Math.min(r, g, b)) / max;
+  };
 
   /**
    * Защита тёмного с ореолом.
@@ -535,7 +544,14 @@ async function buildSmartMask(request: SmartMaskRequest): Promise<HTMLCanvasElem
         // на текстуре скана ровное пятно видно кромкой. Допуск 25 единиц: у скана
         // бумага «дышит» на 10–20 единиц, и без запаса её шум превращался в
         // крошку из закрашенных точек.
-        if (autoColor && paperTone > 0 && luminance >= paperTone - 25) continue;
+        if (
+          autoColor &&
+          paperTone > 0 &&
+          luminance >= paperTone - 25 &&
+          saturationAt(index) <= 0.06
+        ) {
+          continue;
+        }
         // Цветное (печать, штампы, пометки) стираем всегда, а нейтрально тёмный
         // текст под штрихом остаётся нетронутым (альфа 0 — видно страницу).
         if (luminance <= lowEdge && !isColoredPixel(x, y)) continue;
