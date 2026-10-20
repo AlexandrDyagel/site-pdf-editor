@@ -187,8 +187,11 @@ onBeforeUnmount(() => {
 });
 
 // Синхронизация объектов при изменении данных, страницы, инструмента.
+// Пробел (панорамирование) тоже в списке: пока он зажат, объекты нельзя
+// перетаскивать, и это нужно применить к узлам сразу.
 watch(
-  () => [objects.objects, editor.currentPage, editor.tool, editor.viewOnly] as const,
+  () =>
+    [objects.objects, editor.currentPage, editor.tool, editor.viewOnly, editor.isPanTool] as const,
   () => renderer.sync(),
 );
 

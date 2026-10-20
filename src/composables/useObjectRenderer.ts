@@ -120,7 +120,7 @@ export function useObjectRenderer(deps: {
 
   function bindNodeEvents(node: Konva.Group, objectId: string): void {
     node.on('pointerdown', () => {
-      if (editor.tool !== 'select' || editor.viewOnly) return;
+      if (editor.tool !== 'select' || editor.viewOnly || editor.isPanTool) return;
       if (objects.selectedIds.includes(objectId)) return;
       // Закрашенный участок выбирается только в панели «Слои».
       const target = objects.byId(objectId);
@@ -402,8 +402,12 @@ export function useObjectRenderer(deps: {
       } else {
         syncObjectNode(node, obj, buildOptions);
       }
+      // Пробел (и инструмент «рука») — это панорамирование: пока он зажат,
+      // объекты не перетаскиваются и не выделяются, иначе вместо прокрутки
+      // холста утаскиваешь объект под курсором.
       node.draggable(
         editor.tool === 'select' &&
+          !editor.isPanTool &&
           !obj.locked &&
           !editor.viewOnly &&
           (!isMaskingStroke(obj) || objects.selectedIds.includes(obj.id)),
