@@ -229,6 +229,8 @@ export interface StrokeData {
  * Настройки «умного корректора»: закрашивает только светлые участки, тёмный
  * текст остаётся. Маска строится по растру страницы (см. services/smartErase).
  */
+export type SmartEraseMode = 'erase-all' | 'by-color' | 'keep-dark';
+
 export interface SmartEraseSettings {
   /** Порог яркости 0..255: пиксели светлее закрашиваются, темнее остаются. */
   threshold: number;
@@ -259,6 +261,16 @@ export interface SmartEraseSettings {
   targetColor?: string | null;
   /** Разброс близких цветов, 0–100 (доля от максимального расстояния RGB). */
   colorTolerance?: number;
+  /**
+   * Режим работы.
+   *
+   * - 'erase-all' — стереть всё под мазком тоном бумаги (предсказуемо, без эвристик);
+   * - 'by-color' — стереть выбранный пипеткой цвет и близкие оттенки;
+   * - 'keep-dark' — старый режим: сохранять тёмное по порогу светлого.
+   *
+   * Если не задан (старые проекты), режим выводится из eraseAll/targetColor.
+   */
+  mode?: SmartEraseMode;
 }
 
 export interface DrawingPayload {

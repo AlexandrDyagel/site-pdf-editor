@@ -15,6 +15,7 @@ import type {
   ArrowHead,
   DrawTool,
   MarqueeRect,
+  SmartEraseMode,
   SmartEraseSettings,
   StrokeData,
   StrokePoint,
@@ -97,6 +98,7 @@ export const useEditorStore = defineStore('editor', () => {
       eraseAll: false,
       targetColor: null,
       colorTolerance: 22,
+      mode: 'erase-all' as SmartEraseMode,
     },
     shape: {
       stroke: '#dc2626',

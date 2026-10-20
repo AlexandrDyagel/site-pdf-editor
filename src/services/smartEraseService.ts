@@ -189,7 +189,15 @@ async function buildSmartMask(request: SmartMaskRequest): Promise<HTMLCanvasElem
    * Считается как доля от максимального расстояния в RGB и сглаживается 3×3 —
    * иначе на сжатом скане по краю печати остаются точки.
    */
-  const target = parseHexColor(settings.targetColor ?? null);
+  /**
+   * Режим работы: единая точка правды.
+   *
+   * Старые проекты без поля mode выводят его из флагов, поэтому ничего не ломается.
+   */
+  const mode =
+    settings.mode ??
+    (settings.targetColor ? 'by-color' : settings.eraseAll === true ? 'erase-all' : 'keep-dark');
+  const target = mode === 'by-color' ? parseHexColor(settings.targetColor ?? null) : null;
   const colorTolerance = Math.max(0, Math.min(100, settings.colorTolerance ?? 22)) / 100;
   const colorDistance = new Float32Array(pixelWidth * pixelHeight);
   if (target) {
@@ -551,7 +559,7 @@ async function buildSmartMask(request: SmartMaskRequest): Promise<HTMLCanvasElem
    * На 300 dpi ступенька в 1 пиксель маски незаметна.
    */
   const edgeCoverage = 110;
-  const eraseAll = settings.eraseAll === true;
+  const eraseAll = mode === 'erase-all';
 
   /**
    * Карта «цветного» содержимого.

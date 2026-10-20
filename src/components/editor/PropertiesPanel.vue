@@ -12,6 +12,7 @@ import type {
   SignaturePayload,
   StampPayload,
   TextPayload,
+  SmartEraseMode,
   TextAlign,
   VerticalAlign,
   WhiteoutPayload,
@@ -277,10 +278,40 @@ function setSmartAutoColor(autoColor: boolean): void {
   );
 }
 
+/** Режимы умного корректора. */
+const SMART_MODE_OPTIONS = [
+  { value: 'erase-all', label: 'Стереть всё под мазком' },
+  { value: 'by-color', label: 'По цвету пипетки' },
+  { value: 'keep-dark', label: 'Сохранять тёмное (порог)' },
+];
+
+/** Текущий режим объекта (старые проекты выводят его из флагов). */
+const smartMode = computed<SmartEraseMode>(() => {
+  const settings = smartSettings.value;
+  if (!settings) return 'erase-all';
+  return (
+    settings.mode ??
+    (settings.targetColor ? 'by-color' : settings.eraseAll === true ? 'erase-all' : 'keep-dark')
+  );
+});
+
+function setSmartMode(value: string | number | null): void {
+  const object = single.value;
+  if (!object || object.type !== 'drawing' || !object.payload.smart) return;
+  if (value !== 'erase-all' && value !== 'by-color' && value !== 'keep-dark') return;
+  objects.update(
+    object.id,
+    { payload: { smart: { ...object.payload.smart, mode: value } } },
+    'Режим мазка',
+  );
+}
+
 /** Взять цвет под мазком пипеткой (для выбранного объекта). */
 async function pickSmartTarget(): Promise<void> {
   const color = await startEyedropper();
-  if (color) setSmartTarget(color);
+  if (!color) return;
+  setSmartTarget(color);
+  setSmartMode('by-color');
 }
 
 function setSmartTarget(targetColor: string | null): void {
@@ -288,7 +319,9 @@ function setSmartTarget(targetColor: string | null): void {
   if (!object || object.type !== 'drawing' || !object.payload.smart) return;
   objects.update(
     object.id,
-    { payload: { smart: { ...object.payload.smart, targetColor } } },
+    {
+      payload: { smart: { ...object.payload.smart, targetColor } },
+    },
     'Цвет под мазком',
   );
 }
@@ -908,14 +941,21 @@ void scaleStrokes;
             :model-value="smartSettings.autoColor !== false"
             @update:model-value="setSmartAutoColor"
           />
-          <AppToggle
-            label="Стирать всё под мазком"
-            :model-value="smartSettings.eraseAll === true"
-            @update:model-value="setSmartEraseAll"
-          />
-          <div class="space-y-2 rounded-lg border border-slate-200 p-2 dark:border-slate-700">
+          <div data-testid="object-smart-mode">
+            <AppSelect
+              label="Что делает мазок"
+              size="sm"
+              :model-value="smartMode"
+              :options="SMART_MODE_OPTIONS"
+              @update:model-value="setSmartMode"
+            />
+          </div>
+          <div
+            v-if="smartMode === 'by-color'"
+            class="space-y-2 rounded-lg border border-slate-200 p-2 dark:border-slate-700"
+          >
             <div class="flex items-center justify-between gap-2">
-              <span class="text-[11px] uppercase tracking-wide text-slate-400">Убрать цвет под мазком</span>
+              <span class="text-[11px] uppercase tracking-wide text-slate-400">Цвет под мазком</span>
               <span
                 v-if="smartSettings.targetColor"
                 class="h-4 w-4 rounded border border-slate-300 dark:border-slate-600"
@@ -942,7 +982,7 @@ void scaleStrokes;
               label="Разброс цветов"
               unit="%"
               :min="0"
-              :max="60"
+              :max="100"
               :step="1"
               :model-value="smartSettings.colorTolerance ?? 22"
               @update:model-value="setSmartColorTolerance"

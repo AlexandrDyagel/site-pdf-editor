@@ -54,13 +54,47 @@ try {
   await cdp.evaluate(`location.hash = '#/editor'; 'ok'`);
   await sleep(6000);
 
-  console.log('\n1. Кнопки режима в «Инструменте»');
-  await cdp.evaluate(`(() => {
+  console.log('\n1. Режимы умного корректора');
+  const modes = await cdp.evaluate(`(() => {
     const app = window.__PDF_EDITOR__;
+    const panel = () => {
+      const asides = Array.from(document.querySelectorAll('aside'));
+      return asides[asides.length - 1]?.textContent || '';
+    };
     app.editor.fitToWidth();
     app.editor.setTool('smart-eraser');
     app.ui.setRightTab('tool');
     app.editor.toolOptions.smartEraser.targetColor = null;
+    app.editor.toolOptions.smartEraser.mode = 'erase-all';
+    return panel();
+  })()`);
+  await sleep(900);
+  const eraseAllUi = await cdp.evaluate(`(() => {
+    const asides = Array.from(document.querySelectorAll('aside'));
+    const panel = asides[asides.length - 1];
+    return {
+      text: panel ? panel.textContent || '' : '',
+      select: Boolean(document.querySelector('[data-testid=smart-mode]')),
+      pick: Boolean(document.querySelector('[data-testid=smart-pick-color]')),
+    };
+  })()`);
+  check('есть выбор режима', eraseAllUi.select === true, JSON.stringify(eraseAllUi.select));
+  check('в «стереть всё» нет пипетки', eraseAllUi.pick === false, String(eraseAllUi.pick));
+
+  await cdp.evaluate(`window.__PDF_EDITOR__.editor.toolOptions.smartEraser.mode = 'keep-dark'; 'ok'`);
+  await sleep(900);
+  const keepDarkUi = await cdp.evaluate(`(() => {
+    const asides = Array.from(document.querySelectorAll('aside'));
+    return asides[asides.length - 1]?.textContent || '';
+  })()`);
+  check('в «сохранять тёмное» есть порог светлого', keepDarkUi.includes('Порог светлого'), '');
+
+  console.log('\n1б. Кнопки режима «по цвету» в «Инструменте»');
+  await cdp.evaluate(`(() => {
+    const app = window.__PDF_EDITOR__;
+    app.editor.toolOptions.smartEraser.targetColor = null;
+    // Режим «по цвету пипетки»: в нём и живут кнопка с ползунком.
+    app.editor.toolOptions.smartEraser.mode = 'by-color';
     return 'ok';
   })()`);
   await sleep(900);
@@ -74,10 +108,12 @@ try {
 
   await cdp.evaluate(`window.__PDF_EDITOR__.editor.toolOptions.smartEraser.targetColor = '#3b6fb6'; 'ok'`);
   await sleep(900);
-  const uiAfter = await cdp.evaluate(
-    `Boolean(document.querySelector('[data-testid=smart-color-tolerance]'))`,
-  );
-  check('ползунок разброса появился после выбора цвета', uiAfter === true, String(uiAfter));
+  const uiAfter = await cdp.evaluate(`(() => {
+    const slider = document.querySelector('[data-testid=smart-color-tolerance] input');
+    return { present: Boolean(slider), max: slider ? Number(slider.getAttribute('max')) : null };
+  })()`);
+  check('ползунок разброса появился после выбора цвета', uiAfter.present === true, String(uiAfter.present));
+  check('ползунок разброса доходит до 100 %', uiAfter.max === 100, String(uiAfter.max));
 
   console.log('\n2. Мазок стирает выбранный цвет, текст остаётся');
   const result = await cdp.evaluate(`(async () => {
@@ -124,6 +160,7 @@ try {
         eraseAll: false,
         targetColor: target,
         colorTolerance,
+        mode: 'by-color',
       },
       name: 'Умный корректор',
     });
