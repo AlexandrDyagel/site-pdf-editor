@@ -831,7 +831,7 @@ async function buildSmartMask(request: SmartMaskRequest): Promise<HTMLCanvasElem
         }
         continue;
       }
-      if (protect && protect[y * pixelWidth + x]) continue;
+      if (protect && protect[y * pixelWidth + x] && !isColoredPixel(x, y)) continue;
       if (!eraseAll) {
         const luminance =
           0.299 * pageData[index] + 0.587 * pageData[index + 1] + 0.114 * pageData[index + 2];
