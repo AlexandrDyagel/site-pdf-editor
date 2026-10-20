@@ -29,6 +29,28 @@ function watcherErrorGuard(): Plugin {
 }
 
 /**
+ * Снимает vite-суффикс `?import` с файлов рантайма onnxruntime-web.
+ *
+ * Зачем: ORT динамически импортирует свой wasm-загрузчик из public/ort, а Vite в
+ * dev-режиме дописывает к такому импорту `?import` — public-файлы с этим
+ * запросом отдают 500, и модель не запускается. В production (Rollup) суффикса
+ * нет, поэтому плагин нужен только dev-серверу.
+ */
+function ortRuntimeGuard(): Plugin {
+  return {
+    name: 'pdf-editor:ort-runtime-guard',
+    configureServer(server) {
+      server.middlewares.use((request, _response, next) => {
+        if (request.url && request.url.startsWith('/ort/') && request.url.includes('?import')) {
+          request.url = request.url.replace('?import', '');
+        }
+        next();
+      });
+    },
+  };
+}
+
+/**
  * Конфигурация сборки.
  *
  * Важные моменты:
@@ -38,7 +60,7 @@ function watcherErrorGuard(): Plugin {
  *  - алиас `@` указывает на `src`.
  */
 export default defineConfig({
-  plugins: [vue(), watcherErrorGuard()],
+  plugins: [vue(), watcherErrorGuard(), ortRuntimeGuard()],
   resolve: {
     alias: {
       '@': fileURLToPath(new URL('./src', import.meta.url)),

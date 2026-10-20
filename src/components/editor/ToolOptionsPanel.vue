@@ -1,6 +1,6 @@
 <script setup lang="ts">
 /** Параметры активного инструмента. */
-import { computed } from 'vue';
+import { computed, ref } from 'vue';
 import { TOOL_DEFINITIONS } from '@/constants';
 import { useEditorStore } from '@/stores/editor';
 import { useSettingsStore } from '@/stores/settings';
@@ -10,6 +10,7 @@ import { useObjectsStore } from '@/stores/objects';
 import { usePdfStore } from '@/stores/pdf';
 import { useFontsStore } from '@/stores/fonts';
 import { startEyedropper } from '@/services/eyedropperService';
+import { isTextModelAvailable } from '@/services/textDetectionService';
 import AppSection from '@/components/ui/AppSection.vue';
 import AppInput from '@/components/ui/AppInput.vue';
 import AppSelect from '@/components/ui/AppSelect.vue';
@@ -20,6 +21,12 @@ import AppIcon from '@/components/ui/AppIcon.vue';
 import AppToggle from '@/components/ui/AppToggle.vue';
 
 const editor = useEditorStore();
+
+/** Доступна ли модель сегментации текста (файл в public/models). */
+const textModelReady = ref<boolean | null>(null);
+void isTextModelAvailable().then((value) => {
+  textModelReady.value = value;
+});
 
 /** Режимы умного корректора: два простых и один расширенный. */
 const SMART_MODES = [
@@ -175,6 +182,18 @@ const documentFontsUsed = computed(() => {
       </template>
 
       <template v-else-if="editor.tool === 'bg-cleaner'">
+        <AppToggle
+          :model-value="editor.toolOptions.bgCleaner.useModel === true"
+          label="Модель сегментации текста"
+          @update:model-value="editor.toolOptions.bgCleaner.useModel = $event"
+        />
+        <p class="text-[11px]" :class="textModelReady ? 'text-emerald-500' : 'text-slate-400'">
+          {{
+            textModelReady
+              ? 'Модель загружена: текст отделяется по смыслу, а не по яркости.'
+              : 'Модель не найдена — используется адаптивный порог (см. public/models/text-det.onnx).'
+          }}
+        </p>
         <AppSlider
           v-model="editor.toolOptions.bgCleaner.width"
           label="Ширина штриха"

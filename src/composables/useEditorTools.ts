@@ -536,7 +536,7 @@ export function useEditorTools(deps: {
                 autoColor: bgOptions.autoColor !== false,
                 eraseAll: false,
                 mode: 'keep-dark',
-                engine: 'adaptive',
+                engine: bgOptions.useModel === true ? 'model' : 'adaptive',
                 sensitivity: bgOptions.sensitivity,
               }
             : isSmart

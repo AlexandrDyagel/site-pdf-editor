@@ -13,3 +13,6 @@ public/pdfjs
 .idea
 __pycache__/
 *.pyc
+
+# Рантайм onnxruntime-web копируется скриптом copy-ort-assets.mjs
+public/ort/

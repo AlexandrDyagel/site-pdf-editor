@@ -268,7 +268,7 @@ export interface SmartEraseSettings {
    * - 'simple' — глобальный порог светлого (умный корректор);
    * - 'adaptive' — локальный порог (Sauvola) + фильтр компонентов: «Очистка фона».
    */
-  engine?: 'simple' | 'adaptive';
+  engine?: 'simple' | 'adaptive' | 'model';
   /** Чувствительность адаптивного порога, 0–100 (выше — больше считается фоном). */
   sensitivity?: number;
   /**

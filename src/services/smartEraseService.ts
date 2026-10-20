@@ -12,6 +12,7 @@
 
 import type { DrawingPayload, EditorObject, PdfPageState } from '@/types';
 import { pdfService } from '@/services/pdfService';
+import { detectTextMask } from '@/services/textDetectionService';
 import { paintStrokes } from '@/services/strokeService';
 import { extraPageRotation } from '@/utils/coordinates';
 import { hexToRgb } from '@/utils/pdf';
@@ -176,6 +177,14 @@ async function buildSmartMask(request: SmartMaskRequest): Promise<HTMLCanvasElem
 
   // 4. Отбираем светлые пиксели под штрихом и заливаем выбранным цветом.
   const pageData = pageCtx.getImageData(0, 0, pixelWidth, pixelHeight).data;
+  /**
+   * Маска текста от модели (DBNet, PP-OCRv4 det) — только если движок «model»
+   * и модель реально доступна. null означает «работаем классикой».
+   */
+  const modelTextMask =
+    settings.engine === 'model'
+      ? await detectTextMask(pageData, pixelWidth, pixelHeight)
+      : null;
   const shapeData = shapeCtx.getImageData(0, 0, pixelWidth, pixelHeight).data;
 
   /**
@@ -799,6 +808,12 @@ async function buildSmartMask(request: SmartMaskRequest): Promise<HTMLCanvasElem
       mask.data[index + 1] = Math.round(green);
       mask.data[index + 2] = Math.round(blue);
       if (coverage < edgeCoverage) continue;
+      if (modelTextMask) {
+        // Текст по модели оставляем, всё остальное заливаем тоном бумаги.
+        if (modelTextMask[y * pixelWidth + x]) continue;
+        mask.data[index + 3] = Math.round(opacity * 255);
+        continue;
+      }
       if (target) {
         // Режим «по цвету пипетки»: стираем только близкие к целевому цвета.
         if (colorDistance[y * pixelWidth + x] <= colorTolerance) {

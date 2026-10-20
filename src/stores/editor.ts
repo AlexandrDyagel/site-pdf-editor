@@ -33,7 +33,15 @@ export interface EditorToolOptions {
   eraser: { color: string; width: number };
   smartEraser: SmartEraseSettings & { width: number };
   /** «Очистка фона»: адаптивный порог + фильтр компонентов. */
-  bgCleaner: { width: number; color: string; autoColor: boolean; sensitivity: number; threshold: number };
+  bgCleaner: {
+    width: number;
+    color: string;
+    autoColor: boolean;
+    sensitivity: number;
+    threshold: number;
+    /** Использовать модель сегментации текста (если файл модели доступен). */
+    useModel: boolean;
+  };
   shape: {
     stroke: string | null;
     strokeWidth: number;
@@ -98,6 +106,7 @@ export const useEditorStore = defineStore('editor', () => {
       autoColor: true,
       sensitivity: 55,
       threshold: 170,
+      useModel: false,
     },
     smartEraser: {
       color: '#ffffff',
