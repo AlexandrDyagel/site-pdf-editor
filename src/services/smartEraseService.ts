@@ -164,6 +164,36 @@ async function buildSmartMask(request: SmartMaskRequest): Promise<HTMLCanvasElem
   // 4. Отбираем светлые пиксели под штрихом и заливаем выбранным цветом.
   const pageData = pageCtx.getImageData(0, 0, pixelWidth, pixelHeight).data;
   const shapeData = shapeCtx.getImageData(0, 0, pixelWidth, pixelHeight).data;
+
+  /**
+   * Сглаженная яркость.
+   *
+   * Решения «тёмное/светлое» принимаем не по отдельному пикселю, а по среднему
+   * 3×3: у скана заметный шум, и поштучный порог давал рваную маску с точками
+   * и прямоугольными обрывками.
+   */
+  const smoothLum = new Float32Array(pixelWidth * pixelHeight);
+  {
+    const raw = new Float32Array(pixelWidth * pixelHeight);
+    for (let index = 0, pixel = 0; index < pageData.length; index += 4, pixel += 1) {
+      raw[pixel] =
+        0.299 * pageData[index] + 0.587 * pageData[index + 1] + 0.114 * pageData[index + 2];
+    }
+    for (let y = 0; y < pixelHeight; y += 1) {
+      for (let x = 0; x < pixelWidth; x += 1) {
+        let sum = 0;
+        let count = 0;
+        for (let ny = Math.max(0, y - 1); ny <= Math.min(pixelHeight - 1, y + 1); ny += 1) {
+          for (let nx = Math.max(0, x - 1); nx <= Math.min(pixelWidth - 1, x + 1); nx += 1) {
+            sum += raw[ny * pixelWidth + nx];
+            count += 1;
+          }
+        }
+        smoothLum[y * pixelWidth + x] = sum / count;
+      }
+    }
+  }
+  const lumAt = (x: number, y: number): number => smoothLum[y * pixelWidth + x];
   const maskCanvas = document.createElement('canvas');
   maskCanvas.width = pixelWidth;
   maskCanvas.height = pixelHeight;
@@ -468,7 +498,7 @@ async function buildSmartMask(request: SmartMaskRequest): Promise<HTMLCanvasElem
         const index = (y * pixelWidth + x) * 4;
         const luminance =
           0.299 * pageData[index] + 0.587 * pageData[index + 1] + 0.114 * pageData[index + 2];
-        if (luminance < threshold && !isColoredPixel(x, y)) dark[y * pixelWidth + x] = 1;
+        if (lumAt(x, y) < threshold && !isColoredPixel(x, y)) dark[y * pixelWidth + x] = 1;
       }
     }
     // Ореол в пикселях маски: около 0.8 pt — столько занимает сглаженный край
@@ -520,6 +550,34 @@ async function buildSmartMask(request: SmartMaskRequest): Promise<HTMLCanvasElem
       mask.data[index + 3] = Math.round(opacity * 255);
     }
   }
+  // Чистка «соли и перца»: одиночные закрашенные пиксели убираем, одиночные
+  // дырки внутри заливки закрываем. Без этого на шумном скане маска выглядит
+  // как прямоугольная крошка.
+  {
+    const filled = new Uint8Array(pixelWidth * pixelHeight);
+    for (let pixel = 0; pixel < pixelWidth * pixelHeight; pixel += 1) {
+      if (mask.data[pixel * 4 + 3] > 120) filled[pixel] = 1;
+    }
+    const cleaned = new Uint8Array(filled);
+    for (let y = 1; y < pixelHeight - 1; y += 1) {
+      for (let x = 1; x < pixelWidth - 1; x += 1) {
+        const pixel = y * pixelWidth + x;
+        let neighbours = 0;
+        for (let ny = y - 1; ny <= y + 1; ny += 1) {
+          for (let nx = x - 1; nx <= x + 1; nx += 1) {
+            if (ny === y && nx === x) continue;
+            neighbours += filled[ny * pixelWidth + nx];
+          }
+        }
+        if (filled[pixel] && neighbours <= 1) cleaned[pixel] = 0;
+        else if (!filled[pixel] && neighbours >= 7) cleaned[pixel] = 1;
+      }
+    }
+    for (let pixel = 0; pixel < pixelWidth * pixelHeight; pixel += 1) {
+      mask.data[pixel * 4 + 3] = cleaned[pixel] ? Math.round(opacity * 255) : 0;
+    }
+  }
+
   maskCtx.putImageData(mask, 0, 0);
   return maskCanvas;
 }
