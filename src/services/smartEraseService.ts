@@ -221,9 +221,10 @@ async function buildSmartMask(request: SmartMaskRequest): Promise<HTMLCanvasElem
         paperLum = bucket;
       }
     }
-    // Допускаем в оценку только пиксели не темнее бумаги на 40 единиц: тени
-    // скана проходят, а серый текст и линии — нет.
-    const paperFloor = Math.max(threshold, paperLum - 40);
+    // В оценку бумаги берём только пиксели вплотную к самому светлому тону
+    // (8 единиц): сглаженные края букв на 200–250 иначе занижали заливку, и
+    // она выглядела серой полосой на белой бумаге.
+    const paperFloor = Math.max(threshold, paperLum - 8);
 
     // 1. Накапливаем светлые (бумажные) пиксели по ячейкам.
     for (let y = 0; y < pixelHeight; y += 1) {
@@ -246,16 +247,26 @@ async function buildSmartMask(request: SmartMaskRequest): Promise<HTMLCanvasElem
     let totalG = 0;
     let totalB = 0;
     let totalCount = 0;
+    let brightestR = 0;
+    let brightestG = 0;
+    let brightestB = 0;
+    let brightestCount = 0;
     for (let index = 0; index < gridCount.length; index += 1) {
       if (gridCount[index] === 0) continue;
       totalR += gridR[index];
       totalG += gridG[index];
       totalB += gridB[index];
       totalCount += gridCount[index];
+      if (gridLum[index] >= paperLum - 4) {
+        brightestR += gridR[index];
+        brightestG += gridG[index];
+        brightestB += gridB[index];
+        brightestCount += gridCount[index];
+      }
     }
-    const fallbackR = totalCount > 0 ? totalR / totalCount : uniformR;
-    const fallbackG = totalCount > 0 ? totalG / totalCount : uniformG;
-    const fallbackB = totalCount > 0 ? totalB / totalCount : uniformB;
+    const fallbackR = brightestCount > 0 ? brightestR / brightestCount : totalCount > 0 ? totalR / totalCount : uniformR;
+    const fallbackG = brightestCount > 0 ? brightestG / brightestCount : totalCount > 0 ? totalG / totalCount : uniformG;
+    const fallbackB = brightestCount > 0 ? brightestB / brightestCount : totalCount > 0 ? totalB / totalCount : uniformB;
     for (let index = 0; index < gridCount.length; index += 1) {
       const count = gridCount[index];
       if (count > 0) {
