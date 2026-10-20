@@ -203,6 +203,8 @@ function toggleViewOnly(): void {
               variant="ghost"
               :active="editor.tool === tool.id"
               :disabled="editor.viewOnly"
+              :data-tool="tool.id"
+              :aria-label="tool.label"
               @click="editor.setTool(tool.id)"
             />
           </AppTooltip>

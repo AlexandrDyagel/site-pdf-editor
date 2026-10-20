@@ -179,6 +179,14 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
     hint: 'Закрашивает только светлый фон — тёмный текст остаётся',
   },
   {
+    id: 'bg-cleaner',
+    label: 'Очистка фона',
+    icon: 'magicEraser',
+    shortcut: 'K',
+    group: 'draw',
+    hint: 'Адаптивно убирает фон под мазком, оставляя текст',
+  },
+  {
     id: 'whiteout',
     label: 'Закрасить',
     icon: 'whiteout',

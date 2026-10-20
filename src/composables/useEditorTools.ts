@@ -430,6 +430,7 @@ export function useEditorTools(deps: {
       case 'marker':
       case 'eraser':
       case 'smart-eraser':
+      case 'bg-cleaner':
         editor.startStroke(pointToStroke(point, event.evt));
         break;
       case 'rect':
@@ -521,22 +522,41 @@ export function useEditorTools(deps: {
       const stroke = editor.takeStroke();
       if (stroke && stroke.points.length > 0) {
         const isSmart = stroke.tool === 'smart-eraser';
+        // «Очистка фона»: тот же объект, но маска считается адаптивным движком.
+        const isBgCleaner = editor.tool === 'bg-cleaner';
         const smartOptions = editor.toolOptions.smartEraser;
+        const bgOptions = editor.toolOptions.bgCleaner;
         const drawing = createDrawingObject([stroke], {
           page: editor.currentPage,
           eraser: stroke.tool === 'eraser',
-          smart: isSmart
+          smart: isBgCleaner
             ? {
-                threshold: smartOptions.threshold,
-                color: smartOptions.color,
-                autoColor: smartOptions.autoColor !== false,
-                eraseAll: smartOptions.eraseAll === true,
-                targetColor: smartOptions.targetColor ?? null,
-                colorTolerance: smartOptions.colorTolerance ?? 22,
-                mode: smartOptions.mode ?? 'erase-all',
+                threshold: bgOptions.threshold,
+                color: bgOptions.color,
+                autoColor: bgOptions.autoColor !== false,
+                eraseAll: false,
+                mode: 'keep-dark',
+                engine: 'adaptive',
+                sensitivity: bgOptions.sensitivity,
               }
-            : null,
-          name: isSmart ? 'Умный корректор' : stroke.tool === 'eraser' ? 'Корректор' : 'Рисунок',
+            : isSmart
+              ? {
+                  threshold: smartOptions.threshold,
+                  color: smartOptions.color,
+                  autoColor: smartOptions.autoColor !== false,
+                  eraseAll: smartOptions.eraseAll === true,
+                  targetColor: smartOptions.targetColor ?? null,
+                  colorTolerance: smartOptions.colorTolerance ?? 22,
+                  mode: smartOptions.mode ?? 'erase-all',
+                }
+              : null,
+          name: isBgCleaner
+            ? 'Очистка фона'
+            : isSmart
+              ? 'Умный корректор'
+              : stroke.tool === 'eraser'
+                ? 'Корректор'
+                : 'Рисунок',
         });
         if (drawing) {
           // Невыделяемым оставляем только корректор; умный корректор ведёт
@@ -544,7 +564,13 @@ export function useEditorTools(deps: {
           const isMasking = stroke.tool === 'eraser';
           addFromCanvas(
             [drawing],
-            isSmart ? 'Осветление' : stroke.tool === 'eraser' ? 'Стирание' : 'Рисование',
+            isBgCleaner
+              ? 'Очистка фона'
+              : isSmart
+                ? 'Осветление'
+                : stroke.tool === 'eraser'
+                  ? 'Стирание'
+                  : 'Рисование',
             // Закрашенное не выделяем: рамки после штриха быть не должно.
             { select: !isMasking, openProperties: !isMasking },
           );

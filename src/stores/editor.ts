@@ -32,6 +32,8 @@ export interface EditorToolOptions {
   marker: { color: string; width: number; opacity: number };
   eraser: { color: string; width: number };
   smartEraser: SmartEraseSettings & { width: number };
+  /** «Очистка фона»: адаптивный порог + фильтр компонентов. */
+  bgCleaner: { width: number; color: string; autoColor: boolean; sensitivity: number; threshold: number };
   shape: {
     stroke: string | null;
     strokeWidth: number;
@@ -90,6 +92,13 @@ export const useEditorStore = defineStore('editor', () => {
     draw: { color: '#1d4ed8', width: 2, opacity: 1, smooth: true },
     marker: { color: '#facc15', width: 12, opacity: 0.35 },
     eraser: { color: '#ffffff', width: 16 },
+    bgCleaner: {
+      width: 24,
+      color: '#ffffff',
+      autoColor: true,
+      sensitivity: 55,
+      threshold: 170,
+    },
     smartEraser: {
       color: '#ffffff',
       width: 18,
@@ -131,7 +140,7 @@ export const useEditorStore = defineStore('editor', () => {
 
   const zoomPercent = computed(() => Math.round(zoom.value * 100));
   const isDrawingTool = computed(() =>
-    ['brush', 'marker', 'eraser', 'smart-eraser'].includes(tool.value),
+    ['brush', 'marker', 'eraser', 'smart-eraser', 'bg-cleaner'].includes(tool.value),
   );
   const isShapeTool = computed(() =>
     ['rect', 'ellipse', 'triangle', 'polygon', 'line', 'arrow', 'whiteout'].includes(tool.value),
@@ -163,6 +172,14 @@ export const useEditorStore = defineStore('editor', () => {
             tool: 'smart-eraser',
             color: toolOptions.value.smartEraser.color,
             width: toolOptions.value.smartEraser.width,
+            opacity: 1,
+          };
+        case 'bg-cleaner':
+          return {
+            // Штрих рисуем как у корректора: постоянная ширина, без «пера».
+            tool: 'smart-eraser',
+            color: toolOptions.value.bgCleaner.color,
+            width: toolOptions.value.bgCleaner.width,
             opacity: 1,
           };
         case 'brush':

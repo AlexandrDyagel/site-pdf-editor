@@ -64,6 +64,8 @@ export function smartMaskKey(object: EditorObject & { payload: DrawingPayload },
     payload.smart?.color ?? '#ffffff',
     payload.smart?.autoColor === false ? 'manual' : 'auto',
     payload.smart?.eraseAll ? 'all' : 'keep',
+    payload.smart?.engine ?? 'simple',
+    payload.smart?.sensitivity ?? 0,
     payload.smart?.targetColor ?? 'none',
     payload.smart?.colorTolerance ?? 0,
     payload.designWidth.toFixed(1),
@@ -222,6 +224,64 @@ async function buildSmartMask(request: SmartMaskRequest): Promise<HTMLCanvasElem
       }
     }
   }
+
+  /**
+   * Адаптивный порог «очистки фона» (Sauvola-подобный).
+   *
+   * Для каждого пикселя берём локальное среднее и стандартное отклонение в окне
+   * ~1/8 меньшей стороны ROI: threshold = mean * (1 + k * (std / 128 - 1)).
+   * Глобальный порог на неравномерном фоне ошибается, локальный — нет.
+   * Считается по интегральным изображениям (O(1) на пиксель).
+   */
+  const adaptive =
+    settings.engine === 'adaptive'
+      ? (() => {
+          const w = pixelWidth;
+          const h = pixelHeight;
+          const integral = new Float64Array((w + 1) * (h + 1));
+          const integralSq = new Float64Array((w + 1) * (h + 1));
+          for (let y = 0; y < h; y += 1) {
+            let rowSum = 0;
+            let rowSq = 0;
+            for (let x = 0; x < w; x += 1) {
+              const index = (y * w + x) * 4;
+              const lum =
+                0.299 * pageData[index] + 0.587 * pageData[index + 1] + 0.114 * pageData[index + 2];
+              rowSum += lum;
+              rowSq += lum * lum;
+              const position = (y + 1) * (w + 1) + (x + 1);
+              integral[position] = integral[position - (w + 1)] + rowSum;
+              integralSq[position] = integralSq[position - (w + 1)] + rowSq;
+            }
+          }
+          const radius = Math.max(4, Math.round(Math.min(w, h) / 16));
+          const sensitivity = Math.max(0, Math.min(100, settings.sensitivity ?? 55)) / 100;
+          // k: 0.2 (мягко, сохраняет больше) … 0.6 (жёстко, стирает больше).
+          const k = 0.2 + sensitivity * 0.4;
+          const map = new Float32Array(w * h);
+          const rectSum = (table: Float64Array, x0: number, y0: number, x1: number, y1: number) =>
+            table[y1 * (w + 1) + x1] -
+            table[y0 * (w + 1) + x1] -
+            table[y1 * (w + 1) + x0] +
+            table[y0 * (w + 1) + x0];
+          for (let y = 0; y < h; y += 1) {
+            const y0 = Math.max(0, y - radius);
+            const y1 = Math.min(h, y + radius + 1);
+            for (let x = 0; x < w; x += 1) {
+              const x0 = Math.max(0, x - radius);
+              const x1 = Math.min(w, x + radius + 1);
+              const count = (x1 - x0) * (y1 - y0);
+              const sum = rectSum(integral, x0, y0, x1, y1);
+              const sumSq = rectSum(integralSq, x0, y0, x1, y1);
+              const mean = sum / count;
+              const variance = Math.max(0, sumSq / count - mean * mean);
+              const deviation = Math.sqrt(variance);
+              map[y * w + x] = mean * (1 + k * (deviation / 128 - 1));
+            }
+          }
+          return map;
+        })()
+      : null;
 
   const smoothLum = new Float32Array(pixelWidth * pixelHeight);
   {
@@ -620,7 +680,8 @@ async function buildSmartMask(request: SmartMaskRequest): Promise<HTMLCanvasElem
         const index = (y * pixelWidth + x) * 4;
         const luminance =
           0.299 * pageData[index] + 0.587 * pageData[index + 1] + 0.114 * pageData[index + 2];
-        if (lumAt(x, y) < threshold && !isColoredPixel(x, y)) dark[y * pixelWidth + x] = 1;
+        const limit = adaptive ? adaptive[y * pixelWidth + x] : threshold;
+        if (lumAt(x, y) < limit && !isColoredPixel(x, y)) dark[y * pixelWidth + x] = 1;
       }
     }
     // Ореол в пикселях маски: около 0.8 pt — столько занимает сглаженный край
@@ -713,8 +774,11 @@ async function buildSmartMask(request: SmartMaskRequest): Promise<HTMLCanvasElem
         }
         // Цветное (печать, штампы, пометки) стираем всегда, а нейтрально тёмный
         // текст под штрихом остаётся нетронутым (альфа 0 — видно страницу).
-        if (luminance <= lowEdge && !isColoredPixel(x, y)) continue;
-        const ramp = luminance >= threshold ? 1 : Math.min(1, (luminance - lowEdge) / softness);
+        const localLimit = adaptive ? adaptive[y * pixelWidth + x] : threshold;
+        const edge = adaptive ? localLimit - softness : lowEdge;
+        if (luminance <= edge && !isColoredPixel(x, y)) continue;
+        const ramp =
+          luminance >= localLimit ? 1 : Math.min(1, (luminance - edge) / softness);
         mask.data[index + 3] = Math.round(opacity * ramp * 255);
         continue;
       }

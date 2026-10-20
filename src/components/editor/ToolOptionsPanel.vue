@@ -174,6 +174,39 @@ const documentFontsUsed = computed(() => {
         </p>
       </template>
 
+      <template v-else-if="editor.tool === 'bg-cleaner'">
+        <AppSlider
+          v-model="editor.toolOptions.bgCleaner.width"
+          label="Ширина штриха"
+          unit="pt"
+          :min="0.2"
+          :max="80"
+          :step="0.1"
+          :precision="1"
+        />
+        <AppSlider
+          v-model="editor.toolOptions.bgCleaner.sensitivity"
+          label="Чувствительность"
+          unit="%"
+          :min="0"
+          :max="100"
+          :step="1"
+        />
+        <p class="text-[11px] text-slate-400">
+          Порог считается локально (Sauvola): ровный и неравномерный фон определяются
+          по-разному, поэтому сканы с тенью и градиентом очищаются ровно. Выше
+          чувствительность — больше считается фоном. Цветная печать стирается всегда.
+        </p>
+        <AppToggle
+          :model-value="editor.toolOptions.bgCleaner.autoColor !== false"
+          label="Под цвет бумаги"
+          @update:model-value="editor.toolOptions.bgCleaner.autoColor = $event"
+        />
+        <AppColorPicker
+          v-model="editor.toolOptions.bgCleaner.color"
+          :label="editor.toolOptions.bgCleaner.autoColor !== false ? 'Цвет заливки (вручную)' : 'Цвет заливки'"
+        />
+      </template>
       <template v-else-if="editor.tool === 'smart-eraser'">
         <div data-testid="smart-mode">
           <AppSelect

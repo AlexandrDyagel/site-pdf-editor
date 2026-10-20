@@ -31,6 +31,7 @@ export type ToolType =
   | 'marker'
   | 'eraser'
   | 'smart-eraser'
+  | 'bg-cleaner'
   | 'whiteout'
   | 'highlight'
   | 'rect'
@@ -261,6 +262,15 @@ export interface SmartEraseSettings {
   targetColor?: string | null;
   /** Разброс близких цветов, 0–100 (доля от максимального расстояния RGB). */
   colorTolerance?: number;
+  /**
+   * Движок маски.
+   *
+   * - 'simple' — глобальный порог светлого (умный корректор);
+   * - 'adaptive' — локальный порог (Sauvola) + фильтр компонентов: «Очистка фона».
+   */
+  engine?: 'simple' | 'adaptive';
+  /** Чувствительность адаптивного порога, 0–100 (выше — больше считается фоном). */
+  sensitivity?: number;
   /**
    * Режим работы.
    *
