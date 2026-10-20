@@ -687,6 +687,56 @@ async function buildSmartMask(request: SmartMaskRequest): Promise<HTMLCanvasElem
     // Ореол в пикселях маски: около 0.8 pt — столько занимает сглаженный край
     // глифа. Без него буквы «худеют» и выглядят обкусанными прямоугольниками.
     const halo = Math.max(2, Math.round(scale * 0.8));
+    // Гистерезис: сначала ядро (совсем тёмное), затем рост в сглаженный край
+    // буквы (чуть светлее), связанный с ядром. Так текст сохраняется целиком,
+    // вместе с кромкой, и вокруг него не остаётся светлого ореола.
+    {
+      const coreLimit = 25;
+      const skirtLimit = 22;
+      const queue: number[] = [];
+      const grown = new Uint8Array(dark);
+      for (let index = 0; index < dark.length; index += 1) {
+        if (!dark[index]) continue;
+        const x = index % pixelWidth;
+        const y = (index - x) / pixelWidth;
+        const limit = adaptive ? adaptive[index] : threshold;
+        const lum = smoothLum[index];
+        if (lum <= limit - coreLimit) queue.push(index);
+        else if (lum > limit + skirtLimit) dark[index] = 0;
+        void x;
+        void y;
+      }
+      // Снятие «не-ядра», затем рост из ядра в пределах сглаженного края.
+      const seeds = new Uint8Array(dark);
+      for (let index = 0; index < seeds.length; index += 1) {
+        if (!seeds[index]) continue;
+        const limit = adaptive ? adaptive[index] : threshold;
+        if (smoothLum[index] > limit - coreLimit) seeds[index] = 0;
+      }
+      const grownMap = new Uint8Array(seeds);
+      const stack = queue.slice();
+      while (stack.length > 0) {
+        const index = stack.pop() as number;
+        const x = index % pixelWidth;
+        const y = (index - x) / pixelWidth;
+        for (let dy = -1; dy <= 1; dy += 1) {
+          const ny = y + dy;
+          if (ny < 0 || ny >= pixelHeight) continue;
+          for (let dx = -1; dx <= 1; dx += 1) {
+            const nx = x + dx;
+            if (nx < 0 || nx >= pixelWidth) continue;
+            const neighbour = ny * pixelWidth + nx;
+            if (grownMap[neighbour]) continue;
+            const limit = adaptive ? adaptive[neighbour] : threshold;
+            if (smoothLum[neighbour] > limit + skirtLimit) continue;
+            grownMap[neighbour] = 1;
+            stack.push(neighbour);
+          }
+        }
+      }
+      dark.set(grownMap);
+    }
+
     // Открытие (эрозия → дилатация) убирает мелкие тёмные острова: иначе они
     // защищались как текст и оставались крошкой внутри мазка.
     {
