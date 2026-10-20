@@ -701,7 +701,12 @@ async function buildSmartMask(request: SmartMaskRequest): Promise<HTMLCanvasElem
         const luminance =
           0.299 * pageData[index] + 0.587 * pageData[index + 1] + 0.114 * pageData[index + 2];
         const limit = adaptive ? adaptive[y * pixelWidth + x] : threshold;
-        if (lumAt(x, y) < limit && !isColoredPixel(x, y)) dark[y * pixelWidth + x] = 1;
+        // Защищаем текст, если его видит классика ИЛИ модель: два детектора
+        // дополняют друг друга, и слово не теряется, если один промахнулся.
+        const modelSaysText = modelTextMask ? modelTextMask[y * pixelWidth + x] === 1 : false;
+        if (modelSaysText || (lumAt(x, y) < limit && !isColoredPixel(x, y))) {
+          dark[y * pixelWidth + x] = 1;
+        }
       }
     }
     // Ореол в пикселях маски: около 0.8 pt — столько занимает сглаженный край
@@ -819,12 +824,6 @@ async function buildSmartMask(request: SmartMaskRequest): Promise<HTMLCanvasElem
       mask.data[index + 1] = Math.round(green);
       mask.data[index + 2] = Math.round(blue);
       if (coverage < edgeCoverage) continue;
-      if (modelTextMask) {
-        // Текст по модели оставляем, всё остальное заливаем тоном бумаги.
-        if (modelTextMask[y * pixelWidth + x]) continue;
-        mask.data[index + 3] = Math.round(opacity * 255);
-        continue;
-      }
       if (target) {
         // Режим «по цвету пипетки»: стираем только близкие к целевому цвета.
         if (colorDistance[y * pixelWidth + x] <= colorTolerance) {

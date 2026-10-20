@@ -159,9 +159,42 @@ try {
         for (let index = 0; index < data.length; index += 4) if (data[index + 3] > 120) opaque += 1;
         return opaque;
       };
+      // Сколько тёмных пикселей текста закрашивает маска: должно быть 0.
+      const inkStats = async (object) => {
+        const { pdfService } = await import('/src/services/pdfService.ts');
+        const scale = 300 / 72;
+        maskService.clearSmartMaskCache();
+        const mask = await maskService.getSmartMask({ object, scale });
+        const maskData = mask.getContext('2d').getImageData(0, 0, mask.width, mask.height).data;
+        const rendered = await pdfService.renderPage(0, { scale, background: '#ffffff' });
+        const pageData = rendered.canvas
+          .getContext('2d')
+          .getImageData(0, 0, rendered.canvas.width, rendered.canvas.height).data;
+        const originX = Math.round(object.x * scale);
+        const originY = Math.round(object.y * scale);
+        let ink = 0;
+        let killed = 0;
+        for (let y = 0; y < mask.height; y += 1) {
+          for (let x = 0; x < mask.width; x += 1) {
+            const alpha = maskData[(y * mask.width + x) * 4 + 3];
+            const index = ((originY + y) * rendered.canvas.width + (originX + x)) * 4;
+            if (index < 0 || index >= pageData.length) continue;
+            const lum =
+              0.299 * pageData[index] + 0.587 * pageData[index + 1] + 0.114 * pageData[index + 2];
+            if (lum >= 120) continue;
+            ink += 1;
+            if (alpha > 200) killed += 1;
+          }
+        }
+        return { ink, killed };
+      };
+      const modelObject = build('model');
+      const adaptiveObject = build('adaptive');
       return {
-        model: await measure(build('model')),
-        adaptive: await measure(build('adaptive')),
+        model: await measure(modelObject),
+        adaptive: await measure(adaptiveObject),
+        ink: await inkStats(modelObject),
+        adaptiveInk: await inkStats(adaptiveObject),
         error: (await import('/src/services/textDetectionService.ts')).getLastTextModelError(),
       };
     })()`);
@@ -169,6 +202,19 @@ try {
     check('маска моделью построена', (result.model ?? 0) > 1000, JSON.stringify(result));
     check('фолбэк на адаптивный движок работает', (result.adaptive ?? 0) > 100, JSON.stringify(result));
     check('ошибок модели при работе нет', !result.error, String(result.error ?? ''));
+    console.log('  текст под маской (модель):', JSON.stringify(result.ink));
+    // Допускаем доли процента на кромке букв (JPEG-шум), но не потерю текста.
+    const killedShare = (stats) => (stats && stats.ink > 0 ? stats.killed / stats.ink : 1);
+    check(
+      'модель сохраняет текст (потери < 0.5 %)',
+      killedShare(result.ink) < 0.005,
+      JSON.stringify(result.ink),
+    );
+    check(
+      'адаптивный движок тоже сохраняет текст',
+      killedShare(result.adaptiveInk) < 0.005,
+      JSON.stringify(result.adaptiveInk),
+    );
   } else {
     failed += 1;
     console.error('  ✗ не удалось загрузить скан:', engineRun.error);
