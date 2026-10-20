@@ -76,6 +76,7 @@ try {
     app.editor.toolOptions.smartEraser.autoColor = false;
     // Проверяем режим «сохранить тёмное» — он теперь не по умолчанию.
     app.editor.toolOptions.smartEraser.eraseAll = false;
+    app.editor.toolOptions.smartEraser.mode = 'keep-dark';
     app.ui.setRightTab('tool');
     document.activeElement?.blur?.();
     return {
@@ -334,7 +335,7 @@ try {
       };
       const drawing = factory.createDrawingObject([stroke], {
         page: 0,
-        smart: { threshold: 200, color: '${FILL}', autoColor: false, eraseAll: false },
+        smart: { threshold: 200, color: '${FILL}', autoColor: false, eraseAll: false, mode: 'keep-dark' },
         name: 'Умный корректор',
       });
       if (!drawing) return { ok: false, error: 'не создан объект' };
@@ -424,7 +425,7 @@ try {
           { x: 260, y: 150, pressure: 0.5, time: 10 },
           { x: 420, y: 150, pressure: 0.5, time: 20 },
         ],
-      }], { page: 0, smart: { threshold: 200, color: '#ffffff', autoColor: false, eraseAll }, name: 'Умный корректор' });
+      }], { page: 0, smart: { threshold: 200, color: '#ffffff', autoColor: false, mode: eraseAll ? 'erase-all' : 'keep-dark' }, name: 'Умный корректор' });
       const read = async (object) => {
         for (let attempt = 0; attempt < 40; attempt += 1) {
           const node = window.__PDF_EDITOR_STAGE__.findOne((item) => item.getAttr && item.getAttr('objectId') === object.id);
@@ -474,7 +475,7 @@ try {
         page: 0,
         // Палитра — красная, но при авто-режиме заливка должна взять тон бумаги
         // страницы (в тестовом PDF бумага белая).
-        smart: { threshold: 200, color: '#e11d48', autoColor: true, eraseAll: false },
+        smart: { threshold: 200, color: '#e11d48', autoColor: true, eraseAll: false, mode: 'keep-dark' },
         name: 'Умный корректор',
       });
       app.objects.add([drawing], 'тест');
