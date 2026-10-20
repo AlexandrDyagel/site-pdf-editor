@@ -211,6 +211,8 @@ async function buildSmartMask(request: SmartMaskRequest): Promise<HTMLCanvasElem
   const target = mode === 'by-color' ? parseHexColor(settings.targetColor ?? null) : null;
   const colorTolerance = Math.max(0, Math.min(100, settings.colorTolerance ?? 22)) / 100;
   const colorDistance = new Float32Array(pixelWidth * pixelHeight);
+  /** Дорастание цвета: 1 — сосед совпавшего пикселя, не бумага и не текст. */
+  let targetGrown: Uint8Array | null = null;
   if (target) {
     const raw = new Float32Array(pixelWidth * pixelHeight);
     for (let index = 0, pixel = 0; index < pageData.length; index += 4, pixel += 1) {
@@ -232,6 +234,73 @@ async function buildSmartMask(request: SmartMaskRequest): Promise<HTMLCanvasElem
         colorDistance[y * pixelWidth + x] = sum / count;
       }
     }
+
+    // Дорастание: от пикселей, попавших в цвет, идём по соседям, которые не
+    // похожи на бумагу и не являются текстом. Так уходит бледная кайма, которую
+    // печать оставляет по краям (там тон уже далёк от целевого).
+    const grown = new Uint8Array(pixelWidth * pixelHeight);
+    const queue: number[] = [];
+    for (let pixel = 0; pixel < colorDistance.length; pixel += 1) {
+      if (colorDistance[pixel] > colorTolerance) continue;
+      grown[pixel] = 1;
+      queue.push(pixel);
+    }
+    /** Тон пикселя в градусах: сравниваем оттенок, а не яркость. */
+    const hueOf = (r: number, g: number, b: number): number => {
+      const max = Math.max(r, g, b);
+      const min = Math.min(r, g, b);
+      const delta = max - min;
+      if (delta === 0) return 0;
+      let hue = 0;
+      if (max === r) hue = ((g - b) / delta) % 6;
+      else if (max === g) hue = (b - r) / delta + 2;
+      else hue = (r - g) / delta + 4;
+      hue *= 60;
+      return hue < 0 ? hue + 360 : hue;
+    };
+    const targetHue = hueOf(target.r, target.g, target.b);
+    const radius = Math.max(1, Math.round(scale * 0.35));
+    let steps = 0;
+    while (queue.length > 0 && steps < radius) {
+      const layerSize = queue.length;
+      const nextQueue: number[] = [];
+      for (let item = 0; item < layerSize; item += 1) {
+        const pixel = queue[item] as number;
+        const x = pixel % pixelWidth;
+        const y = (pixel - x) / pixelWidth;
+        for (let dy = -1; dy <= 1; dy += 1) {
+          const ny = y + dy;
+          if (ny < 0 || ny >= pixelHeight) continue;
+          for (let dx = -1; dx <= 1; dx += 1) {
+            const nx = x + dx;
+            if (nx < 0 || nx >= pixelWidth) continue;
+            const neighbour = ny * pixelWidth + nx;
+            if (grown[neighbour]) continue;
+            const index = neighbour * 4;
+            const red = pageData[index];
+            const green = pageData[index + 1];
+            const blue = pageData[index + 2];
+            const max = Math.max(red, green, blue);
+            const min = Math.min(red, green, blue);
+            const saturation = max === 0 ? 0 : (max - min) / max;
+            // Растём по ОТТЕНКУ: бледная краска (промытый край печати) имеет тот
+            // же тон, что и целевой цвет, но сильно светлее — по яркости её не
+            // поймать, по тону легко. Нейтральные буквы (насыщенность ~0) целы.
+            if (saturation < 0.05) continue;
+            const hue = hueOf(red, green, blue);
+            const raw = Math.abs(hue - targetHue);
+            const hueDelta = raw > 180 ? 360 - raw : raw;
+            if (hueDelta > 30) continue;
+            grown[neighbour] = 1;
+            nextQueue.push(neighbour);
+          }
+        }
+      }
+      queue.length = 0;
+      queue.push(...nextQueue);
+      steps += 1;
+    }
+    targetGrown = grown;
   }
 
   /**
@@ -825,10 +894,12 @@ async function buildSmartMask(request: SmartMaskRequest): Promise<HTMLCanvasElem
       mask.data[index + 2] = Math.round(blue);
       if (coverage < edgeCoverage) continue;
       if (target) {
-        // Режим «по цвету пипетки»: стираем только близкие к целевому цвета.
-        if (colorDistance[y * pixelWidth + x] <= colorTolerance) {
-          mask.data[index + 3] = Math.round(opacity * 255);
-        }
+        // Режим «по цвету пипетки»: цвет плюс его дорастание по соседним
+        // не-бумажным пикселям (бледные края печати иначе остаются следом).
+        const pixel = y * pixelWidth + x;
+        const matched =
+          colorDistance[pixel] <= colorTolerance || (targetGrown && targetGrown[pixel] === 1);
+        if (matched) mask.data[index + 3] = Math.round(opacity * 255);
         continue;
       }
       if (protect && protect[y * pixelWidth + x] && !isColoredPixel(x, y)) continue;
