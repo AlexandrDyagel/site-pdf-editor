@@ -708,7 +708,8 @@ async function buildSmartMask(request: SmartMaskRequest): Promise<HTMLCanvasElem
    * На 300 dpi ступенька в 1 пиксель маски незаметна.
    */
   const edgeCoverage = 110;
-  const eraseAll = mode === 'erase-all';
+  // В режиме «вернуть текст» заливаем всё: распознанный текст рисуется поверх.
+  const eraseAll = mode === 'erase-all' || mode === 'retype';
 
   /**
    * Карта «цветного» содержимого.

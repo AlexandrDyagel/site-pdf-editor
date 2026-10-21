@@ -282,6 +282,7 @@ function setSmartAutoColor(autoColor: boolean): void {
 const SMART_MODE_OPTIONS = [
   { value: 'erase-all', label: 'Стереть всё под мазком' },
   { value: 'by-color', label: 'По цвету пипетки' },
+  { value: 'retype', label: 'Стереть и вернуть текст (OCR)' },
   { value: 'keep-dark', label: 'Сохранять тёмное (порог)' },
 ];
 
@@ -298,7 +299,7 @@ const smartMode = computed<SmartEraseMode>(() => {
 function setSmartMode(value: string | number | null): void {
   const object = single.value;
   if (!object || object.type !== 'drawing' || !object.payload.smart) return;
-  if (value !== 'erase-all' && value !== 'by-color' && value !== 'keep-dark') return;
+  if (value !== 'erase-all' && value !== 'by-color' && value !== 'keep-dark' && value !== 'retype') return;
   objects.update(
     object.id,
     { payload: { smart: { ...object.payload.smart, mode: value } } },

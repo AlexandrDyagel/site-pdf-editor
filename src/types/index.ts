@@ -230,7 +230,12 @@ export interface StrokeData {
  * Настройки «умного корректора»: закрашивает только светлые участки, тёмный
  * текст остаётся. Маска строится по растру страницы (см. services/smartErase).
  */
-export type SmartEraseMode = 'erase-all' | 'by-color' | 'keep-dark';
+export type SmartEraseMode =
+  | 'erase-all'
+  | 'by-color'
+  | 'keep-dark'
+  /** Стереть всё и набрать текст заново по распознанным строкам. */
+  | 'retype';
 
 export interface SmartEraseSettings {
   /** Порог яркости 0..255: пиксели светлее закрашиваются, темнее остаются. */

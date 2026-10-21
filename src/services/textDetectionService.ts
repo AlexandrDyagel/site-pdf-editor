@@ -15,10 +15,21 @@ let availabilityPromise: Promise<boolean> | null = null;
 const MODEL_URL = '/models/text-det.onnx';
 
 interface Pending {
-  resolve: (mask: Uint8Array | null) => void;
+  resolve: (value: Uint8Array | null) => void;
   reject: (error: Error) => void;
   timer: number;
 }
+
+/** Прямоугольник строки в координатах области. */
+export interface TextLineBox {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+}
+
+const recognizePending = new Map<number, { resolve: (lines: string[] | null) => void; timer: number }>();
+let recognizeRequestId = 0;
 
 let worker: Worker | null = null;
 /** Последняя ошибка модели — для диагностики и подсказки в интерфейсе. */
@@ -55,8 +66,16 @@ function ensureWorker(): Worker | null {
     worker = null;
     return null;
   }
-  worker.onmessage = (event: MessageEvent<{ id: number; ok: boolean; mask?: Uint8Array; error?: string }>) => {
-    const { id, ok, mask, error } = event.data;
+  worker.onmessage = (event: MessageEvent<{ id: number; ok: boolean; mask?: Uint8Array; lines?: string[]; error?: string }>) => {
+    const { id, ok, mask, lines, error } = event.data;
+    const recognizeRequest = recognizePending.get(id);
+    if (recognizeRequest) {
+      recognizePending.delete(id);
+      window.clearTimeout(recognizeRequest.timer);
+      recognizeRequest.resolve(ok && Array.isArray(lines) ? lines : null);
+      if (!ok && error) console.warn('[text-model]', error);
+      return;
+    }
     const request = pending.get(id);
     if (!request) return;
     pending.delete(id);
@@ -110,6 +129,50 @@ export async function detectTextMask(
     const copy = new Uint8ClampedArray(pixels);
     instance.postMessage({ id, width, height, pixels: copy }, [copy.buffer]);
   });
+}
+
+/**
+ * Распознаёт текст в строках области: возвращает массив строк в том же порядке,
+ * что и переданные прямоугольники. null — модель недоступна или не справилась.
+ */
+export async function recognizeTextLines(
+  pixels: Uint8ClampedArray,
+  width: number,
+  height: number,
+  boxes: TextLineBox[],
+  timeoutMs = 25_000,
+): Promise<string[] | null> {
+  if (boxes.length === 0) return [];
+  if (!(await isModelReady())) return null;
+  const instance = ensureWorker();
+  if (!instance) return null;
+
+  return new Promise<string[] | null>((resolve) => {
+    const id = (recognizeRequestId += 1);
+    const timer = window.setTimeout(() => {
+      recognizePending.delete(id);
+      resolve(null);
+    }, timeoutMs);
+    recognizePending.set(id, { resolve, timer });
+    const copy = new Uint8ClampedArray(pixels);
+    instance.postMessage({ id, width, height, pixels: copy, boxes }, [copy.buffer]);
+  });
+}
+
+/** Есть ли файл распознавателя (проверяется один раз). */
+let recognizeModelReady: boolean | null = null;
+async function isModelReady(): Promise<boolean> {
+  if (recognizeModelReady !== null) return recognizeModelReady;
+  try {
+    const [model, dictionary] = await Promise.all([
+      fetch('/models/text-rec.onnx', { method: 'HEAD' }),
+      fetch('/models/rec-dict.json', { method: 'HEAD' }),
+    ]);
+    recognizeModelReady = model.ok && dictionary.ok;
+  } catch {
+    recognizeModelReady = false;
+  }
+  return recognizeModelReady;
 }
 
 /** Последняя ошибка модели (null — ошибок не было). */

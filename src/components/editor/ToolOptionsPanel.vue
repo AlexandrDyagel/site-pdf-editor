@@ -32,6 +32,7 @@ void isTextModelAvailable().then((value) => {
 const SMART_MODES = [
   { value: 'erase-all', label: 'Стереть всё под мазком' },
   { value: 'by-color', label: 'По цвету пипетки' },
+  { value: 'retype', label: 'Стереть и вернуть текст (OCR)' },
   { value: 'keep-dark', label: 'Сохранять тёмное (порог)' },
 ];
 
@@ -294,6 +295,11 @@ const documentFontsUsed = computed(() => {
             Тёмнее порога — остаётся, светлее — стирается. Цветное стирается всегда.
           </p>
         </template>
+        <p v-else-if="editor.toolOptions.smartEraser.mode === 'retype'" class="text-[11px] text-slate-400">
+          Мазок стирает область полностью, затем распознаёт строки и набирает их заново
+          вашим шрифтом: чистый фон и целые буквы даже там, где краска лежала поверх текста.
+          Первый запуск распознавания грузит модель (~8 МБ).
+        </p>
         <p v-else class="text-[11px] text-slate-400">
           Мазок стирает всё под собой и заливает участок тоном бумаги — без следов и остатков.
         </p>

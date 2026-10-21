@@ -46,6 +46,7 @@ import {
 import { ACCEPT, openFileDialog, readImageFile } from '@/services/fileService';
 import { pdfService } from '@/services/pdfService';
 import { textInkCenter } from '@/services/textRenderService';
+import { recognizeRegion } from '@/services/textRetypeService';
 import { useEditorStore } from '@/stores/editor';
 import { useObjectsStore } from '@/stores/objects';
 import { usePdfStore } from '@/stores/pdf';
@@ -102,7 +103,53 @@ export function useEditorTools(deps: {
    * Выделение строки в панели «Слои» сюда не попадает — там свойства
    * открываются двойным кликом.
    */
-  function addFromCanvas(
+  /**
+ * «Стереть всё и вернуть текст».
+ *
+ * Область уже залита тоном бумаги; здесь распознаём строки и добавляем их
+ * текстовыми объектами — так получается чистый фон и целые буквы даже там,
+ * где краска лежала поверх текста.
+ */
+async function retypeStrokeArea(drawing: EditorObject): Promise<void> {
+  const rect = {
+    x: drawing.x,
+    y: drawing.y,
+    width: drawing.width,
+    height: drawing.height,
+  };
+  const lines = await recognizeRegion({ page: drawing.page, rect });
+  if (!lines || lines.length === 0) return;
+  const defaults = { ...settings.textDefaults, ...editor.toolOptions.text };
+  const fontId = defaults.fontId || settings.settings.defaultFontId;
+  const font = fonts.byId(fontId);
+  const created: EditorObject[] = [];
+  for (const line of lines) {
+    const object = createTextObject({
+      page: drawing.page,
+      x: line.x,
+      y: line.y,
+      width: Math.max(line.width, line.fontSize * 1.2),
+      height: Math.max(line.height, line.fontSize * 1.4),
+      text: line.text,
+      autoHeight: false,
+      defaults: {
+        ...defaults,
+        fontId: font?.id ?? fontId,
+        fontFamily: font?.family ?? defaults.fontFamily,
+        fontSize: Math.round(line.fontSize * 10) / 10,
+        color: '#111111',
+        align: 'left',
+        lineHeight: 1.15,
+      },
+    });
+    created.push(object);
+  }
+  if (created.length === 0) return;
+  objects.add(created, 'Возврат текста');
+  objects.commit('Возврат текста');
+}
+
+function addFromCanvas(
     items: EditorObject[],
     label: string,
     options: { select?: boolean; openProperties?: boolean } = {},
@@ -574,6 +621,11 @@ export function useEditorTools(deps: {
             // Закрашенное не выделяем: рамки после штриха быть не должно.
             { select: !isMasking, openProperties: !isMasking },
           );
+          // «Стереть всё и вернуть текст»: область залита бумагой, теперь
+          // распознаём строки и набираем их заново.
+          if (isSmart && smartOptions.mode === 'retype') {
+            void retypeStrokeArea(drawing);
+          }
         }
       }
       return;

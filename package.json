@@ -51,8 +51,9 @@
     "check:smart-color": "node scripts/check-smart-color.mjs",
     "check:bg-cleaner": "node scripts/check-bg-cleaner.mjs",
     "check:text-model": "node scripts/check-text-model.mjs",
+    "check:text-retype": "node scripts/check-text-retype.mjs",
     "check:masking-selection": "node scripts/make-test-pdf.mjs && node scripts/check-masking-selection.mjs",
-    "check:all": "pnpm typecheck && pnpm verify && pnpm check:components && pnpm check:workflow && pnpm check:interaction && pnpm check:corrector && pnpm check:rotation && pnpm check:user-font && pnpm check:font-ui && pnpm check:layout && pnpm check:tooltips && pnpm check:hotkeys && pnpm check:canvas-tools && pnpm check:layer-order && pnpm check:shape-styles && pnpm check:shapes-extra && pnpm check:history && pnpm check:drop-toast && pnpm check:export-pages && pnpm check:text-inline && pnpm check:transform && pnpm check:groups && pnpm check:font-embed && pnpm check:bundled-fonts && pnpm check:projects && pnpm check:smart-eraser && pnpm check:eyedropper && pnpm check:stroke-width && pnpm check:eraser-drag && pnpm check:masking-selection && pnpm check:space-pan && pnpm check:smart-color && pnpm check:bg-cleaner && pnpm check:text-model"
+    "check:all": "pnpm typecheck && pnpm verify && pnpm check:components && pnpm check:workflow && pnpm check:interaction && pnpm check:corrector && pnpm check:rotation && pnpm check:user-font && pnpm check:font-ui && pnpm check:layout && pnpm check:tooltips && pnpm check:hotkeys && pnpm check:canvas-tools && pnpm check:layer-order && pnpm check:shape-styles && pnpm check:shapes-extra && pnpm check:history && pnpm check:drop-toast && pnpm check:export-pages && pnpm check:text-inline && pnpm check:transform && pnpm check:groups && pnpm check:font-embed && pnpm check:bundled-fonts && pnpm check:projects && pnpm check:smart-eraser && pnpm check:eyedropper && pnpm check:stroke-width && pnpm check:eraser-drag && pnpm check:masking-selection && pnpm check:space-pan && pnpm check:smart-color && pnpm check:bg-cleaner && pnpm check:text-model && pnpm check:text-retype"
   },
   "pnpm": {
     "onlyBuiltDependencies": [
