@@ -56,7 +56,8 @@ import { getStrokeOutline, outlineToPath } from '@/services/strokeService';
 import { fitStampTemplate } from '@/services/stampRenderService';
 import { drawStampToPdfPage } from '@/services/stampPdfRenderer';
 import { computeTextBlockLayout } from '@/services/textRenderService';
-import { getSmartMask } from '@/services/smartEraseService';
+import { getSmartMask, getSmartMaskPixels } from '@/services/smartEraseService';
+import { encodePngRgba } from '@/utils/pngEncoder';
 import { justifyOffsets, measureTextWidth } from '@/utils/textLayout';
 import { normalizeSides, polygonPath } from '@/utils/shapePath';
 import { renderPageCanvas } from '@/services/imageExportService';
@@ -577,7 +578,18 @@ async function drawSmartMaskObject(
   if (!canvas) return;
   const frame = frameOf(obj, geo);
   const bottomLeft = frame.toPdf(0, obj.height);
-  const bytes = dataUrlToBytes(canvas.toDataURL('image/png'));
+  /**
+   * PNG кодируем сами, из сырых RGBA маски.
+   *
+   * `canvas.toDataURL` предумножает альфу и у полностью прозрачных пикселей
+   * оставляет чёрный цвет. Часть просмотрщиков интерполирует картинку без
+   * предумножения и рисует вокруг мазка чёрную кайму. Свой кодировщик сохраняет
+   * в прозрачных пикселях тон бумаги, поэтому каймы нет ни в одном просмотрщике.
+   */
+  const maskImageData = getSmartMaskPixels(canvas);
+  const bytes = maskImageData
+    ? await encodePngRgba(maskImageData.data, maskImageData.width, maskImageData.height)
+    : dataUrlToBytes(canvas.toDataURL('image/png'));
   const image = await page.doc.embedPng(bytes);
   page.drawImage(image, {
     x: bottomLeft.x,

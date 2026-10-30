@@ -17,6 +17,7 @@
 
 import { readFile, mkdir } from 'node:fs/promises';
 import { resolve as resolvePath } from 'node:path';
+import { inflateSync } from 'node:zlib';
 import { PDFDocument, PDFName, PDFDict, PDFRawStream } from 'pdf-lib';
 import { launchBrowser, sleep } from './lib/cdp.mjs';
 
@@ -188,6 +189,20 @@ try {
         fill: opaque > 0 ? [Math.round(r / opaque), Math.round(g / opaque), Math.round(b / opaque)] : null,
       };
     };
+    // Прозрачные пиксели маски не должны быть чёрными: иначе вокруг мазка
+    // появляется тёмная кайма в просмотрщиках без предумножения альфы.
+    const canvas = await maskService.getSmartMask({
+      object: build({ threshold: 170, color: '#ffffff', autoColor: true, eraseAll: false, mode: 'keep-text', engine: 'model', fillColor: null, eraseColoredOverText: false }),
+      scale,
+    });
+    const raw = maskService.getSmartMaskPixels(canvas);
+    let transparentPixels = 0;
+    let transparentBlack = 0;
+    for (let index = 0; index < raw.data.length; index += 4) {
+      if (raw.data[index + 3] !== 0) continue;
+      transparentPixels += 1;
+      if (raw.data[index] + raw.data[index + 1] + raw.data[index + 2] < 200) transparentBlack += 1;
+    }
     const custom = await measure(build({
       threshold: 170, color: '#e11d48', autoColor: false, eraseAll: false,
       mode: 'keep-text', engine: 'model', fillColor: '#e11d48', eraseColoredOverText: true,
@@ -200,8 +215,14 @@ try {
       threshold: 170, color: '#ffffff', autoColor: true, eraseAll: false,
       mode: 'keep-text', engine: 'model', fillColor: null, eraseColoredOverText: true,
     }));
-    return { custom, paper, ink };
+    return { custom, paper, ink, transparentPixels, transparentBlack };
   })()`);
+  console.log('  прозрачные пиксели маски:', JSON.stringify({ transparentPixels: stats.transparentPixels, transparentBlack: stats.transparentBlack }));
+  check(
+    'в маске нет чёрных прозрачных пикселей (причина каймы)',
+    stats.transparentBlack === 0 && stats.transparentPixels > 1000,
+    JSON.stringify({ transparentPixels: stats.transparentPixels, transparentBlack: stats.transparentBlack }),
+  );
   console.log('  свой цвет:', JSON.stringify(stats.custom));
   console.log('  цвет бумаги:', JSON.stringify(stats.paper));
   check('маска построена', Boolean(stats.custom?.opaque > 1000), JSON.stringify(stats.custom));
@@ -232,6 +253,25 @@ try {
   console.log('\n4. Экспорт PDF');
   const pdfB64 = await cdp.evaluate(`(async () => {
     const app = window.__PDF_EDITOR__;
+    const factory = await import('/src/services/objectFactory.ts');
+    const maskService = await import('/src/services/smartEraseService.ts');
+    // Возвращаем объект «умного корректора 2»: его маска и должна попасть в PDF.
+    app.objects.clearAll(false);
+    maskService.clearSmartMaskCache();
+    const drawing = factory.createDrawingObject([{
+      tool: 'smart-eraser', color: '#ffffff', width: 40, opacity: 1, smooth: false,
+      points: [
+        { x: 95, y: 211, pressure: 0.5, time: 0 },
+        { x: 175, y: 211, pressure: 0.5, time: 8 },
+        { x: 258, y: 211, pressure: 0.5, time: 16 },
+      ],
+    }], {
+      page: 0,
+      smart: { threshold: 170, color: '#ffffff', autoColor: true, eraseAll: false, mode: 'keep-text', engine: 'model', fillColor: null, eraseColoredOverText: false },
+      name: 'Умный корректор 2',
+    });
+    app.objects.add([drawing], 'тест');
+    app.objects.clearSelection();
     app.exporter.setFormat('pdf');
     app.exporter.update({ pageRange: 'current', includeAnnotations: true, includeOriginalContent: true });
     const pdf = await app.exporter.run({ download: false });
@@ -250,12 +290,31 @@ try {
   const xobjects = resolved.lookup(PDFName.of('XObject'));
   const dict = xobjects instanceof PDFDict ? xobjects : doc.context.lookup(xobjects);
   let masks = 0;
+  let cleanMasks = 0;
   for (const [, ref] of dict.entries()) {
     const stream = doc.context.lookup(ref);
-    if (stream instanceof PDFRawStream && stream.dict.has(PDFName.of('SMask'))) masks += 1;
+    if (!(stream instanceof PDFRawStream) || !stream.dict.has(PDFName.of('SMask'))) continue;
+    masks += 1;
+    const width = Number(stream.dict.get(PDFName.of('Width')).toString());
+    const height = Number(stream.dict.get(PDFName.of('Height')).toString());
+    const alphaStream = doc.context.lookup(stream.dict.get(PDFName.of('SMask')));
+    if (!(alphaStream instanceof PDFRawStream)) continue;
+    const rgb = inflateSync(Buffer.from(stream.contents));
+    const alpha = inflateSync(Buffer.from(alphaStream.contents));
+    const channels = rgb.length / (width * height);
+    let black = 0;
+    let transparent = 0;
+    for (let pixel = 0; pixel < width * height; pixel += 1) {
+      if (alpha[pixel] !== 0) continue;
+      transparent += 1;
+      const base = pixel * channels;
+      if (rgb[base] + rgb[base + 1] + rgb[base + 2] < 200) black += 1;
+    }
+    if (transparent > 1000 && black === 0) cleanMasks += 1;
   }
-  console.log('  масок в PDF:', masks);
+  console.log('  масок в PDF:', masks, '| без чёрных прозрачных пикселей:', cleanMasks);
   check('PDF собран и содержит маску с альфой', masks >= 1, String(masks));
+  check('маска в PDF закодирована без чёрных прозрачных пикселей', cleanMasks >= 1, String(cleanMasks));
 
   console.log('\nОшибки консоли:', cdp.errors.length ? cdp.errors.slice(0, 3).join('\n') : '(нет)');
 } catch (error) {

@@ -79,6 +79,17 @@ export function smartMaskKey(object: EditorObject & { payload: DrawingPayload },
 }
 
 /** Достаёт маску из кэша или строит новую. */
+/**
+ * Сырые RGBA-данные маски, которые нельзя получить обратно из canvas:
+ * у полностью прозрачных пикселей хранилище canvas обнуляет цвет.
+ */
+const maskPixels = new WeakMap<HTMLCanvasElement, ImageData>();
+
+/** RGBA-данные маски (для точного PNG без потери цвета в прозрачных пикселях). */
+export function getSmartMaskPixels(canvas: HTMLCanvasElement): ImageData | null {
+  return maskPixels.get(canvas) ?? null;
+}
+
 export async function getSmartMask(request: SmartMaskRequest): Promise<HTMLCanvasElement | null> {
   const key = smartMaskKey(request.object, request.scale);
   const cached = cache.get(key);
@@ -714,9 +725,12 @@ async function buildSmartMask(request: SmartMaskRequest): Promise<HTMLCanvasElem
    * Полупрозрачный край — источник тёмной каймы: он смешивается с содержимым
    * страницы под ним (буква, линия), и в PDF вокруг мазка появляется полоска.
    * Поэтому альфа бинарная: пиксель либо закрашен полностью, либо не закрашен.
-   * На 300 dpi ступенька в 1 пиксель маски незаметна.
+   *
+   * Порог низкий (24 из 255): сглаженный край самого штриха тоже должен попасть
+   * в заливку. Иначе по периметру мазка остаётся непокрытая полоска исходного
+   * контента — та самая кайма вокруг мазка, только не от альфы, а от «зазора».
    */
-  const edgeCoverage = 110;
+  const edgeCoverage = 24;
   // В режиме «вернуть текст» заливаем всё: распознанный текст рисуется поверх.
   const eraseAll = mode === 'erase-all' || mode === 'retype';
 
@@ -890,21 +904,36 @@ async function buildSmartMask(request: SmartMaskRequest): Promise<HTMLCanvasElem
     }
   }
 
+  /**
+   * Цвет пишем во ВСЕ пиксели маски, включая полностью прозрачные.
+   *
+   * Причина: у прозрачного пикселя RGB по умолчанию чёрный. Просмотрщики PDF и
+   * браузер интерполируют картинку маски по краю мазка и при наивном сглаживании
+   * (без предумножения на альфу) подмешивают этот чёрный — вокруг мазка выходит
+   * чёрная кайма. Если во всех пикселях лежит тон бумаги, каймы не бывает: цвет
+   * совпадает с фоном при любом способе интерполяции.
+   */
+  for (let y = 0; y < pixelHeight; y += 1) {
+    for (let x = 0; x < pixelWidth; x += 1) {
+      const index = (y * pixelWidth + x) * 4;
+      if (fillSolid) {
+        mask.data[index] = fillSolid.r;
+        mask.data[index + 1] = fillSolid.g;
+        mask.data[index + 2] = fillSolid.b;
+        continue;
+      }
+      const [paperRed, paperGreen, paperBlue] = paperAt(x, y);
+      mask.data[index] = Math.round(paperRed);
+      mask.data[index + 1] = Math.round(paperGreen);
+      mask.data[index + 2] = Math.round(paperBlue);
+    }
+  }
+
   for (let y = 0; y < pixelHeight; y += 1) {
     for (let x = 0; x < pixelWidth; x += 1) {
       const index = (y * pixelWidth + x) * 4;
       const coverage = shapeData[index + 3];
       if (coverage === 0) continue;
-      const [paperRed, paperGreen, paperBlue] = paperAt(x, y);
-      const red = fillSolid ? fillSolid.r : paperRed;
-      const green = fillSolid ? fillSolid.g : paperGreen;
-      const blue = fillSolid ? fillSolid.b : paperBlue;
-      // Цвет заливки пишем во все пиксели под штрихом, включая прозрачные:
-      // у частично прозрачного края иначе остаётся чёрный RGB, и в PDF вокруг
-      // закрашенной области появляется тёмная кайма.
-      mask.data[index] = Math.round(red);
-      mask.data[index + 1] = Math.round(green);
-      mask.data[index + 2] = Math.round(blue);
       if (coverage < edgeCoverage) continue;
       if (target) {
         // Режим «по цвету пипетки»: цвет плюс его дорастание по соседним
@@ -986,5 +1015,6 @@ async function buildSmartMask(request: SmartMaskRequest): Promise<HTMLCanvasElem
   }
 
   maskCtx.putImageData(mask, 0, 0);
+  maskPixels.set(maskCanvas, mask);
   return maskCanvas;
 }
