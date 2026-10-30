@@ -963,10 +963,12 @@ async function buildSmartMask(request: SmartMaskRequest): Promise<HTMLCanvasElem
         const blue = pageData[index + 2];
         const chroma = Math.max(red, green, blue) - Math.min(red, green, blue);
         void saturation;
-        // Порог 45 из 255 подобран замером: при 45 чёрный текст теряет 0
-        // пикселей из 6 592, а цветной краски остаётся 1.2 %. При 20 краска
-        // уходит полностью, но в буквах появляются прорехи (4.7 % пикселей).
-        if (chroma < 45) continue;
+        // Порог зависит от яркости. У тёмных пикселей (текст) хрома врёт из-за
+        // JPEG-шума, поэтому там строгий порог 45: чёрные буквы не трогаем.
+        // У светлых пикселей такую хрому даёт только краска (промытый оттиск),
+        // поэтому порог 12 — бледно-голубые следы печати уходят.
+        const chromaLimit = luminance > 150 ? 12 : 45;
+        if (chroma < chromaLimit) continue;
         // Совсем бледную краску (почти бумагу) не трогаем — иначе будет крошка.
         if (luminance >= paperLum - 5) continue;
         mask.data[index + 3] = Math.round(opacity * 255);
