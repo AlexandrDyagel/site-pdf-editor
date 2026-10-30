@@ -215,13 +215,54 @@ try {
       threshold: 170, color: '#ffffff', autoColor: true, eraseAll: false,
       mode: 'keep-text', engine: 'model', fillColor: null, eraseColoredOverText: true,
     }));
-    return { custom, paper, ink, transparentPixels, transparentBlack };
+    // Фон под мазком должен быть закрашен полностью: считаем незакрашенные
+    // светлые (не буквы) пиксели в полосе по центру штриха.
+    const canvas2 = await maskService.getSmartMask({
+      object: build({ threshold: 170, color: '#ffffff', autoColor: true, eraseAll: false, mode: 'keep-text', engine: 'model', fillColor: null, eraseColoredOverText: false }),
+      scale,
+    });
+    const probe = maskService.getSmartMaskPixels(canvas2);
+    const probeObject = build({ threshold: 170, color: '#ffffff', autoColor: true, eraseAll: false, mode: 'keep-text', engine: 'model', fillColor: null, eraseColoredOverText: false });
+    const originX = Math.round(probeObject.x * scale);
+    const originY = Math.round(probeObject.y * scale);
+    const bandX0 = Math.round((105 - probeObject.x) * scale);
+    const bandX1 = Math.round((245 - probeObject.x) * scale);
+    const bandY0 = Math.round((206 - probeObject.y) * scale);
+    const bandY1 = Math.round((216 - probeObject.y) * scale);
+    let bandPixels = 0;
+    let unfilledLight = 0;
+    for (let y = Math.max(0, bandY0); y < Math.min(probe.height, bandY1); y += 1) {
+      for (let x = Math.max(0, bandX0); x < Math.min(probe.width, bandX1); x += 1) {
+        bandPixels += 1;
+        if (probe.data[(y * probe.width + x) * 4 + 3] > 0) continue;
+        const index = ((originY + y) * pageCanvas.width + (originX + x)) * 4;
+        if (index < 0 || index >= pageData.length) continue;
+        const pr = pageData[index];
+        const pg = pageData[index + 1];
+        const pb = pageData[index + 2];
+        const lum = 0.299 * pr + 0.587 * pg + 0.114 * pb;
+        const max = Math.max(pr, pg, pb);
+        const min = Math.min(pr, pg, pb);
+        const sat = max === 0 ? 0 : (max - min) / max;
+        if (lum > 200 && sat < 0.25) unfilledLight += 1;
+      }
+    }
+    return { custom, paper, ink, transparentPixels, transparentBlack, bandPixels, unfilledLight };
   })()`);
   console.log('  прозрачные пиксели маски:', JSON.stringify({ transparentPixels: stats.transparentPixels, transparentBlack: stats.transparentBlack }));
   check(
     'в маске нет чёрных прозрачных пикселей (причина каймы)',
     stats.transparentBlack === 0 && stats.transparentPixels > 1000,
     JSON.stringify({ transparentPixels: stats.transparentPixels, transparentBlack: stats.transparentBlack }),
+  );
+  console.log('  незакрашенный светлый фон в полосе:', JSON.stringify({ bandPixels: stats.bandPixels, unfilledLight: stats.unfilledLight }));
+  // Порог 5 %: остаток — сглаженный край самих букв (светло-серые пиксели
+  // обводки глифов), а не фон. Раньше здесь было до 40 % фона из-за ореола
+  // вокруг текста, который защищался как часть буквы.
+  check(
+    'фон под мазком закрашен (остаётся только край букв)',
+    stats.bandPixels > 1000 && stats.unfilledLight / stats.bandPixels < 0.05,
+    JSON.stringify({ bandPixels: stats.bandPixels, unfilledLight: stats.unfilledLight }),
   );
   console.log('  свой цвет:', JSON.stringify(stats.custom));
   console.log('  цвет бумаги:', JSON.stringify(stats.paper));

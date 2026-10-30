@@ -945,11 +945,21 @@ async function buildSmartMask(request: SmartMaskRequest): Promise<HTMLCanvasElem
         continue;
       }
       if (mode === 'keep-text') {
-        const pixel = y * pixelWidth + x;
-        const isProtectedText = protect ? protect[pixel] === 1 : false;
-        const isInk = isColoredPixel(x, y);
-        // Буква остаётся видимой; краску поверх буквы стираем, если так задано.
-        if (isProtectedText && !(eraseInkOverText && isInk)) continue;
+        // Буква — это нейтрально тёмный пиксель темнее бумаги. Заливаем всё
+        // остальное: и светлый фон, и цветную краску вокруг букв. Ореол вокруг
+        // текста здесь не защищаем — иначе фон рядом с буквами остаётся
+        // незакрашенным (та самая «не вся площадь»).
+        const [paperR, paperG, paperB] = paperAt(x, y);
+        const paperLum = 0.299 * paperR + 0.587 * paperG + 0.114 * paperB;
+        const luminance =
+          0.299 * pageData[index] + 0.587 * pageData[index + 1] + 0.114 * pageData[index + 2];
+        // Буква — тёмный пиксель. Насыщенность учитываем только по желанию:
+        // по умолчанию краска, лежащая на букве, остаётся, чтобы буква была
+        // целой, а не с прорехами. Включённый «стирать краску поверх букв»
+        // убирает и её (за счёт прорехи в букве).
+        const dark = luminance < paperLum - 45;
+        const isLetter = dark && (!eraseInkOverText || saturationAt(index) < 0.3);
+        if (isLetter) continue;
         mask.data[index + 3] = Math.round(opacity * 255);
         continue;
       }

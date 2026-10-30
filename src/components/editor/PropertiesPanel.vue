@@ -280,11 +280,39 @@ function setSmartAutoColor(autoColor: boolean): void {
 
 /** Режимы умного корректора. */
 const SMART_MODE_OPTIONS = [
+  { value: 'keep-text', label: 'Умный корректор 2: буквы и фон' },
   { value: 'erase-all', label: 'Стереть всё под мазком' },
   { value: 'by-color', label: 'По цвету пипетки' },
   { value: 'retype', label: 'Стереть и вернуть текст (OCR)' },
   { value: 'keep-dark', label: 'Сохранять тёмное (порог)' },
 ];
+
+/** Выбранный цвет фона в режиме «Умный корректор 2». */
+const smartFillMode = computed<'paper' | 'custom'>(() =>
+  smartSettings.value?.fillColor ? 'custom' : 'paper',
+);
+
+/** Цвет фона под мазком: тон бумаги страницы или конкретный цвет. */
+function setSmartFillMode(value: string | number | null): void {
+  const object = single.value;
+  if (!object || object.type !== 'drawing' || !object.payload.smart) return;
+  const fillColor = value === 'custom' ? (object.payload.smart.fillColor ?? '#ffffff') : null;
+  objects.update(
+    object.id,
+    { payload: { smart: { ...object.payload.smart, fillColor } } },
+    'Цвет фона',
+  );
+}
+
+function setSmartFillColor(fillColor: string): void {
+  const object = single.value;
+  if (!object || object.type !== 'drawing' || !object.payload.smart) return;
+  objects.update(
+    object.id,
+    { payload: { smart: { ...object.payload.smart, fillColor } } },
+    'Цвет фона',
+  );
+}
 
 /** Текущий режим объекта (старые проекты выводят его из флагов). */
 const smartMode = computed<SmartEraseMode>(() => {
@@ -299,7 +327,15 @@ const smartMode = computed<SmartEraseMode>(() => {
 function setSmartMode(value: string | number | null): void {
   const object = single.value;
   if (!object || object.type !== 'drawing' || !object.payload.smart) return;
-  if (value !== 'erase-all' && value !== 'by-color' && value !== 'keep-dark' && value !== 'retype') return;
+  if (
+    value !== 'erase-all' &&
+    value !== 'by-color' &&
+    value !== 'keep-dark' &&
+    value !== 'retype' &&
+    value !== 'keep-text'
+  ) {
+    return;
+  }
   objects.update(
     object.id,
     { payload: { smart: { ...object.payload.smart, mode: value } } },
@@ -938,6 +974,7 @@ void scaleStrokes;
       >
         <template v-if="smartSettings">
           <AppToggle
+            v-if="smartMode !== 'keep-text'"
             label="Под цвет бумаги"
             :model-value="smartSettings.autoColor !== false"
             @update:model-value="setSmartAutoColor"
@@ -950,6 +987,29 @@ void scaleStrokes;
               :options="SMART_MODE_OPTIONS"
               @update:model-value="setSmartMode"
             />
+          </div>
+          <div v-if="smartMode === 'keep-text'" class="space-y-2" data-testid="object-smart2-fill">
+            <AppSelect
+              label="Цвет фона под мазком"
+              size="sm"
+              :model-value="smartFillMode"
+              :options="[
+                { value: 'paper', label: 'Цвет бумаги PDF' },
+                { value: 'custom', label: 'Выбранный цвет' },
+              ]"
+              @update:model-value="setSmartFillMode"
+            />
+            <AppColorPicker
+              v-if="smartFillMode === 'custom'"
+              label="Цвет заливки"
+              :model-value="smartSettings.fillColor ?? '#ffffff'"
+              @update:model-value="setSmartFillColor"
+            />
+            <p class="text-[11px] text-slate-400">
+              «Умный корректор 2» заливает весь фон под мазком сплошным цветом, а буквы
+              оставляет. Порог светлого здесь не нужен: деление на текст и фон идёт по
+              насыщенности и темноте пикселя.
+            </p>
           </div>
           <div
             v-if="smartMode === 'by-color'"
@@ -990,11 +1050,13 @@ void scaleStrokes;
             />
           </div>
           <AppColorPicker
+            v-if="smartMode !== 'keep-text'"
             :label="smartSettings.autoColor !== false ? 'Цвет заливки (вручную)' : 'Цвет заливки'"
             :model-value="smartSettings.color"
             @update:model-value="setSmartColor"
           />
           <AppSlider
+            v-if="smartMode !== 'keep-text'"
             label="Порог светлого"
             :model-value="smartSettings.threshold"
             :min="0"
@@ -1002,7 +1064,7 @@ void scaleStrokes;
             :step="5"
             @update:model-value="setSmartThreshold"
           />
-          <p class="text-[11px] text-slate-400">
+          <p v-if="smartMode !== 'keep-text'" class="text-[11px] text-slate-400">
             Закрашиваются только участки светлее порога — тёмный текст остаётся. Меньше порог —
             закрашивается больше.
           </p>
