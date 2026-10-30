@@ -249,7 +249,8 @@ try {
     }
     // Синяя печать под мазком должна уходить: считаем оставшиеся насыщенные
     // пиксели в полосе по центру штриха.
-    const inkObject = build({ threshold: 170, color: '#ffffff', autoColor: true, eraseAll: false, mode: 'keep-text', engine: 'model', fillColor: null, eraseColoredOverText: true });
+    // Стёртые цветные участки и сохранность чёрного текста в полосе мазка.
+    const inkObject = build({ threshold: 170, color: '#ffffff', autoColor: true, eraseAll: false, mode: 'keep-text', engine: 'model', fillColor: null });
     const inkMask = await maskService.getSmartMask({ object: inkObject, scale });
     const inkData = maskService.getSmartMaskPixels(inkMask) ?? inkMask.getContext('2d').getImageData(0, 0, inkMask.width, inkMask.height);
     const inkOriginX = Math.round(inkObject.x * scale);
@@ -260,6 +261,8 @@ try {
     const inkY1 = Math.round((218 - inkObject.y) * scale);
     let inkBand = 0;
     let inkLeft = 0;
+    let blackBand = 0;
+    let blackErased = 0;
     for (let y = Math.max(0, inkY0); y < Math.min(inkMask.height, inkY1); y += 1) {
       for (let x = Math.max(0, inkX0); x < Math.min(inkMask.width, inkX1); x += 1) {
         const index = ((inkOriginY + y) * pageCanvas.width + (inkOriginX + x)) * 4;
@@ -268,35 +271,21 @@ try {
         const pg = pageData[index + 1];
         const pb = pageData[index + 2];
         const lum = 0.299 * pr + 0.587 * pg + 0.114 * pb;
-        const max = Math.max(pr, pg, pb);
-        const min = Math.min(pr, pg, pb);
-        const sat = max === 0 ? 0 : (max - min) / max;
-        if (sat < 0.3 || lum >= 220) continue;
-        inkBand += 1;
-        if (inkData.data[(y * inkMask.width + x) * 4 + 3] === 0) inkLeft += 1;
+        const chroma = Math.max(pr, pg, pb) - Math.min(pr, pg, pb);
+        const alpha = inkData.data[(y * inkMask.width + x) * 4 + 3];
+        // Краска: заметная хрома (синий оттиск), а не серое.
+        if (chroma >= 60 && lum < 240) {
+          inkBand += 1;
+          if (alpha === 0) inkLeft += 1;
+        }
+        // Чёрный текст: тёмное и почти без хромы — должен остаться нетронутым.
+        if (chroma < 35 && lum < 150) {
+          blackBand += 1;
+          if (alpha > 0) blackErased += 1;
+        }
       }
     }
-    // То же без очистки краски — для сравнения.
-    const keepObject = build({ threshold: 170, color: '#ffffff', autoColor: true, eraseAll: false, mode: 'keep-text', engine: 'model', fillColor: null, eraseColoredOverText: false });
-    const keepMask = await maskService.getSmartMask({ object: keepObject, scale });
-    const keepData = maskService.getSmartMaskPixels(keepMask) ?? keepMask.getContext('2d').getImageData(0, 0, keepMask.width, keepMask.height);
-    let inkLeftKeep = 0;
-    for (let y = Math.max(0, inkY0); y < Math.min(keepMask.height, inkY1); y += 1) {
-      for (let x = Math.max(0, inkX0); x < Math.min(keepMask.width, inkX1); x += 1) {
-        const index = ((inkOriginY + y) * pageCanvas.width + (inkOriginX + x)) * 4;
-        if (index < 0 || index >= pageData.length) continue;
-        const pr = pageData[index];
-        const pg = pageData[index + 1];
-        const pb = pageData[index + 2];
-        const lum = 0.299 * pr + 0.587 * pg + 0.114 * pb;
-        const max = Math.max(pr, pg, pb);
-        const min = Math.min(pr, pg, pb);
-        const sat = max === 0 ? 0 : (max - min) / max;
-        if (sat < 0.3 || lum >= 220) continue;
-        if (keepData.data[(y * keepMask.width + x) * 4 + 3] === 0) inkLeftKeep += 1;
-      }
-    }
-    return { custom, paper, ink, transparentPixels, transparentBlack, bandPixels, unfilledLight, inkBand, inkLeft, inkLeftKeep };
+    return { custom, paper, ink, transparentPixels, transparentBlack, bandPixels, unfilledLight, inkBand, inkLeft, blackBand, blackErased };
   })()`);
   console.log('  прозрачные пиксели маски:', JSON.stringify({ transparentPixels: stats.transparentPixels, transparentBlack: stats.transparentBlack }));
   check(
@@ -304,30 +293,30 @@ try {
     stats.transparentBlack === 0 && stats.transparentPixels > 1000,
     JSON.stringify({ transparentPixels: stats.transparentPixels, transparentBlack: stats.transparentBlack }),
   );
-  console.log('  незакрашенный светлый фон в полосе:', JSON.stringify({ bandPixels: stats.bandPixels, unfilledLight: stats.unfilledLight }));
-  // Порог 5 %: остаток — сглаженный край самих букв (светло-серые пиксели
-  // обводки глифов), а не фон. Раньше здесь было до 40 % фона из-за ореола
-  // вокруг текста, который защищался как часть буквы.
-  check(
-    'фон под мазком закрашен (остаётся только край букв)',
-    stats.bandPixels > 1000 && stats.unfilledLight / stats.bandPixels < 0.05,
-    JSON.stringify({ bandPixels: stats.bandPixels, unfilledLight: stats.unfilledLight }),
-  );
   console.log(
-    '  синяя печать в полосе:',
-    JSON.stringify({ inkBand: stats.inkBand, inkLeft: stats.inkLeft, withoutErase: stats.inkLeftKeep }),
+    '  печать и чёрный текст в полосе:',
+    JSON.stringify({ inkBand: stats.inkBand, inkLeft: stats.inkLeft, blackBand: stats.blackBand, blackErased: stats.blackErased }),
   );
-  // Сравнение двух режимов: с очисткой краски синей печати остаётся втрое меньше.
+  // Главное обещание инструмента: цветное уходит, чёрное остаётся как было.
   check(
     'цветная краска под мазком удаляется',
-    stats.inkBand > 100 && stats.inkLeft * 3 < stats.inkLeftKeep,
-    JSON.stringify({ inkBand: stats.inkBand, inkLeft: stats.inkLeft, withoutErase: stats.inkLeftKeep }),
+    stats.inkBand > 100 && stats.inkLeft / stats.inkBand < 0.1,
+    JSON.stringify({ inkBand: stats.inkBand, inkLeft: stats.inkLeft }),
+  );
+  check(
+    'чёрный текст не меняется (потери < 0.5 %)',
+    stats.blackBand > 100 && stats.blackErased / stats.blackBand < 0.005,
+    JSON.stringify({ blackBand: stats.blackBand, blackErased: stats.blackErased }),
   );
   console.log('  свой цвет:', JSON.stringify(stats.custom));
   console.log('  цвет бумаги:', JSON.stringify(stats.paper));
-  check('маска построена', Boolean(stats.custom?.opaque > 1000), JSON.stringify(stats.custom));
   check(
-    'фон заливается выбранным цветом (#e11d48)',
+    'маска заполняет стёртые цветные участки',
+    Boolean(stats.custom?.opaque > 100),
+    JSON.stringify(stats.custom?.opaque),
+  );
+  check(
+    'стёртые участки заливаются выбранным цветом (#e11d48)',
     Boolean(stats.custom?.fill) &&
       Math.abs(stats.custom.fill[0] - 225) <= 3 &&
       Math.abs(stats.custom.fill[1] - 29) <= 3 &&
@@ -335,17 +324,7 @@ try {
     JSON.stringify(stats.custom?.fill),
   );
   check(
-    'буквы сохраняются (потери < 0.5 %)',
-    (stats.paper?.killedShare ?? 1) < 0.005,
-    JSON.stringify(stats.paper),
-  );
-  check(
-    'режим «стирать краску поверх букв» убирает оттиск (потери < 2 %)',
-    (stats.ink?.killedShare ?? 1) < 0.02,
-    JSON.stringify(stats.ink),
-  );
-  check(
-    'режим «цвет бумаги» даёт светлую заливку',
+    'режим «цвет бумаги» заливает светлым тоном',
     Boolean(stats.paper?.fill) && stats.paper.fill[0] > 230,
     JSON.stringify(stats.paper?.fill),
   );

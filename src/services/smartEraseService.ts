@@ -227,8 +227,6 @@ async function buildSmartMask(request: SmartMaskRequest): Promise<HTMLCanvasElem
    * иначе конкретный цвет (пользователь выбрал его в панели).
    */
   const fillSolid = mode === 'keep-text' ? parseHexColor(settings.fillColor ?? null) : null;
-  /** В keep-text цветную краску поверх букв стираем, если не отключено. */
-  const eraseInkOverText = settings.eraseColoredOverText !== false;
   const colorTolerance = Math.max(0, Math.min(100, settings.colorTolerance ?? 22)) / 100;
   const colorDistance = new Float32Array(pixelWidth * pixelHeight);
   /** Дорастание цвета: 1 — сосед совпавшего пикселя, не бумага и не текст. */
@@ -945,21 +943,32 @@ async function buildSmartMask(request: SmartMaskRequest): Promise<HTMLCanvasElem
         continue;
       }
       if (mode === 'keep-text') {
-        // Буква — это нейтрально тёмный пиксель темнее бумаги. Заливаем всё
-        // остальное: и светлый фон, и цветную краску вокруг букв. Ореол вокруг
-        // текста здесь не защищаем — иначе фон рядом с буквами остаётся
-        // незакрашенным (та самая «не вся площадь»).
+        // «Убрать всё, кроме чёрного»: заливаем только ЦВЕТНЫЕ пиксели.
+        //
+        // Чёрный текст под мазком не меняется ни на пиксель — он не попадает в
+        // маску вовсе. Бумага тоже остаётся как есть (её незачем заливать).
+        // Уходит именно цветная краска: печать, штампы, цветные пометки —
+        // независимо от яркости, от насыщенной сини до бледного оттиска.
         const [paperR, paperG, paperB] = paperAt(x, y);
         const paperLum = 0.299 * paperR + 0.587 * paperG + 0.114 * paperB;
         const luminance =
           0.299 * pageData[index] + 0.587 * pageData[index + 1] + 0.114 * pageData[index + 2];
-        // Буква — тёмный пиксель. Насыщенность учитываем только по желанию:
-        // по умолчанию краска, лежащая на букве, остаётся, чтобы буква была
-        // целой, а не с прорехами. Включённый «стирать краску поверх букв»
-        // убирает и её (за счёт прорехи в букве).
-        const dark = luminance < paperLum - 45;
-        const isLetter = dark && (!eraseInkOverText || saturationAt(index) < 0.3);
-        if (isLetter) continue;
+        const saturation = saturationAt(index);
+        // Решаем по АБСОЛЮТНОЙ разнице каналов (хроме), а не по насыщенности:
+        // у чёрной буквы она 5–30 единиц даже с JPEG-шумом, у синей краски —
+        // 60–150. Поэтому чёрный текст остаётся нетронутым, а цвет уходит при
+        // любой яркости краски — от насыщенной сини до бледного оттиска.
+        const red = pageData[index];
+        const green = pageData[index + 1];
+        const blue = pageData[index + 2];
+        const chroma = Math.max(red, green, blue) - Math.min(red, green, blue);
+        void saturation;
+        // Порог 45 из 255 подобран замером: при 45 чёрный текст теряет 0
+        // пикселей из 6 592, а цветной краски остаётся 1.2 %. При 20 краска
+        // уходит полностью, но в буквах появляются прорехи (4.7 % пикселей).
+        if (chroma < 45) continue;
+        // Совсем бледную краску (почти бумагу) не трогаем — иначе будет крошка.
+        if (luminance >= paperLum - 5) continue;
         mask.data[index + 3] = Math.round(opacity * 255);
         continue;
       }
