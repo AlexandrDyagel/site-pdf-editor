@@ -590,6 +590,8 @@ function addFromCanvas(
                 // Модель даёт лучшую защиту букв; без неё работает классика.
                 engine: smart2Options.useModel === true ? 'model' : 'adaptive',
                 fillColor: smart2Options.fill === 'custom' ? smart2Options.fillColor : null,
+                chromaLight: smart2Options.chromaLight,
+                chromaDark: smart2Options.chromaDark,
                 eraseColoredOverText: smart2Options.eraseColoredOverText === true,
                 sensitivity: 55,
               }

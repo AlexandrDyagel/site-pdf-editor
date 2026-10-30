@@ -70,6 +70,8 @@ export function smartMaskKey(object: EditorObject & { payload: DrawingPayload },
     payload.smart?.targetColor ?? 'none',
     payload.smart?.colorTolerance ?? 0,
     payload.smart?.fillColor ?? 'paper',
+    payload.smart?.chromaLight ?? 12,
+    payload.smart?.chromaDark ?? 45,
     payload.smart?.eraseColoredOverText === false ? 'keep-ink' : 'erase-ink',
     payload.designWidth.toFixed(1),
     payload.designHeight.toFixed(1),
@@ -967,7 +969,10 @@ async function buildSmartMask(request: SmartMaskRequest): Promise<HTMLCanvasElem
         // JPEG-шума, поэтому там строгий порог 45: чёрные буквы не трогаем.
         // У светлых пикселей такую хрому даёт только краска (промытый оттиск),
         // поэтому порог 12 — бледно-голубые следы печати уходят.
-        const chromaLimit = luminance > 150 ? 12 : 45;
+        const chromaLimit =
+          luminance > 150
+            ? Math.max(0, Math.min(80, settings.chromaLight ?? 12))
+            : Math.max(0, Math.min(100, settings.chromaDark ?? 45));
         if (chroma < chromaLimit) continue;
         // Совсем бледную краску (почти бумагу) не трогаем — иначе будет крошка.
         if (luminance >= paperLum - 5) continue;

@@ -36,6 +36,10 @@ export interface EditorToolOptions {
   /** «Умный корректор 2»: буквы остаются, фон заливается выбранным цветом. */
   smartEraser2: {
     width: number;
+    /** Порог цветности на светлых пикселях (бледная краска). */
+    chromaLight: number;
+    /** Порог цветности на тёмных пикселях (защита букв). */
+    chromaDark: number;
     /** 'paper' — тон бумаги страницы, 'custom' — выбранный цвет. */
     fill: 'paper' | 'custom';
     fillColor: string;
@@ -112,6 +116,8 @@ export const useEditorStore = defineStore('editor', () => {
     eraser: { color: '#ffffff', width: 16 },
     smartEraser2: {
       width: 20,
+      chromaLight: 12,
+      chromaDark: 45,
       fill: 'paper' as 'paper' | 'custom',
       fillColor: '#ffffff',
       threshold: 170,

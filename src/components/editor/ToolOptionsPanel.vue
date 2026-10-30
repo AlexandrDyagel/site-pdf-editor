@@ -213,6 +213,32 @@ const documentFontsUsed = computed(() => {
           label="Распознавать текст моделью"
           @update:model-value="editor.toolOptions.smartEraser2.useModel = $event"
         />
+        <div data-testid="smart2-chroma-light">
+          <AppSlider
+            v-model="editor.toolOptions.smartEraser2.chromaLight"
+            label="Порог цвета на светлом"
+            unit=""
+            :min="0"
+            :max="80"
+            :step="1"
+          />
+        </div>
+        <div data-testid="smart2-chroma-dark">
+          <AppSlider
+            v-model="editor.toolOptions.smartEraser2.chromaDark"
+            label="Порог цвета на тёмном"
+            unit=""
+            :min="0"
+            :max="100"
+            :step="1"
+          />
+        </div>
+        <p class="text-[11px] text-slate-400">
+          «Порог цвета на светлом» — сколько цвета нужно в светлом пикселе, чтобы счесть
+          его краской: меньше порог — уходит больше бледных следов печати. «Порог цвета
+          на тёмном» — защита букв: больше порог — текст остаётся целым даже там, где на
+          нём лежит краска.
+        </p>
         <p class="text-[11px] text-slate-400">
           Проведите по тексту: под мазком исчезает всё ЦВЕТНОЕ — печать, штампы, пометки
           любого оттенка и яркости. Чёрный текст и бумага остаются ровно такими, какими

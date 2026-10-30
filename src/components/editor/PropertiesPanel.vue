@@ -304,7 +304,29 @@ function setSmartFillMode(value: string | number | null): void {
   );
 }
 
-function setSmartFillColor(fillColor: string): void {
+/** Порог цветности для светлых пикселей (бледная краска). */
+  function setSmartChromaLight(value: number): void {
+    const object = single.value;
+    if (!object || object.type !== 'drawing' || !object.payload.smart) return;
+    objects.update(
+      object.id,
+      { payload: { smart: { ...object.payload.smart, chromaLight: Math.round(value) } } },
+      'Порог цвета',
+    );
+  }
+
+  /** Порог цветности для тёмных пикселей (защита букв). */
+  function setSmartChromaDark(value: number): void {
+    const object = single.value;
+    if (!object || object.type !== 'drawing' || !object.payload.smart) return;
+    objects.update(
+      object.id,
+      { payload: { smart: { ...object.payload.smart, chromaDark: Math.round(value) } } },
+      'Порог цвета',
+    );
+  }
+
+  function setSmartFillColor(fillColor: string): void {
   const object = single.value;
   if (!object || object.type !== 'drawing' || !object.payload.smart) return;
   objects.update(
@@ -1005,10 +1027,32 @@ void scaleStrokes;
               :model-value="smartSettings.fillColor ?? '#ffffff'"
               @update:model-value="setSmartFillColor"
             />
+            <div data-testid="object-smart2-chroma-light">
+              <AppSlider
+                label="Порог цвета на светлом"
+                unit=""
+                :min="0"
+                :max="80"
+                :step="1"
+                :model-value="smartSettings.chromaLight ?? 12"
+                @update:model-value="setSmartChromaLight"
+              />
+            </div>
+            <div data-testid="object-smart2-chroma-dark">
+              <AppSlider
+                label="Порог цвета на тёмном"
+                unit=""
+                :min="0"
+                :max="100"
+                :step="1"
+                :model-value="smartSettings.chromaDark ?? 45"
+                @update:model-value="setSmartChromaDark"
+              />
+            </div>
             <p class="text-[11px] text-slate-400">
-              «Умный корректор 2» заливает весь фон под мазком сплошным цветом, а буквы
-              оставляет. Порог светлого здесь не нужен: деление на текст и фон идёт по
-              насыщенности и темноте пикселя.
+              Под мазком исчезает всё цветное, чёрные буквы остаются нетронутыми. Меньше
+              «порог на светлом» — уходит больше бледной краски. Больше «порог на тёмном» —
+              буквы сохраняются даже там, где на них лежит краска.
             </p>
           </div>
           <div

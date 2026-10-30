@@ -308,6 +308,71 @@ try {
     stats.blackBand > 100 && stats.blackErased / stats.blackBand < 0.005,
     JSON.stringify({ blackBand: stats.blackBand, blackErased: stats.blackErased }),
   );
+  await cdp.evaluate(`(() => {
+    const app = window.__PDF_EDITOR__;
+    app.editor.setTool('smart-eraser-2');
+    app.ui.setRightTab('tool');
+    return 'ok';
+  })()`);
+  await sleep(1200);
+  const sliders = await cdp.evaluate(`(() => {
+    const app = window.__PDF_EDITOR__;
+    return {
+      light: Boolean(document.querySelector('[data-testid=smart2-chroma-light]')),
+      dark: Boolean(document.querySelector('[data-testid=smart2-chroma-dark]')),
+      values: { light: app.editor.toolOptions.smartEraser2.chromaLight, dark: app.editor.toolOptions.smartEraser2.chromaDark },
+    };
+  })()`);
+  console.log('  ползунки порогов:', JSON.stringify(sliders));
+  check('в панели есть ползунок порога на светлом', sliders.light === true, String(sliders.light));
+  check('в панели есть ползунок порога на тёмном', sliders.dark === true, String(sliders.dark));
+  check('по умолчанию 12 и 45', sliders.values.light === 12 && sliders.values.dark === 45, JSON.stringify(sliders.values));
+
+  // Пороги действительно влияют на маску: ниже порог — меньше краски остаётся.
+  const tuning = await cdp.evaluate(`(async () => {
+    const app = window.__PDF_EDITOR__;
+    const factory = await import('/src/services/objectFactory.ts');
+    const maskService = await import('/src/services/smartEraseService.ts');
+    const scale = 300 / 72;
+    const strokes = () => [{
+      tool: 'smart-eraser', color: '#ffffff', width: 40, opacity: 1, smooth: false,
+      points: [
+        { x: 95, y: 211, pressure: 0.5, time: 0 },
+        { x: 160, y: 211, pressure: 0.5, time: 8 },
+        { x: 225, y: 211, pressure: 0.5, time: 16 },
+      ],
+    }];
+    const measure = async (chromaLight, chromaDark) => {
+      const object = factory.createDrawingObject(strokes(), {
+        page: 0,
+        smart: { threshold: 170, color: '#ffffff', autoColor: true, eraseAll: false, mode: 'keep-text', engine: 'model', fillColor: null, chromaLight, chromaDark },
+        name: 'тест',
+      });
+      maskService.clearSmartMaskCache();
+      const mask = await maskService.getSmartMask({ object, scale });
+      const data = mask.getContext('2d').getImageData(0, 0, mask.width, mask.height).data;
+      let opaque = 0;
+      for (let index = 0; index < data.length; index += 4) if (data[index + 3] > 120) opaque += 1;
+      return opaque;
+    };
+    return {
+      low: await measure(4, 45),
+      high: await measure(60, 45),
+      darkLow: await measure(12, 10),
+      darkHigh: await measure(12, 90),
+    };
+  })()`);
+  console.log('  маска при разных порогах:', JSON.stringify(tuning));
+  check(
+    'меньше порог на светлом — стирается больше',
+    tuning.low > tuning.high,
+    JSON.stringify(tuning),
+  );
+  check(
+    'больше порог на тёмном — стирается меньше (буквы защищены)',
+    tuning.darkHigh < tuning.darkLow,
+    JSON.stringify(tuning),
+  );
   console.log('  свой цвет:', JSON.stringify(stats.custom));
   console.log('  цвет бумаги:', JSON.stringify(stats.paper));
   check(
