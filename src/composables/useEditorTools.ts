@@ -477,6 +477,7 @@ function addFromCanvas(
       case 'marker':
       case 'eraser':
       case 'smart-eraser':
+      case 'smart-eraser-2':
       case 'bg-cleaner':
         editor.startStroke(pointToStroke(point, event.evt));
         break;
@@ -569,15 +570,31 @@ function addFromCanvas(
       const stroke = editor.takeStroke();
       if (stroke && stroke.points.length > 0) {
         const isSmart = stroke.tool === 'smart-eraser';
+        // «Умный корректор 2»: буквы остаются, фон становится выбранным цветом.
+        const isSmart2 = editor.tool === 'smart-eraser-2';
         // «Очистка фона»: тот же объект, но маска считается адаптивным движком.
         const isBgCleaner = editor.tool === 'bg-cleaner';
         const smartOptions = editor.toolOptions.smartEraser;
         const bgOptions = editor.toolOptions.bgCleaner;
+        const smart2Options = editor.toolOptions.smartEraser2;
         const drawing = createDrawingObject([stroke], {
           page: editor.currentPage,
           eraser: stroke.tool === 'eraser',
-          smart: isBgCleaner
+          smart: isSmart2
             ? {
+                threshold: smart2Options.threshold,
+                color: smart2Options.fill === 'custom' ? smart2Options.fillColor : '#ffffff',
+                autoColor: smart2Options.fill !== 'custom',
+                eraseAll: false,
+                mode: 'keep-text',
+                // Модель даёт лучшую защиту букв; без неё работает классика.
+                engine: smart2Options.useModel === true ? 'model' : 'adaptive',
+                fillColor: smart2Options.fill === 'custom' ? smart2Options.fillColor : null,
+                eraseColoredOverText: smart2Options.eraseColoredOverText === true,
+                sensitivity: 55,
+              }
+            : isBgCleaner
+              ? {
                 threshold: bgOptions.threshold,
                 color: bgOptions.color,
                 autoColor: bgOptions.autoColor !== false,
@@ -597,11 +614,13 @@ function addFromCanvas(
                   mode: smartOptions.mode ?? 'erase-all',
                 }
               : null,
-          name: isBgCleaner
-            ? 'Очистка фона'
-            : isSmart
-              ? 'Умный корректор'
-              : stroke.tool === 'eraser'
+          name: isSmart2
+            ? 'Умный корректор 2'
+            : isBgCleaner
+              ? 'Очистка фона'
+              : isSmart
+                ? 'Умный корректор'
+                : stroke.tool === 'eraser'
                 ? 'Корректор'
                 : 'Рисунок',
         });
@@ -611,13 +630,15 @@ function addFromCanvas(
           const isMasking = stroke.tool === 'eraser';
           addFromCanvas(
             [drawing],
-            isBgCleaner
-              ? 'Очистка фона'
-              : isSmart
-                ? 'Осветление'
-                : stroke.tool === 'eraser'
-                  ? 'Стирание'
-                  : 'Рисование',
+            isSmart2
+              ? 'Умный корректор 2'
+              : isBgCleaner
+                ? 'Очистка фона'
+                : isSmart
+                  ? 'Осветление'
+                  : stroke.tool === 'eraser'
+                    ? 'Стирание'
+                    : 'Рисование',
             // Закрашенное не выделяем: рамки после штриха быть не должно.
             { select: !isMasking, openProperties: !isMasking },
           );

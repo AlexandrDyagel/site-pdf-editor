@@ -31,6 +31,7 @@ export type ToolType =
   | 'marker'
   | 'eraser'
   | 'smart-eraser'
+  | 'smart-eraser-2'
   | 'bg-cleaner'
   | 'whiteout'
   | 'highlight'
@@ -234,6 +235,11 @@ export type SmartEraseMode =
   | 'erase-all'
   | 'by-color'
   | 'keep-dark'
+  /**
+   * «Умный корректор 2»: буквы остаются, всё остальное под мазком заливается
+   * выбранным цветом или тоном бумаги страницы.
+   */
+  | 'keep-text'
   /** Стереть всё и набрать текст заново по распознанным строкам. */
   | 'retype';
 
@@ -276,6 +282,13 @@ export interface SmartEraseSettings {
   engine?: 'simple' | 'adaptive' | 'model';
   /** Чувствительность адаптивного порога, 0–100 (выше — больше считается фоном). */
   sensitivity?: number;
+  /**
+   * Цвет заливки в режиме `keep-text`: `null` — тон бумаги страницы,
+   * иначе конкретный цвет в #rrggbb.
+   */
+  fillColor?: string | null;
+  /** Стирать ли цветную краску, лежащую поверх букв (по умолчанию да). */
+  eraseColoredOverText?: boolean;
   /**
    * Режим работы.
    *

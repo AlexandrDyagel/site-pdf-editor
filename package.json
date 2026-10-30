@@ -44,6 +44,7 @@
     "check:bundled-fonts": "node scripts/make-test-pdf.mjs && node scripts/check-bundled-fonts.mjs",
     "check:projects": "node scripts/make-test-pdf.mjs && node scripts/check-projects.mjs",
     "check:smart-eraser": "node scripts/make-test-pdf.mjs && node scripts/check-smart-eraser.mjs",
+    "check:smart-eraser2": "node scripts/check-smart-eraser2.mjs",
     "check:eyedropper": "node scripts/make-test-pdf.mjs && node scripts/check-eyedropper.mjs",
     "check:stroke-width": "node scripts/make-test-pdf.mjs && node scripts/check-stroke-width.mjs",
     "check:eraser-drag": "node scripts/make-test-pdf.mjs && node scripts/check-eraser-drag.mjs",
@@ -53,7 +54,7 @@
     "check:text-model": "node scripts/check-text-model.mjs",
     "check:text-retype": "node scripts/check-text-retype.mjs",
     "check:masking-selection": "node scripts/make-test-pdf.mjs && node scripts/check-masking-selection.mjs",
-    "check:all": "pnpm typecheck && pnpm verify && pnpm check:components && pnpm check:workflow && pnpm check:interaction && pnpm check:corrector && pnpm check:rotation && pnpm check:user-font && pnpm check:font-ui && pnpm check:layout && pnpm check:tooltips && pnpm check:hotkeys && pnpm check:canvas-tools && pnpm check:layer-order && pnpm check:shape-styles && pnpm check:shapes-extra && pnpm check:history && pnpm check:drop-toast && pnpm check:export-pages && pnpm check:text-inline && pnpm check:transform && pnpm check:groups && pnpm check:font-embed && pnpm check:bundled-fonts && pnpm check:projects && pnpm check:smart-eraser && pnpm check:eyedropper && pnpm check:stroke-width && pnpm check:eraser-drag && pnpm check:masking-selection && pnpm check:space-pan && pnpm check:smart-color && pnpm check:bg-cleaner && pnpm check:text-model && pnpm check:text-retype"
+    "check:all": "pnpm typecheck && pnpm verify && pnpm check:components && pnpm check:workflow && pnpm check:interaction && pnpm check:corrector && pnpm check:rotation && pnpm check:user-font && pnpm check:font-ui && pnpm check:layout && pnpm check:tooltips && pnpm check:hotkeys && pnpm check:canvas-tools && pnpm check:layer-order && pnpm check:shape-styles && pnpm check:shapes-extra && pnpm check:history && pnpm check:drop-toast && pnpm check:export-pages && pnpm check:text-inline && pnpm check:transform && pnpm check:groups && pnpm check:font-embed && pnpm check:bundled-fonts && pnpm check:projects && pnpm check:smart-eraser && pnpm check:eyedropper && pnpm check:stroke-width && pnpm check:eraser-drag && pnpm check:masking-selection && pnpm check:space-pan && pnpm check:smart-eraser2 && pnpm check:smart-color && pnpm check:bg-cleaner && pnpm check:text-model && pnpm check:text-retype"
   },
   "pnpm": {
     "onlyBuiltDependencies": [

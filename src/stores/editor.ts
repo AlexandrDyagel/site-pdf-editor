@@ -33,6 +33,16 @@ export interface EditorToolOptions {
   eraser: { color: string; width: number };
   smartEraser: SmartEraseSettings & { width: number };
   /** «Очистка фона»: адаптивный порог + фильтр компонентов. */
+  /** «Умный корректор 2»: буквы остаются, фон заливается выбранным цветом. */
+  smartEraser2: {
+    width: number;
+    /** 'paper' — тон бумаги страницы, 'custom' — выбранный цвет. */
+    fill: 'paper' | 'custom';
+    fillColor: string;
+    threshold: number;
+    useModel: boolean;
+    eraseColoredOverText: boolean;
+  };
   bgCleaner: {
     width: number;
     color: string;
@@ -100,6 +110,15 @@ export const useEditorStore = defineStore('editor', () => {
     draw: { color: '#1d4ed8', width: 2, opacity: 1, smooth: true },
     marker: { color: '#facc15', width: 12, opacity: 0.35 },
     eraser: { color: '#ffffff', width: 16 },
+    smartEraser2: {
+      width: 20,
+      fill: 'paper' as 'paper' | 'custom',
+      fillColor: '#ffffff',
+      threshold: 170,
+      useModel: true,
+      // По умолчанию буквы сохраняются целиком: краску поверх них не трогаем.
+      eraseColoredOverText: false,
+    },
     bgCleaner: {
       width: 24,
       color: '#ffffff',
@@ -149,7 +168,7 @@ export const useEditorStore = defineStore('editor', () => {
 
   const zoomPercent = computed(() => Math.round(zoom.value * 100));
   const isDrawingTool = computed(() =>
-    ['brush', 'marker', 'eraser', 'smart-eraser', 'bg-cleaner'].includes(tool.value),
+    ['brush', 'marker', 'eraser', 'smart-eraser', 'smart-eraser-2', 'bg-cleaner'].includes(tool.value),
   );
   const isShapeTool = computed(() =>
     ['rect', 'ellipse', 'triangle', 'polygon', 'line', 'arrow', 'whiteout'].includes(tool.value),
@@ -181,6 +200,14 @@ export const useEditorStore = defineStore('editor', () => {
             tool: 'smart-eraser',
             color: toolOptions.value.smartEraser.color,
             width: toolOptions.value.smartEraser.width,
+            opacity: 1,
+          };
+        case 'smart-eraser-2':
+          return {
+            // Штрих рисуем как у корректора: постоянная ширина, без «пера».
+            tool: 'smart-eraser',
+            color: '#ffffff',
+            width: toolOptions.value.smartEraser2.width,
             opacity: 1,
           };
         case 'bg-cleaner':

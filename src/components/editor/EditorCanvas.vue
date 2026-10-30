@@ -59,7 +59,14 @@ const cursorClass = computed(() => {
 /* ======================== Курсор-кружок кисти ======================== */
 
 /** Инструменты, у которых есть размер кисти. */
-const BRUSH_TOOLS = new Set(['brush', 'marker', 'eraser', 'smart-eraser', 'bg-cleaner']);
+const BRUSH_TOOLS = new Set([
+  'brush',
+  'marker',
+  'eraser',
+  'smart-eraser',
+  'smart-eraser-2',
+  'bg-cleaner',
+]);
 
 /** Положение указателя внутри рабочей области (в пикселях экрана). */
 const pointer = ref<{ x: number; y: number } | null>(null);
@@ -73,6 +80,7 @@ const brushWidth = computed(() => {
   if (editor.tool === 'eraser') return options.eraser.width;
   if (editor.tool === 'smart-eraser') return options.smartEraser.width;
   if (editor.tool === 'bg-cleaner') return options.bgCleaner.width;
+  if (editor.tool === 'smart-eraser-2') return options.smartEraser2.width;
   return 0;
 });
 

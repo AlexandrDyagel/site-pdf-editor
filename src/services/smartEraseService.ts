@@ -69,6 +69,8 @@ export function smartMaskKey(object: EditorObject & { payload: DrawingPayload },
     payload.smart?.sensitivity ?? 0,
     payload.smart?.targetColor ?? 'none',
     payload.smart?.colorTolerance ?? 0,
+    payload.smart?.fillColor ?? 'paper',
+    payload.smart?.eraseColoredOverText === false ? 'keep-ink' : 'erase-ink',
     payload.designWidth.toFixed(1),
     payload.designHeight.toFixed(1),
     strokeSignature,
@@ -209,6 +211,13 @@ async function buildSmartMask(request: SmartMaskRequest): Promise<HTMLCanvasElem
     settings.mode ??
     (settings.targetColor ? 'by-color' : settings.eraseAll === true ? 'erase-all' : 'keep-dark');
   const target = mode === 'by-color' ? parseHexColor(settings.targetColor ?? null) : null;
+  /**
+   * Цвет заливки для «Умного корректора 2»: null — тон бумаги страницы,
+   * иначе конкретный цвет (пользователь выбрал его в панели).
+   */
+  const fillSolid = mode === 'keep-text' ? parseHexColor(settings.fillColor ?? null) : null;
+  /** В keep-text цветную краску поверх букв стираем, если не отключено. */
+  const eraseInkOverText = settings.eraseColoredOverText !== false;
   const colorTolerance = Math.max(0, Math.min(100, settings.colorTolerance ?? 22)) / 100;
   const colorDistance = new Float32Array(pixelWidth * pixelHeight);
   /** Дорастание цвета: 1 — сосед совпавшего пикселя, не бумага и не текст. */
@@ -886,7 +895,10 @@ async function buildSmartMask(request: SmartMaskRequest): Promise<HTMLCanvasElem
       const index = (y * pixelWidth + x) * 4;
       const coverage = shapeData[index + 3];
       if (coverage === 0) continue;
-      const [red, green, blue] = paperAt(x, y);
+      const [paperRed, paperGreen, paperBlue] = paperAt(x, y);
+      const red = fillSolid ? fillSolid.r : paperRed;
+      const green = fillSolid ? fillSolid.g : paperGreen;
+      const blue = fillSolid ? fillSolid.b : paperBlue;
       // Цвет заливки пишем во все пиксели под штрихом, включая прозрачные:
       // у частично прозрачного края иначе остаётся чёрный RGB, и в PDF вокруг
       // закрашенной области появляется тёмная кайма.
@@ -901,6 +913,15 @@ async function buildSmartMask(request: SmartMaskRequest): Promise<HTMLCanvasElem
         const matched =
           colorDistance[pixel] <= colorTolerance || (targetGrown && targetGrown[pixel] === 1);
         if (matched) mask.data[index + 3] = Math.round(opacity * 255);
+        continue;
+      }
+      if (mode === 'keep-text') {
+        const pixel = y * pixelWidth + x;
+        const isProtectedText = protect ? protect[pixel] === 1 : false;
+        const isInk = isColoredPixel(x, y);
+        // Буква остаётся видимой; краску поверх буквы стираем, если так задано.
+        if (isProtectedText && !(eraseInkOverText && isInk)) continue;
+        mask.data[index + 3] = Math.round(opacity * 255);
         continue;
       }
       if (protect && protect[y * pixelWidth + x] && !isColoredPixel(x, y)) continue;

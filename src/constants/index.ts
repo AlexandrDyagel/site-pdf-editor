@@ -187,6 +187,14 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
     hint: 'Адаптивно убирает фон под мазком, оставляя текст',
   },
   {
+    id: 'smart-eraser-2',
+    label: 'Умный корректор 2',
+    icon: 'magicEraser',
+    shortcut: 'J',
+    group: 'draw',
+    hint: 'Буквы остаются, фон под мазком становится выбранным цветом или цветом бумаги',
+  },
+  {
     id: 'whiteout',
     label: 'Закрасить',
     icon: 'whiteout',

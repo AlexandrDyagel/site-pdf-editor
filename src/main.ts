@@ -16,6 +16,7 @@ import { useUiStore } from '@/stores/ui';
 import { useExportStore } from '@/stores/export';
 import { useSettingsStore } from '@/stores/settings';
 import { useHistoryStore } from '@/stores/history';
+import { pdfService } from '@/services/pdfService';
 
 const app = createApp(App);
 
@@ -45,6 +46,9 @@ if (import.meta.env.DEV) {
     exporter: useExportStore(),
     settings: useSettingsStore(),
     history: useHistoryStore(),
+    // Сервисы: нужны проверкам, чтобы рендерить страницу тем же экземпляром,
+    // что и приложение (иначе динамический импорт даёт вторую копию модуля).
+    pdfService,
   };
 }
 

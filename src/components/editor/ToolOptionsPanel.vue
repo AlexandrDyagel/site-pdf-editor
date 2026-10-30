@@ -182,6 +182,51 @@ const documentFontsUsed = computed(() => {
         </p>
       </template>
 
+      <template v-else-if="editor.tool === 'smart-eraser-2'">
+        <AppSlider
+          v-model="editor.toolOptions.smartEraser2.width"
+          label="Ширина штриха"
+          unit="pt"
+          :min="0.2"
+          :max="80"
+          :step="0.1"
+          :precision="1"
+        />
+        <div data-testid="smart2-fill">
+          <AppSelect
+            v-model="editor.toolOptions.smartEraser2.fill"
+            label="Цвет фона под мазком"
+            size="sm"
+            :options="[
+              { value: 'paper', label: 'Цвет бумаги PDF' },
+              { value: 'custom', label: 'Выбранный цвет' },
+            ]"
+          />
+        </div>
+        <AppColorPicker
+          v-if="editor.toolOptions.smartEraser2.fill === 'custom'"
+          v-model="editor.toolOptions.smartEraser2.fillColor"
+          label="Цвет заливки"
+        />
+        <AppToggle
+          :model-value="editor.toolOptions.smartEraser2.useModel === true"
+          label="Распознавать текст моделью"
+          @update:model-value="editor.toolOptions.smartEraser2.useModel = $event"
+        />
+        <AppToggle
+          :model-value="editor.toolOptions.smartEraser2.eraseColoredOverText === true"
+          label="Стирать краску поверх букв"
+          @update:model-value="editor.toolOptions.smartEraser2.eraseColoredOverText = $event"
+        />
+        <p class="text-[11px] text-slate-400">
+          Проведите по тексту: буквы останутся целыми, а всё остальное под мазком станет
+          выбранным цветом — тоном бумаги страницы или любым своим. В отличие от «Умного
+          корректора», фон заливается сплошным цветом, без порогов светлого, поэтому не
+          зависит от яркости скана. «Стирать краску поверх букв» убирает оттиск печати,
+          лежащий на тексте.
+        </p>
+      </template>
+
       <template v-else-if="editor.tool === 'bg-cleaner'">
         <AppToggle
           :model-value="editor.toolOptions.bgCleaner.useModel === true"
