@@ -116,8 +116,10 @@ export const useEditorStore = defineStore('editor', () => {
       fillColor: '#ffffff',
       threshold: 170,
       useModel: true,
-      // По умолчанию буквы сохраняются целиком: краску поверх них не трогаем.
-      eraseColoredOverText: false,
+      // Краску (печать, штамп) под мазком убираем: она цветная и к тексту не
+      // относится. Буквы остаются, но там, где краска лежала на букве, будет
+      // прореха — это физически неизбежно, зато фон чистый.
+      eraseColoredOverText: true,
     },
     bgCleaner: {
       width: 24,
