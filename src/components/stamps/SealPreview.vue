@@ -46,6 +46,8 @@ const emit = defineEmits<{
   'text-hit': [lineId: string];
   /** Двойной клик по строке центра. */
   'center-hit': [lineIndex: number];
+  /** Клик по строке центра — показать её свойства справа. */
+  'center-select': [lineIndex: number];
   /** Пункт контекстного меню «Редактировать». */
   'edit-line': [lineId: string];
   /** Пункт контекстного меню «Удалить». */
@@ -258,6 +260,12 @@ function onCanvasDown(event: PointerEvent): void {
   if (!point) return;
   const lineId = hitRingLine(point);
   if (!lineId) {
+    // Клик по тексту центра — показать его свойства, как у строк по кольцам.
+    const centerIndex = hitCenterLine(point);
+    if (centerIndex !== null) {
+      emit('center-select', centerIndex);
+      return;
+    }
     emit('select-line', null);
     return;
   }

@@ -176,7 +176,7 @@ try {
     JSON.stringify(afterDiameter));
 
   await cdp.evaluate(`(() => {
-    document.querySelector('[data-testid=seal-rings-3]').click();
+    document.querySelector('[data-testid=seal-add-ring]').click();
     return 'ok';
   })()`);
   await sleep(600);
@@ -195,6 +195,51 @@ try {
   check('кольца идут от края внутрь', ringState.radii[0] > ringState.radii[1] && ringState.radii[1] > ringState.radii[2],
     JSON.stringify(ringState.radii));
   check('зазоров на один меньше числа колец', ringState.slots === 3, String(ringState.slots));
+
+  console.log('\n2б. Кольцо добавляется кнопкой — под текст');
+  const beforeRingAdd = await cdp.evaluate(`(async () => {
+    const stamp = await import('/src/services/stampRenderService.ts');
+    const app = window.__PDF_EDITOR__;
+    const t = window.__SEAL_DESIGNER__;
+    const layout = stamp.computeStampLayout(t, (id) => app.fonts.familyOf(id));
+    return {
+      rings: t.seal.rings.length,
+      topLineRadius: layout.seal.ringLines.find((line) => line.side === 'top' && line.slot === 0)?.radius ?? 0,
+      innermost: layout.seal.ink.rings[layout.seal.ink.rings.length - 1].radius,
+    };
+  })()`);
+  await cdp.evaluate(`document.querySelector('[data-testid=seal-add-ring]').click(); 'ok'`);
+  await sleep(600);
+  const afterRingAdd = await cdp.evaluate(`(async () => {
+    const stamp = await import('/src/services/stampRenderService.ts');
+    const app = window.__PDF_EDITOR__;
+    const t = window.__SEAL_DESIGNER__;
+    const layout = stamp.computeStampLayout(t, (id) => app.fonts.familyOf(id));
+    const rings = layout.seal.ink.rings;
+    return {
+      rings: t.seal.rings.length,
+      innermost: rings[rings.length - 1].radius,
+      topLineRadius: layout.seal.ringLines.find((line) => line.side === 'top' && line.slot === 0)?.radius ?? 0,
+    };
+  })()`);
+  check('кольцо добавляется кнопкой', afterRingAdd.rings === beforeRingAdd.rings + 1, JSON.stringify(afterRingAdd));
+  check(
+    'новое кольцо встаёт внутрь — под уже нарисованным текстом',
+    afterRingAdd.innermost < beforeRingAdd.innermost && afterRingAdd.innermost < afterRingAdd.topLineRadius,
+    JSON.stringify({ before: beforeRingAdd, after: afterRingAdd }),
+  );
+  check(
+    'текст при добавлении кольца не съезжает',
+    Math.abs(afterRingAdd.topLineRadius - beforeRingAdd.topLineRadius) < 0.05,
+    `${beforeRingAdd.topLineRadius.toFixed(2)} → ${afterRingAdd.topLineRadius.toFixed(2)}`,
+  );
+  await cdp.evaluate(`document.querySelector('[data-testid=seal-ring-3-delete]').click(); 'ok'`);
+  await sleep(500);
+  const afterRingDelete = await cdp.evaluate(`(() => ({
+    rings: window.__SEAL_DESIGNER__.seal.rings.length,
+    deleteButton: Boolean(document.querySelector('[data-testid=seal-ring-0-delete]')),
+  }))()`);
+  check('кольцо можно удалить кнопкой', afterRingDelete.rings === beforeRingAdd.rings, JSON.stringify(afterRingDelete));
 
   console.log('\n3. Строки по кольцам');
   await cdp.evaluate(`(() => {
@@ -402,6 +447,35 @@ try {
   })()`);
   check('двойной клик фокусирует поле строки', focusState.testid?.startsWith('seal-line-') === true, String(focusState.testid));
   check('каретка в конце текста', focusState.caret === focusState.length, `${focusState.caret}/${focusState.length}`);
+
+  console.log('\n6б. Клик по строке центра показывает её свойства');
+  const centerClick = await cdp.evaluate(`(async () => {
+    const stamp = await import('/src/services/stampRenderService.ts');
+    const app = window.__PDF_EDITOR__;
+    const t = window.__SEAL_DESIGNER__;
+    const layout = stamp.computeStampLayout(t, (id) => app.fonts.familyOf(id));
+    const line = layout.lines[0];
+    if (!line) return { error: 'нет строк центра' };
+    const canvas = document.querySelector('[data-testid=seal-preview-canvas]');
+    const rect = canvas.getBoundingClientRect();
+    const zoom = rect.width / t.width;
+    const x = rect.left + (line.x + line.width / 2) * zoom;
+    const y = rect.top + (line.baseline - line.fontSize * 0.4) * zoom;
+    const options = { bubbles: true, clientX: x, clientY: y, button: 0, pointerId: 1 };
+    canvas.dispatchEvent(new PointerEvent('pointerdown', options));
+    canvas.dispatchEvent(new PointerEvent('pointerup', options));
+    await new Promise((r) => setTimeout(r, 600));
+    const designer = document.querySelector('[data-testid=seal-designer]');
+    const card = document.querySelector('[data-testid=seal-center-card-0]');
+    return {
+      tab: Array.from(designer.querySelectorAll('[role=tab]')).find((n) => n.getAttribute('aria-selected') === 'true')?.textContent.trim(),
+      cardActive: card?.getAttribute('data-active'),
+      hasCard: Boolean(card),
+    };
+  })()`);
+  check('клик по центру открывает вкладку «Центр»', centerClick.tab === 'Центр', JSON.stringify(centerClick));
+  check('карточка этой строки центра выделена', centerClick.hasCard === true && centerClick.cardActive === 'true',
+    JSON.stringify(centerClick));
 
   console.log('\n7. Фон, цвет, прозрачность, фактура');
   const background = await cdp.evaluate(`(async () => {

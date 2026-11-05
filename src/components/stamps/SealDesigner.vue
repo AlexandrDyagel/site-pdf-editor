@@ -65,6 +65,8 @@ const zoom = ref(3);
 const isSaving = ref(false);
 /** Выбранная строка текста по кольцу (для маркеров и правки). */
 const selectedLineId = ref<string | null>(null);
+/** Выбранная строка в центре (клик по ней показывает свойства справа). */
+const selectedCenterIndex = ref<number | null>(null);
 
 /** Фон подложки превью. В документ он не попадает — это только просмотр. */
 const previewBackgrounds = [
@@ -184,6 +186,7 @@ watch(
       tab.value = draft.tab || 'rings';
       previewBg.value = draft.background;
       selectedLineId.value = draft.selectedLineId;
+      selectedCenterIndex.value = null;
       restoredDraft.value = true;
       await nextTick();
       return;
@@ -202,6 +205,7 @@ watch(
     zoom.value = fitZoomValue();
     previewBg.value = null;
     selectedLineId.value = null;
+    selectedCenterIndex.value = null;
     restoredDraft.value = false;
     await nextTick();
   },
@@ -228,6 +232,7 @@ function resetDraft(): void {
   tab.value = 'rings';
   previewBg.value = null;
   selectedLineId.value = null;
+  selectedCenterIndex.value = null;
   zoom.value = fitZoomValue();
 }
 
@@ -269,19 +274,26 @@ function setDiameter(value: number): void {
   if (zoom.value * px > 400) zoom.value = fitZoomValue();
 }
 
-function setRingCount(count: number): void {
+/**
+ * Добавить кольцо кнопкой.
+ *
+ * Новое кольцо всегда встаёт внутрь — под уже нарисованным текстом. Строка,
+ * стоявшая «под последним кольцом», просто оказывается в новом зазоре, а
+ * кольцо — под ней.
+ */
+function addRing(): void {
   const settings = template.value.seal;
-  if (!settings) return;
-  const current = settings.rings.length;
-  if (count === current) return;
-  if (count > current) {
-    for (let index = current; index < count; index += 1) {
-      settings.rings.push(createSealRing(index === 1 ? 1.3 : 1, 4));
-    }
-  } else {
-    settings.rings.splice(count);
-  }
-  // Строки не должны оказаться в зазоре, которого больше нет.
+  if (!settings || settings.rings.length >= SEAL_MAX_RINGS) return;
+  settings.rings.push(createSealRing(1, 4));
+  ui.notify.info('Кольцо добавлено', 'Оно встало внутрь — под текст, который уже есть на печати');
+}
+
+/** Удалить кольцо (минимум одно остаётся). */
+function removeRing(index: number): void {
+  const settings = template.value.seal;
+  if (!settings || settings.rings.length <= 1) return;
+  settings.rings.splice(index, 1);
+  settings.rings[0].gap = 0;
   for (const line of settings.lines) {
     line.slot = Math.min(line.slot, settings.rings.length - 1);
   }
@@ -296,6 +308,7 @@ function lineIndex(lineId: string): number {
 /** Выбрать строку (и при желании показать её настройки справа). */
 function selectLine(lineId: string | null, options: { reveal?: boolean } = {}): void {
   selectedLineId.value = lineId;
+  if (lineId) selectedCenterIndex.value = null;
   if (!lineId || options.reveal === false) return;
   tab.value = 'text';
   void nextTick(() => {
@@ -303,6 +316,19 @@ function selectLine(lineId: string | null, options: { reveal?: boolean } = {}): 
     if (index < 0) return;
     rightColumn.value
       ?.querySelector(`[data-testid="seal-line-${index}"]`)
+      ?.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+  });
+}
+
+/** Выбрать строку центра: открыть «Центр» и показать её карточку. */
+function selectCenterLine(index: number, options: { reveal?: boolean } = {}): void {
+  selectedCenterIndex.value = index;
+  selectedLineId.value = null;
+  tab.value = 'center';
+  if (options.reveal === false) return;
+  void nextTick(() => {
+    rightColumn.value
+      ?.querySelector(`[data-testid="seal-center-card-${index}"]`)
       ?.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
   });
 }
@@ -361,6 +387,7 @@ function focusInput(input: HTMLInputElement | null | undefined): void {
 /** Двойной клик по строке на превью: выбрать её и встать в текст. */
 async function onTextHit(lineId: string): Promise<void> {
   selectedLineId.value = lineId;
+  selectedCenterIndex.value = null;
   tab.value = 'text';
   await nextTick();
   const index = lineIndex(lineId);
@@ -374,7 +401,7 @@ async function onTextHit(lineId: string): Promise<void> {
 
 /** Двойной клик по строке центра. */
 async function onCenterHit(lineIndexValue: number): Promise<void> {
-  tab.value = 'center';
+  selectCenterLine(lineIndexValue, { reveal: false });
   await nextTick();
   const visible = template.value.lines.filter((line) => line.text.trim().length > 0);
   const line = visible[lineIndexValue] ?? visible[0];
@@ -402,6 +429,7 @@ async function clearPreview(): Promise<void> {
   template.value.lines = [];
   template.value.logo = null;
   selectedLineId.value = null;
+  selectedCenterIndex.value = null;
   ui.notify.info('Превью очищено', 'Остались кольца и настройки краски — можно собирать печать с нуля');
 }
 
@@ -414,6 +442,10 @@ function addCenterLine(): void {
 
 function removeCenterLine(index: number): void {
   template.value.lines = template.value.lines.filter((_, position) => position !== index);
+  if (selectedCenterIndex.value !== null) {
+    if (selectedCenterIndex.value === index) selectedCenterIndex.value = null;
+    else if (selectedCenterIndex.value > index) selectedCenterIndex.value -= 1;
+  }
 }
 
 function updateCenterLine(index: number, patch: Partial<StampTextLine>): void {
@@ -671,6 +703,7 @@ function onPickEnd(color: string | null): void {
             @line-move="onLineMove"
             @text-hit="onTextHit"
             @center-hit="onCenterHit"
+            @center-select="selectCenterLine"
             @edit-line="onTextHit"
             @delete-line="deleteLine"
           />
@@ -786,32 +819,46 @@ function onPickEnd(color: string | null): void {
           </AppSection>
 
           <AppSection title="Кольца" icon="circle">
-            <div class="flex items-center justify-between">
-              <span class="text-[11px] font-medium uppercase tracking-wide text-slate-500 dark:text-slate-400">
-                Количество
+            <div class="flex items-center justify-between gap-2">
+              <span class="text-[11px] text-slate-400">
+                Новое кольцо встаёт внутрь — под уже нарисованный текст
               </span>
-              <div class="flex gap-1">
-                <AppButton
-                  v-for="count in SEAL_MAX_RINGS"
-                  :key="count"
-                  size="xs"
-                  :variant="seal.rings.length === count ? 'primary' : 'subtle'"
-                  :data-testid="`seal-rings-${count}`"
-                  @click="setRingCount(count)"
-                >
-                  {{ count }}
-                </AppButton>
-              </div>
+              <AppButton
+                size="xs"
+                icon="plus"
+                :disabled="seal.rings.length >= SEAL_MAX_RINGS"
+                data-testid="seal-add-ring"
+                @click="addRing"
+              >
+                Кольцо
+              </AppButton>
             </div>
 
             <div
               v-for="(ring, index) in seal.rings"
               :key="`ring-${index}`"
               class="rounded-lg border border-slate-200 p-2 dark:border-slate-700"
+              :data-testid="`seal-ring-${index}`"
             >
+              <div class="mb-1 flex items-center justify-between">
+                <span
+                  class="text-[11px] font-medium uppercase tracking-wide text-slate-500 dark:text-slate-400"
+                >
+                  Кольцо {{ index + 1 }}
+                </span>
+                <AppButton
+                  size="xs"
+                  variant="ghost"
+                  icon="trash"
+                  title="Удалить кольцо"
+                  :disabled="seal.rings.length <= 1"
+                  :data-testid="`seal-ring-${index}-delete`"
+                  @click="removeRing(index)"
+                />
+              </div>
               <AppSlider
                 :model-value="ring.width"
-                :label="`Толщина кольца ${index + 1}`"
+                label="Толщина"
                 unit="pt"
                 :min="0.4"
                 :max="8"
@@ -927,7 +974,15 @@ function onPickEnd(color: string | null): void {
             <div
               v-for="(line, index) in template.lines"
               :key="line.id"
-              class="space-y-1.5 rounded-lg border border-slate-200 p-2 dark:border-slate-700"
+              class="space-y-1.5 rounded-lg border p-2 transition-colors"
+              :class="
+                selectedCenterIndex === index
+                  ? 'border-brand-400 bg-brand-50/40 dark:border-brand-500/60 dark:bg-brand-500/5'
+                  : 'border-slate-200 dark:border-slate-700'
+              "
+              :data-testid="`seal-center-card-${index}`"
+              :data-active="selectedCenterIndex === index ? 'true' : 'false'"
+              @pointerdown="selectCenterLine(index, { reveal: false })"
             >
               <div class="flex items-center gap-1.5">
                 <AppInput
