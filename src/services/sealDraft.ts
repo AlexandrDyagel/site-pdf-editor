@@ -20,6 +20,8 @@ export interface SealDraft {
   tab: string;
   /** Выбранный фон превью (не часть печати). */
   background: string | null;
+  /** Какая строка текста была выбрана. */
+  selectedLineId: string | null;
 }
 
 let draft: SealDraft | null = null;
@@ -39,6 +41,7 @@ export function saveSealDraft(value: SealDraft): void {
     zoom: value.zoom,
     tab: value.tab,
     background: value.background,
+    selectedLineId: value.selectedLineId ?? null,
   };
 }
 
@@ -51,6 +54,7 @@ export function readSealDraft(key: string): SealDraft | null {
     zoom: draft.zoom,
     tab: draft.tab,
     background: draft.background,
+    selectedLineId: draft.selectedLineId ?? null,
   };
 }
 

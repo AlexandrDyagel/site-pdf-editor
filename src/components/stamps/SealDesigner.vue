@@ -2,28 +2,25 @@
 /**
  * Конструктор круглой печати (оттиска).
  *
- * Идея: слева — большое живое превью с зумом и маркерами, справа — настройки.
- * Печать рисуется тем же кодом, что и объект на странице / экспорт в PDF
- * (`computeStampLayout` + `paintStampLayout`), поэтому «что вижу — то и
- * вставлю»: оттиск не меняется после нажатия «Добавить на документ».
+ * Слева — большое живое превью с зумом, маркерами и перетаскиванием строк,
+ * справа — настройки. Печать рисуется тем же кодом, что и объект на странице
+ * и экспорт в PDF (`computeStampLayout` + `paintStampLayout`), поэтому
+ * «что вижу — то и вставлю».
  *
- * Что настраивается:
- *   - диаметр 30–60 мм и кольца: количество, толщина, расстояние между ними;
- *   - верхняя и нижняя дуги: текст, шрифт, кегль, трекинг, межсловный
- *     интервал, угол дуги (ползунком или маркерами), радиус;
- *   - центр: до трёх строк, логотип PNG/SVG, разделительная окружность;
- *   - краска: цвет, прозрачность и «неидеальность» (неровность, зерно,
- *     второй прокат) с воспроизводимым зерном.
+ * Текст по кольцам — это список независимых строк: у каждой свой шрифт,
+ * начертание, кегль, трекинг и межсловный интервал (в pt), свой кольцевой
+ * зазор и половина кольца. Строки центрируются по зазору, тянутся мышью и
+ * имеют контекстное меню.
  */
 import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue';
-import type { SealArcText, StampTemplate, StampTextLine } from '@/types';
-import { SEAL_COLORS } from '@/constants';
+import type { SealRingLine, StampTemplate, StampTextLine } from '@/types';import { SEAL_COLORS } from '@/constants';
 import { createId } from '@/utils/id';
 import {
   SEAL_MAX_MM,
   SEAL_MAX_RINGS,
   SEAL_MIN_MM,
   createSealRing,
+  createSealRingLine,
   createSealSettings,
   normalizeSealSettings,
   sealDiameterMm,
@@ -53,7 +50,7 @@ import AppSection from '@/components/ui/AppSection.vue';
 import AppToggle from '@/components/ui/AppToggle.vue';
 import AppTabs from '@/components/ui/AppTabs.vue';
 import SealPreview from '@/components/stamps/SealPreview.vue';
-import SealArcControls from '@/components/stamps/SealArcControls.vue';
+import SealLineControls from '@/components/stamps/SealLineControls.vue';
 
 const ui = useUiStore();
 const library = useLibraryStore();
@@ -66,6 +63,8 @@ const targetObjectId = ref<string | null>(null);
 const tab = ref('rings');
 const zoom = ref(3);
 const isSaving = ref(false);
+/** Выбранная строка текста по кольцу (для маркеров и правки). */
+const selectedLineId = ref<string | null>(null);
 
 /** Фон подложки превью. В документ он не попадает — это только просмотр. */
 const previewBackgrounds = [
@@ -79,20 +78,13 @@ const previewBg = ref<string | null>(null);
 
 /** Пипетка свернула окно: показываем холст, но не закрываем конструктор. */
 const picking = ref(false);
-
 /** Конструктор восстановил незавершённое редактирование. */
 const restoredDraft = ref(false);
 const draftKey = ref('new');
-
-const arcTopRef = ref<InstanceType<typeof SealArcControls> | null>(null);
-const arcBottomRef = ref<InstanceType<typeof SealArcControls> | null>(null);
-const rightColumn = ref<HTMLElement | null>(null);
-
-/**
- * Флаг «закрываем намеренно»: после вставки на документ черновик уже не
- * нужен, и сохранять его при закрытии окна нельзя.
- */
+/** Флаг «закрываем намеренно»: после вставки черновик сохранять не нужно. */
 let suppressDraftSave = false;
+
+const rightColumn = ref<HTMLElement | null>(null);
 
 const isOpen = computed({
   get: () => ui.modals.sealDesigner,
@@ -104,7 +96,7 @@ const isOpen = computed({
 
 const tabs = [
   { id: 'rings', label: 'Кольца', icon: 'circle' },
-  { id: 'arcs', label: 'Дуги', icon: 'type' },
+  { id: 'text', label: 'Текст', icon: 'type' },
   { id: 'center', label: 'Центр', icon: 'seal' },
   { id: 'ink', label: 'Краска', icon: 'sliders' },
 ];
@@ -119,12 +111,37 @@ const fontOptions = computed(() =>
 
 /** Настройки печати (они всегда есть у открытого конструктора). */
 const seal = computed(() => template.value.seal ?? createSealSettings());
-
-/** Диаметр в пикселях — реальный размер объекта на странице. */
 const diameterPx = computed(() => sealDiameterPx(seal.value.diameterMm));
-
-/** Максимальный радиус дуги, px. */
 const maxArcRadius = computed(() => Math.round(diameterPx.value / 2));
+
+/** Варианты зазоров для строк: между кольцами и под последним кольцом. */
+const slotOptions = computed(() => {
+  const count = seal.value.rings.length;
+  return Array.from({ length: count }, (_, index) => ({
+    value: index,
+    label: index < count - 1 ? `Между кольцами ${index + 1}–${index + 2}` : `Под кольцом ${count}`,
+  }));
+});
+
+/** Фактические углы строк — для подсказок «фактически N°». */
+const lineSpans = computed(() => {
+  const layout = computeStampLayout(template.value, (fontId) => fonts.familyOf(fontId));
+  const result: Record<string, number> = {};
+  for (const item of layout.seal?.ringLines ?? []) {
+    result[item.lineId] = Math.abs(item.endAngle - item.startAngle);
+  }
+  return result;
+});
+
+/** Зазоры, в которых больше одной строки: там легко «не поместиться». */
+const multiLineSlots = computed(() => {
+  const counts = new Map<number, number>();
+  for (const line of seal.value.lines) {
+    if (!line.text.trim()) continue;
+    counts.set(line.slot, (counts.get(line.slot) ?? 0) + 1);
+  }
+  return [...counts.entries()].filter(([, count]) => count > 1).map(([slot]) => slot);
+});
 
 /* ======================== Открытие/инициализация ======================== */
 
@@ -137,27 +154,17 @@ function withSealSettings(source: StampTemplate): StampTemplate {
   const plain = JSON.parse(JSON.stringify(source)) as StampTemplate;
   const size = Math.max(8, Math.min(plain.width, plain.height));
   const settings = normalizeSealSettings(plain.seal ?? sealSettingsFromTemplate(plain));
-  settings.diameterMm = Math.round(
-    Math.min(SEAL_MAX_MM, Math.max(SEAL_MIN_MM, sealDiameterMm(size))) * 10,
-  ) / 10;
+  settings.diameterMm =
+    Math.round(Math.min(SEAL_MAX_MM, Math.max(SEAL_MIN_MM, sealDiameterMm(size))) * 10) / 10;
   const px = sealDiameterPx(settings.diameterMm);
-  return {
-    ...plain,
-    kind: 'seal',
-    shape: 'round',
-    seal: settings,
-    width: px,
-    height: px,
-  };
+  return { ...plain, kind: 'seal', shape: 'round', seal: settings, width: px, height: px };
 }
 
 watch(
   () => ui.modals.sealDesigner,
   async (open) => {
     if (!open) {
-      // Окно закрыли (в том числе случайно) — сохраняем черновик, чтобы при
-      // повторном открытии вернуться в то же состояние. После вставки на
-      // документ черновик не нужен — его уже очистили.
+      // Окно закрыли (в том числе случайно) — сохраняем черновик.
       if (!suppressDraftSave) persistDraft();
       suppressDraftSave = false;
       picking.value = false;
@@ -176,6 +183,7 @@ watch(
       zoom.value = Math.min(6, Math.max(0.5, draft.zoom || fitZoomValue()));
       tab.value = draft.tab || 'rings';
       previewBg.value = draft.background;
+      selectedLineId.value = draft.selectedLineId;
       restoredDraft.value = true;
       await nextTick();
       return;
@@ -193,6 +201,7 @@ watch(
     tab.value = 'rings';
     zoom.value = fitZoomValue();
     previewBg.value = null;
+    selectedLineId.value = null;
     restoredDraft.value = false;
     await nextTick();
   },
@@ -207,6 +216,7 @@ function persistDraft(): void {
     zoom: zoom.value,
     tab: tab.value,
     background: previewBg.value,
+    selectedLineId: selectedLineId.value,
   });
 }
 
@@ -217,6 +227,7 @@ function resetDraft(): void {
   template.value = withSealSettings(createSealTemplate());
   tab.value = 'rings';
   previewBg.value = null;
+  selectedLineId.value = null;
   zoom.value = fitZoomValue();
 }
 
@@ -232,62 +243,6 @@ function fitZoom(): void {
 
 function setZoom(value: number): void {
   zoom.value = Math.min(6, Math.max(0.5, Math.round(value * 100) / 100));
-}
-
-/** Фактические углы дуг — для подсказки «1° — по ширине текста». */
-const arcSpans = computed(() => {
-  const layout = computeStampLayout(template.value, (fontId) => fonts.familyOf(fontId));
-  const spans: Record<'top' | 'bottom', number> = { top: 0, bottom: 0 };
-  for (const arc of layout.seal?.arcs ?? []) {
-    spans[arc.side] = Math.abs(arc.endAngle - arc.startAngle);
-  }
-  return spans;
-});
-
-/* ======================== Фокус по двойному клику ======================== */
-
-/** Поставить фокус в поле и каретку в конец. */
-function focusInput(input: HTMLInputElement | null | undefined): void {
-  if (!input) return;
-  input.focus();
-  const end = input.value.length;
-  try {
-    input.setSelectionRange(end, end);
-  } catch {
-    /* не все типы input поддерживают выделение */
-  }
-}
-
-/** Двойной клик по надписи на превью: открыть нужную вкладку и встать в текст. */
-async function onTextHit(target: 'top' | 'bottom' | 'center', lineIndex: number): Promise<void> {
-  if (target === 'center') {
-    tab.value = 'center';
-    await nextTick();
-    const visible = template.value.lines.filter((line) => line.text.trim().length > 0);
-    const line = visible[lineIndex] ?? visible[0];
-    const index = line ? template.value.lines.indexOf(line) : 0;
-    focusInput(
-      rightColumn.value?.querySelector<HTMLInputElement>(
-        `[data-testid="seal-center-line-${index}"] input`,
-      ),
-    );
-    return;
-  }
-  tab.value = 'arcs';
-  await nextTick();
-  (target === 'top' ? arcTopRef.value : arcBottomRef.value)?.focusText();
-}
-
-/* ======================== Пипетка ======================== */
-
-/** Сворачиваем окно: пользователь кликает цвет по холсту. */
-function onPickStart(): void {
-  picking.value = true;
-}
-
-function onPickEnd(color: string | null): void {
-  picking.value = false;
-  if (color) ui.notify.info('Цвет взят с холста', color.toUpperCase());
 }
 
 /** Отладочный хук для автотестов (только dev-сборка). */
@@ -311,8 +266,6 @@ function setDiameter(value: number): void {
   const px = sealDiameterPx(clamped);
   template.value.width = px;
   template.value.height = px;
-  // Если печать перестала помещаться в окно превью — подбираем зум заново,
-  // иначе на 60 мм видна только середина оттиска.
   if (zoom.value * px > 400) zoom.value = fitZoomValue();
 }
 
@@ -323,21 +276,133 @@ function setRingCount(count: number): void {
   if (count === current) return;
   if (count > current) {
     for (let index = current; index < count; index += 1) {
-      // Наружное кольцо толще остальных — как у настоящих печатей.
       settings.rings.push(createSealRing(index === 1 ? 1.3 : 1, 4));
     }
   } else {
     settings.rings.splice(count);
   }
+  // Строки не должны оказаться в зазоре, которого больше нет.
+  for (const line of settings.lines) {
+    line.slot = Math.min(line.slot, settings.rings.length - 1);
+  }
 }
 
-/* ======================== Дуги ======================== */
+/* ======================== Строки по кольцам ======================== */
 
-function onSpanChange(side: 'top' | 'bottom', angle: number): void {
+function lineIndex(lineId: string): number {
+  return seal.value.lines.findIndex((line) => line.id === lineId);
+}
+
+/** Выбрать строку (и при желании показать её настройки справа). */
+function selectLine(lineId: string | null, options: { reveal?: boolean } = {}): void {
+  selectedLineId.value = lineId;
+  if (!lineId || options.reveal === false) return;
+  tab.value = 'text';
+  void nextTick(() => {
+    const index = lineIndex(lineId);
+    if (index < 0) return;
+    rightColumn.value
+      ?.querySelector(`[data-testid="seal-line-${index}"]`)
+      ?.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+  });
+}
+
+function addLine(): void {
   const settings = template.value.seal;
   if (!settings) return;
-  const arc = side === 'top' ? settings.arcTop : settings.arcBottom;
-  arc.spanAngle = angle;
+  const active = settings.lines.find((line) => line.id === selectedLineId.value);
+  const line = createSealRingLine({
+    text: 'Новая строка',
+    slot: active ? active.slot : 0,
+    side: active ? active.side : 'top',
+    fontSize: active ? active.fontSize : 7,
+    letterSpacing: active ? active.letterSpacing : 1,
+    wordSpacing: active ? active.wordSpacing : 2,
+  });
+  settings.lines.push(line);
+  selectLine(line.id, { reveal: true });
+}
+
+function updateLine(lineId: string, patch: Partial<SealRingLine>): void {
+  const settings = template.value.seal;
+  if (!settings) return;
+  settings.lines = settings.lines.map((line) =>
+    line.id === lineId ? { ...line, ...patch } : line,
+  );
+}
+
+function deleteLine(lineId: string): void {
+  const settings = template.value.seal;
+  if (!settings) return;
+  settings.lines = settings.lines.filter((line) => line.id !== lineId);
+  if (selectedLineId.value === lineId) selectedLineId.value = null;
+}
+
+function onSpanChange(lineId: string, angle: number): void {
+  updateLine(lineId, { spanAngle: Math.min(340, Math.max(1, Math.round(angle * 10) / 10)) });
+}
+
+function onLineMove(lineId: string, radiusOffset: number, angleOffset: number): void {
+  updateLine(lineId, { radiusOffset, angleOffset });
+}
+
+/** Поставить фокус в поле и каретку в конец. */
+function focusInput(input: HTMLInputElement | null | undefined): void {
+  if (!input) return;
+  input.focus();
+  const end = input.value.length;
+  try {
+    input.setSelectionRange(end, end);
+  } catch {
+    /* не все типы input поддерживают выделение */
+  }
+}
+
+/** Двойной клик по строке на превью: выбрать её и встать в текст. */
+async function onTextHit(lineId: string): Promise<void> {
+  selectedLineId.value = lineId;
+  tab.value = 'text';
+  await nextTick();
+  const index = lineIndex(lineId);
+  if (index < 0) return;
+  focusInput(
+    rightColumn.value?.querySelector<HTMLInputElement>(
+      `[data-testid="seal-line-${index}-text"] input`,
+    ),
+  );
+}
+
+/** Двойной клик по строке центра. */
+async function onCenterHit(lineIndexValue: number): Promise<void> {
+  tab.value = 'center';
+  await nextTick();
+  const visible = template.value.lines.filter((line) => line.text.trim().length > 0);
+  const line = visible[lineIndexValue] ?? visible[0];
+  const index = line ? template.value.lines.indexOf(line) : 0;
+  focusInput(
+    rightColumn.value?.querySelector<HTMLInputElement>(
+      `[data-testid="seal-center-line-${index}"] input`,
+    ),
+  );
+}
+
+/* ======================== Очистка ======================== */
+
+/** Полностью очистить превью: убрать все тексты и логотип. */
+async function clearPreview(): Promise<void> {
+  const confirmed = await ui.askConfirm({
+    title: 'Очистить превью?',
+    text: 'Удалятся все строки текста (по кольцам и в центре) и логотип. Кольца, цвет и размеры останутся — с них удобно начинать заново.',
+    confirmLabel: 'Очистить',
+    danger: true,
+  });
+  if (!confirmed) return;
+  const settings = template.value.seal;
+  if (settings) settings.lines = [];
+  template.value.lines = [];
+  template.value.logo = null;
+  selectedLineId.value = null;
+  ui.notify.info('Превью очищено', 'Остались кольца и настройки краски — можно собирать печать с нуля');
 }
 
 /* ======================== Центр ======================== */
@@ -382,23 +447,27 @@ function removeLogo(): void {
 /* ======================== Пресеты ======================== */
 
 const presets: { label: string; build: () => StampTemplate }[] = [
-  {
-    label: 'Организация',
-    build: () => createSealTemplate(),
-  },
+  { label: 'Организация', build: () => createSealTemplate() },
   {
     label: 'ИП',
     build: () =>
       createSealTemplate({
         name: 'Печать ИП',
         lines: [
-          createStampLine('ИНДИВИДУАЛЬНЫЙ ПРЕДПРИНИМАТЕЛЬ', { fontSize: 7, bold: true }),
-          createStampLine('Иванов И. И.', { fontSize: 10, bold: true }),
+          createStampLine('ИНДИВИДУАЛЬНЫЙ ПРЕДПРИНИМАТЕЛЬ', { fontSize: 6, bold: true }),
+          createStampLine('Иванов И. И.', { fontSize: 9, bold: true }),
         ],
         seal: createSealSettings({
           rings: [createSealRing(2.2, 0), createSealRing(1.1, 3.5)],
-          arcTop: { ...createSealSettings().arcTop, text: 'ИНН 770123456789 · ОГРНИП 320770000000001' },
-          arcBottom: { ...createSealSettings().arcBottom, text: 'г. Москва' },
+          lines: [
+            createSealRingLine({
+              text: 'ИНН 770123456789 · ОГРНИП 320770000000001',
+              fontSize: 4.5,
+              slot: 0,
+              side: 'top',
+            }),
+            createSealRingLine({ text: 'г. Москва', fontSize: 6.5, slot: 0, side: 'bottom' }),
+          ],
         }),
       }),
   },
@@ -410,8 +479,7 @@ const presets: { label: string; build: () => StampTemplate }[] = [
         lines: [],
         seal: createSealSettings({
           rings: [createSealRing(2.6, 0), createSealRing(1.2, 4), createSealRing(1, 3)],
-          arcTop: { ...createSealSettings().arcTop, enabled: false, text: '' },
-          arcBottom: { ...createSealSettings().arcBottom, enabled: false, text: '' },
+          lines: [],
         }),
       }),
   },
@@ -420,7 +488,12 @@ const presets: { label: string; build: () => StampTemplate }[] = [
 /** Применить образец: сохраняем идентификатор (если печать уже существует). */
 function applyPreset(builder: () => StampTemplate): void {
   const next = builder();
-  template.value = withSealSettings({ ...next, id: template.value.id || createId('seal'), name: next.name });
+  template.value = withSealSettings({
+    ...next,
+    id: template.value.id || createId('seal'),
+    name: next.name,
+  });
+  selectedLineId.value = null;
   zoom.value = fitZoomValue();
 }
 
@@ -499,8 +572,6 @@ async function insertIntoDocument(): Promise<void> {
   }
 
   editor.toolOptions.lastStampId = value.id;
-  // Печать поставлена — черновик больше не нужен, следующее открытие
-  // начнётся с чистой печати.
   clearSealDraft();
   restoredDraft.value = false;
   suppressDraftSave = true;
@@ -513,31 +584,34 @@ onBeforeUnmount(() => {
   }
 });
 
-/** Ссылка на дугу для панели настроек. */
-const arcTop = computed<SealArcText>(() => seal.value.arcTop);
-const arcBottom = computed<SealArcText>(() => seal.value.arcBottom);
+/* ======================== Пипетка ======================== */
+
+function onPickStart(): void {
+  picking.value = true;
+}
+
+function onPickEnd(color: string | null): void {
+  picking.value = false;
+  if (color) ui.notify.info('Цвет взят с холста', color.toUpperCase());
+}
 </script>
 
 <template>
   <AppModal
     v-model="isOpen"
     title="Конструктор печати"
-    subtitle="Круглый оттиск: кольца, текст по дугам, центр и «мокрая» краска"
+    subtitle="Круглый оттиск: кольца, строки текста по кольцам, центр и краска"
     icon="seal"
     width="xl"
     body-class="lg:max-h-none lg:overflow-visible"
     :suspended="picking"
   >
     <div
-      class="grid gap-5 lg:h-[min(62vh,700px)] lg:grid-cols-[minmax(0,1fr)_minmax(0,380px)]"
+      class="grid gap-5 lg:h-[min(62vh,700px)] lg:grid-cols-[minmax(0,1fr)_minmax(0,400px)]"
       data-testid="seal-designer"
     >
       <!-- ======================= Превью ======================= -->
-      <div
-        class="space-y-3 lg:h-full lg:overflow-y-auto lg:pr-2"
-        data-testid="seal-left-column"
-      >
-        <!-- Черновик восстановлен после случайного закрытия -->
+      <div class="space-y-3 lg:h-full lg:overflow-y-auto lg:pr-2" data-testid="seal-left-column">
         <div
           v-if="restoredDraft"
           class="flex items-center justify-between gap-2 rounded-lg bg-amber-50 px-2.5 py-1.5 text-[11px] text-amber-800 ring-1 ring-amber-200 dark:bg-amber-500/10 dark:text-amber-200 dark:ring-amber-500/30"
@@ -556,8 +630,7 @@ const arcBottom = computed<SealArcText>(() => seal.value.arcBottom);
               {{ seal.diameterMm }} мм · {{ Math.round(diameterPx) }} px
             </span>
             <span class="text-[11px] text-slate-400">
-              {{ seal.rings.length }} кольца · {{ seal.arcTop.text ? 'верх' : '—' }} /
-              {{ seal.arcBottom.text ? 'низ' : '—' }}
+              {{ seal.rings.length }} кольца · {{ seal.lines.length }} строк
             </span>
           </div>
           <div class="flex items-center gap-1.5">
@@ -576,10 +649,13 @@ const arcBottom = computed<SealArcText>(() => seal.value.arcBottom);
               {{ Math.round(zoom * 100) }}%
             </span>
             <AppButton size="xs" variant="ghost" @click="fitZoom">Вписать</AppButton>
+            <AppButton size="xs" variant="ghost" icon="trash" data-testid="seal-clear" @click="clearPreview">
+              Очистить
+            </AppButton>
           </div>
         </div>
 
-        <!-- Большое превью: печать видно целиком, при зуме появляется прокрутка -->
+        <!-- Большое превью -->
         <div
           class="relative flex h-[430px] items-center justify-center overflow-auto rounded-xl border border-slate-200 p-4 transition-colors dark:border-slate-700"
           :class="previewBg ? '' : 'checker-bg'"
@@ -589,8 +665,14 @@ const arcBottom = computed<SealArcText>(() => seal.value.arcBottom);
           <SealPreview
             :template="template"
             :zoom="zoom"
+            :selected-line-id="selectedLineId"
+            @select-line="selectLine($event)"
             @span-change="onSpanChange"
+            @line-move="onLineMove"
             @text-hit="onTextHit"
+            @center-hit="onCenterHit"
+            @edit-line="onTextHit"
+            @delete-line="deleteLine"
           />
         </div>
 
@@ -625,8 +707,8 @@ const arcBottom = computed<SealArcText>(() => seal.value.arcBottom);
         </p>
 
         <p class="text-[11px] text-slate-400">
-          Маркеры на дугах тянутся мышью. Двойной клик по надписи открывает её поле ввода.
-          Колесо мыши над превью не масштабирует — используйте ползунок зума.
+          Клик по строке выбирает её и показывает маркеры угла; строку можно тащить мышью,
+          двойной клик — правка текста, правый клик — меню. Колесо мыши превью не масштабирует.
         </p>
 
         <!-- Цвет: пресеты + произвольный -->
@@ -730,7 +812,7 @@ const arcBottom = computed<SealArcText>(() => seal.value.arcBottom);
               <AppSlider
                 :model-value="ring.width"
                 :label="`Толщина кольца ${index + 1}`"
-                unit="px"
+                unit="pt"
                 :min="0.4"
                 :max="8"
                 :step="0.1"
@@ -741,7 +823,7 @@ const arcBottom = computed<SealArcText>(() => seal.value.arcBottom);
                 v-if="index > 0"
                 :model-value="ring.gap"
                 label="Расстояние до кольца"
-                unit="px"
+                unit="pt"
                 :min="0.5"
                 :max="16"
                 :step="0.1"
@@ -752,12 +834,12 @@ const arcBottom = computed<SealArcText>(() => seal.value.arcBottom);
           </AppSection>
 
           <AppSection title="Разделитель центра" icon="minus">
-            <AppToggle v-model="seal.divider.enabled" label="Окружность между дугами и центром" />
+            <AppToggle v-model="seal.divider.enabled" label="Окружность между текстом и центром" />
             <template v-if="seal.divider.enabled">
               <AppSlider
                 :model-value="seal.divider.radius"
                 label="Радиус (0 — по содержимому)"
-                unit="px"
+                unit="pt"
                 :min="0"
                 :max="maxArcRadius"
                 :step="0.5"
@@ -767,7 +849,7 @@ const arcBottom = computed<SealArcText>(() => seal.value.arcBottom);
               <AppSlider
                 :model-value="seal.divider.width"
                 label="Толщина разделителя"
-                unit="px"
+                unit="pt"
                 :min="0.2"
                 :max="4"
                 :step="0.1"
@@ -778,29 +860,51 @@ const arcBottom = computed<SealArcText>(() => seal.value.arcBottom);
           </AppSection>
         </div>
 
-        <!-- Дуги -->
-        <div v-show="tab === 'arcs'" class="space-y-3">
-          <SealArcControls
-            ref="arcTopRef"
-            :arc="arcTop"
-            side="top"
-            title="Верхняя дуга"
-            hint="Читается слева направо по часовой стрелке"
+        <!-- Текст по кольцам -->
+        <div v-show="tab === 'text'" class="space-y-3" data-testid="seal-text-tab">
+          <div class="flex items-center justify-between">
+            <span class="text-[11px] text-slate-400">
+              Строки центрируются по кольцевому зазору
+            </span>
+            <AppButton
+              size="xs"
+              icon="plus"
+              data-testid="seal-add-ring-line"
+              @click="addLine"
+            >
+              Строка
+            </AppButton>
+          </div>
+
+          <p
+            v-if="multiLineSlots.length > 0"
+            class="rounded-lg bg-amber-50 px-2.5 py-1.5 text-[11px] text-amber-800 ring-1 ring-amber-200 dark:bg-amber-500/10 dark:text-amber-200 dark:ring-amber-500/30"
+            data-testid="seal-crowded-hint"
+          >
+            В зазоре «{{ multiLineSlots.map((slot) => slotOptions[slot]?.label).join('», «') }}»
+            несколько строк. Если они не помещаются, увеличьте расстояние между кольцами или
+            уменьшите кегль — строки центрируются по зазору и могут выйти за кольца.
+          </p>
+
+          <p
+            v-if="seal.lines.length === 0"
+            class="rounded-lg border border-dashed border-slate-200 p-4 text-center text-[11px] text-slate-400 dark:border-slate-700"
+            data-testid="seal-no-lines"
+          >
+            Пока нет строк. Добавьте строку и выберите, между какими кольцами она стоит.
+          </p>
+
+          <SealLineControls
+            v-for="(line, index) in seal.lines"
+            :key="line.id"
+            :line="line"
+            :index="index"
+            :slot-options="slotOptions"
             :font-options="fontOptions"
-            :max-radius="maxArcRadius"
-            :ring-count="seal.rings.length"
-            :effective-span="arcSpans.top"
-          />
-          <SealArcControls
-            ref="arcBottomRef"
-            :arc="arcBottom"
-            side="bottom"
-            title="Нижняя дуга"
-            hint="Буквы стоят макушкой к центру"
-            :font-options="fontOptions"
-            :max-radius="maxArcRadius"
-            :ring-count="seal.rings.length"
-            :effective-span="arcSpans.bottom"
+            :active="selectedLineId === line.id"
+            :effective-span="lineSpans[line.id] ?? 0"
+            @select="selectLine(line.id, { reveal: false })"
+            @delete="deleteLine(line.id)"
           />
         </div>
 
@@ -842,24 +946,55 @@ const arcBottom = computed<SealArcText>(() => seal.value.arcBottom);
                   @click="removeCenterLine(index)"
                 />
               </div>
-              <div class="flex items-center gap-2">
+              <div class="grid grid-cols-2 gap-2">
+                <AppSelect
+                  :model-value="line.fontId ?? ''"
+                  label="Шрифт"
+                  size="sm"
+                  :options="[{ value: '', label: 'Как у печати' }, ...fontOptions]"
+                  @update:model-value="updateCenterLine(index, { fontId: String($event || '') || undefined })"
+                />
+                <div class="flex items-end gap-1.5">
+                  <AppButton
+                    size="sm"
+                    :variant="line.bold ? 'primary' : 'subtle'"
+                    icon="bold"
+                    block
+                    title="Жирный"
+                    @click="updateCenterLine(index, { bold: !line.bold })"
+                  >
+                    Ж
+                  </AppButton>
+                  <AppButton
+                    size="sm"
+                    :variant="line.italic ? 'primary' : 'subtle'"
+                    icon="italic"
+                    block
+                    title="Курсив"
+                    @click="updateCenterLine(index, { italic: !line.italic })"
+                  >
+                    К
+                  </AppButton>
+                </div>
+              </div>
+              <div class="grid grid-cols-2 gap-2">
                 <AppInput
                   :model-value="line.fontSize"
-                  label="Размер"
+                  label="Кегль, pt"
                   type="number"
                   size="sm"
-                  :min="4"
+                  :min="3"
                   :max="24"
                   @update:model-value="updateCenterLine(index, { fontSize: Number($event) || 9 })"
                 />
-                <AppButton
+                <AppInput
+                  :model-value="line.letterSpacing"
+                  label="Трекинг, pt"
+                  type="number"
                   size="sm"
-                  :variant="line.bold ? 'primary' : 'subtle'"
-                  icon="bold"
-                  @click="updateCenterLine(index, { bold: !line.bold })"
-                >
-                  Жирный
-                </AppButton>
+                  :step="0.1"
+                  @update:model-value="updateCenterLine(index, { letterSpacing: Number($event) || 0 })"
+                />
               </div>
             </div>
           </AppSection>
@@ -932,7 +1067,7 @@ const arcBottom = computed<SealArcText>(() => seal.value.arcBottom);
             <AppToggle
               v-model="seal.ink.enabled"
               label="Эффект живой печати"
-              hint="Неровные края, отдельные точки краски и второй прокат"
+              hint="Неровные края, отдельные точки краски и второй прокат. По умолчанию выключен"
               data-testid="seal-ink-toggle"
             />
             <template v-if="seal.ink.enabled">
@@ -966,7 +1101,7 @@ const arcBottom = computed<SealArcText>(() => seal.value.arcBottom);
               <AppSlider
                 :model-value="seal.ink.strikeOffset"
                 label="Смещение проката"
-                unit="px"
+                unit="pt"
                 :min="0"
                 :max="3"
                 :step="0.05"

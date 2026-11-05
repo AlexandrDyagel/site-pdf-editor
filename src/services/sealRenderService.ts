@@ -27,11 +27,13 @@ import type {
   SealArcText,
   SealInk,
   SealRing,
+  SealRingLine,
   SealSettings,
   StampTemplate,
 } from '@/types';
 import type { StampCharLayout, StampLineLayout } from '@/services/stampRenderService';
 import { measureTextWidth } from '@/utils/textLayout';
+import { createId } from '@/utils/id';
 
 /* ==========================================================================
  *  Константы и единицы
@@ -64,7 +66,30 @@ export function createSealRing(width = 2.4, gap = 4): SealRing {
   return { width, gap };
 }
 
-/** Текст по дуге. */
+/** Строка текста по кольцу. */
+export function createSealRingLine(patch: Partial<SealRingLine> = {}): SealRingLine {
+  return {
+    id: patch.id ?? createId('ringline'),
+    text: '',
+    slot: 0,
+    side: 'top',
+    fontSize: 7,
+    letterSpacing: 1,
+    wordSpacing: 2,
+    // 1 — «по ширине текста»; больше — растягивает, меньше — сжимает.
+    spanAngle: 1,
+    radiusOffset: 0,
+    angleOffset: 0,
+    bold: false,
+    italic: false,
+    ...patch,
+  };
+}
+
+/**
+ * Устаревшая фабрика дугового текста.
+ * Нужна только для чтения шаблонов, сохранённых до перехода на строки.
+ */
 export function createSealArcText(patch: Partial<SealArcText> = {}): SealArcText {
   return {
     enabled: true,
@@ -72,9 +97,6 @@ export function createSealArcText(patch: Partial<SealArcText> = {}): SealArcText
     fontSize: 9,
     letterSpacing: 1.2,
     wordSpacing: 2,
-    // 1° — «по ширине текста»: угол растёт сам от текста и трекинга,
-    // кегль при этом не меняется. Именно это значение видит пользователь,
-    // пока не начнёт специально растягивать дугу.
     spanAngle: 1,
     centerAngle: 270,
     radius: 0,
@@ -86,10 +108,14 @@ export function createSealArcText(patch: Partial<SealArcText> = {}): SealArcText
   };
 }
 
-/** Фактура «мокрой» печати. */
+/**
+ * Фактура «мокрой» печати.
+ * По умолчанию выключена: чистая векторная печать — это предсказуемый
+ * результат, а «живость» включают осознанно.
+ */
 export function createSealInk(patch: Partial<SealInk> = {}): SealInk {
   return {
-    enabled: true,
+    enabled: false,
     roughness: 0.3,
     grain: 0.3,
     doubleStrike: 0.28,
@@ -104,20 +130,24 @@ export function createSealSettings(patch: Partial<SealSettings> = {}): SealSetti
   return {
     diameterMm: SEAL_DEFAULT_MM,
     rings: [createSealRing(2.5, 0), createSealRing(1.4, 4.5)],
-    arcTop: createSealArcText({
-      text: 'ОБЩЕСТВО С ОГРАНИЧЕННОЙ ОТВЕТСТВЕННОСТЬЮ',
-      // Кегль подобран так, чтобы длинное название занимало верхнюю дугу
-      // (≈225°), но не замыкалось в кольцо. В рантайме кегль не подгоняется:
-      // он стабилен и меняется только пользователем.
-      fontSize: 5.5,
-      centerAngle: 270,
-    }),
-    arcBottom: createSealArcText({
-      text: 'г. МОСКВА',
-      fontSize: 8,
-      centerAngle: 90,
-      gap: 4,
-    }),
+    lines: [
+      createSealRingLine({
+        text: 'ОБЩЕСТВО С ОГРАНИЧЕННОЙ ОТВЕТСТВЕННОСТЬЮ',
+        // Кегль подобран так, чтобы длинное название занимало верхнюю дугу
+        // (≈225°), но не замыкалось в кольцо.
+        fontSize: 5.5,
+        slot: 0,
+        side: 'top',
+      }),
+      createSealRingLine({
+        text: 'г. МОСКВА',
+        // 5.5 pt — чтобы строка целиком помещалась в зазор 4.5 pt и не
+        // задевала кольца (кегль больше зазора вылезает за кольца).
+        fontSize: 5.5,
+        slot: 0,
+        side: 'bottom',
+      }),
+    ],
     divider: { enabled: true, radius: 0, width: 1.2 },
     ink: createSealInk(),
     ...patch,
@@ -143,11 +173,41 @@ export function sealDiameterMm(diameterPx: number): number {
  *  Совместимость со старыми шаблонами
  * ========================================================================== */
 
+/** Строка из устаревшей дуги (arcTop/arcBottom). */
+function lineFromLegacyArc(arc: SealArcText, side: 'top' | 'bottom'): SealRingLine {
+  return createSealRingLine({
+    text: arc.text,
+    side,
+    slot: 0,
+    fontSize: arc.fontSize,
+    letterSpacing: arc.letterSpacing,
+    wordSpacing: arc.wordSpacing,
+    spanAngle: arc.spanAngle,
+    bold: arc.bold,
+    italic: arc.italic,
+    fontId: arc.fontId,
+  });
+}
+
+/** Старые дуги → строки новой модели. */
+function linesFromLegacyArcs(
+  seal: Pick<SealSettings, 'arcTop' | 'arcBottom'>,
+): SealRingLine[] {
+  const lines: SealRingLine[] = [];
+  if (seal.arcTop?.enabled && seal.arcTop.text.trim()) {
+    lines.push(lineFromLegacyArc(seal.arcTop, 'top'));
+  }
+  if (seal.arcBottom?.enabled && seal.arcBottom.text.trim()) {
+    lines.push(lineFromLegacyArc(seal.arcBottom, 'bottom'));
+  }
+  return lines;
+}
+
 /**
  * Настройки печати для шаблона, созданного до появления конструктора.
  *
  * Старые печати хранят только `doubleBorder` + `circularText`. Превращаем
- * это в кольца и дуги, чтобы конструктор открывал их без потери вида.
+ * это в кольца и строки, чтобы конструктор открывал их без потери вида.
  */
 export function sealSettingsFromTemplate(template: StampTemplate): SealSettings {
   if (template.seal) return normalizeSealSettings(template.seal);
@@ -159,29 +219,51 @@ export function sealSettingsFromTemplate(template: StampTemplate): SealSettings 
   }
 
   const circular = template.circularText;
-  const top = createSealArcText({
-    enabled: Boolean(circular?.enabled && circular.text.trim()),
-    text: circular?.text ?? '',
-    fontSize: circular?.fontSize ?? 9,
-    letterSpacing: circular?.letterSpacing ?? 1,
-    centerAngle: 270,
-  });
-  const bottom = createSealArcText({
-    enabled: Boolean(circular?.enabled && circular.splitBottom && circular.bottomText.trim()),
-    text: circular?.bottomText ?? '',
-    fontSize: circular?.fontSize ?? 9,
-    letterSpacing: circular?.letterSpacing ?? 1,
-    centerAngle: 90,
-  });
+  const legacyArcs = {
+    arcTop: createSealArcText({
+      enabled: Boolean(circular?.enabled && circular.text.trim()),
+      text: circular?.text ?? '',
+      fontSize: circular?.fontSize ?? 9,
+      letterSpacing: circular?.letterSpacing ?? 1,
+    }),
+    arcBottom: createSealArcText({
+      enabled: Boolean(circular?.enabled && circular.splitBottom && circular.bottomText.trim()),
+      text: circular?.bottomText ?? '',
+      fontSize: circular?.fontSize ?? 9,
+      letterSpacing: circular?.letterSpacing ?? 1,
+    }),
+  };
 
   return normalizeSealSettings({
     diameterMm: sealDiameterMm(size),
     rings,
-    arcTop: top,
-    arcBottom: bottom,
+    lines: linesFromLegacyArcs(legacyArcs),
     divider: { enabled: false, radius: 0, width: 1 },
-    ink: createSealInk({ enabled: false }),
+    ink: createSealInk(),
   });
+}
+
+/** Нормализация одной строки. */
+function normalizeRingLine(line: SealRingLine, ringCount: number): SealRingLine {
+  const base = createSealRingLine();
+  const angle = Number.isFinite(line.angleOffset) ? line.angleOffset : 0;
+  return {
+    ...base,
+    ...line,
+    id: line.id || base.id,
+    text: line.text ?? '',
+    slot: Math.round(clamp(line.slot ?? 0, 0, Math.max(0, ringCount - 1))),
+    side: line.side === 'bottom' ? 'bottom' : 'top',
+    fontSize: clamp(line.fontSize ?? 7, 3, 40),
+    letterSpacing: clamp(line.letterSpacing ?? 1, -4, 40),
+    wordSpacing: clamp(line.wordSpacing ?? 2, -10, 60),
+    spanAngle: clamp(line.spanAngle ?? 1, 1, 340),
+    radiusOffset: clamp(line.radiusOffset ?? 0, -200, 200),
+    // Угол приводим к (-180; 180], чтобы поворот всегда читался одинаково.
+    angleOffset: (((angle + 180) % 360) + 360) % 360 - 180,
+    bold: Boolean(line.bold),
+    italic: Boolean(line.italic),
+  };
 }
 
 /**
@@ -197,31 +279,21 @@ export function normalizeSealSettings(seal: SealSettings): SealSettings {
       gap: index === 0 ? 0 : clamp(ring.gap, 0.5, 24),
     }));
 
-  const normalizeArc = (arc: SealArcText | undefined, centerAngle: number): SealArcText => {
-    const base = createSealArcText({ centerAngle });
-    if (!arc) return base;
-    return {
-      ...base,
-      ...arc,
-      fontSize: clamp(arc.fontSize, 4, 40),
-      letterSpacing: clamp(arc.letterSpacing, -4, 40),
-      wordSpacing: clamp(arc.wordSpacing, -10, 60),
-      // 1° — минимальное значение («по ширине текста»); 0 из старых
-      // библиотек трактуем так же, иначе текст схлопнулся бы в точку.
-      spanAngle: clamp(arc.spanAngle, 1, 340),
-      centerAngle: Number.isFinite(arc.centerAngle) ? arc.centerAngle : centerAngle,
-      radius: clamp(arc.radius, 0, 2000),
-      gap: clamp(arc.gap, 0, 60),
-      betweenRings: Boolean(arc.betweenRings),
-      text: arc.text ?? '',
-    };
-  };
+  // Новые строки; если их нет — поднимаем старые дуги.
+  const sourceLines =
+    Array.isArray(seal.lines) && seal.lines.length > 0
+      ? seal.lines
+      : seal.arcTop || seal.arcBottom
+        ? linesFromLegacyArcs(seal)
+        : [];
+  const lines = sourceLines
+    .slice(0, 24)
+    .map((line) => normalizeRingLine(line, rings.length));
 
   return {
     diameterMm: clamp(seal.diameterMm, SEAL_MIN_MM, SEAL_MAX_MM),
     rings,
-    arcTop: normalizeArc(seal.arcTop, 270),
-    arcBottom: normalizeArc(seal.arcBottom, 90),
+    lines,
     divider: {
       enabled: Boolean(seal.divider?.enabled),
       radius: clamp(seal.divider?.radius ?? 0, 0, 2000),
@@ -230,6 +302,7 @@ export function normalizeSealSettings(seal: SealSettings): SealSettings {
     ink: {
       ...createSealInk(),
       ...seal.ink,
+      enabled: Boolean(seal.ink?.enabled),
       roughness: clamp(seal.ink?.roughness ?? 0, 0, 1),
       grain: clamp(seal.ink?.grain ?? 0, 0, 1),
       doubleStrike: clamp(seal.ink?.doubleStrike ?? 0, 0, 1),
@@ -332,6 +405,45 @@ export interface SealArcLayout {
 }
 
 /**
+ * Минимальный угол, до которого строку можно сжать без «каши» из букв.
+ *
+ * Маркер сужения не должен обещать больше, чем может дать раскладка: ниже
+ * этого угла буквы уже наезжают друг на друга. Конструктор ограничивает
+ * маркер этим значением, поэтому ползунок и картинка не расходятся.
+ */
+export function sealArcMinSpan(input: {
+  text: string;
+  radius: number;
+  fontSize: number;
+  letterSpacing: number;
+  wordSpacing: number;
+  family: string;
+  bold: boolean;
+  italic: boolean;
+}): number {
+  const chars = Array.from(input.text);
+  if (chars.length === 0 || input.text.trim().length === 0) return 0;
+  const style = {
+    fontFamily: input.family,
+    fontSize: input.fontSize,
+    bold: input.bold,
+    italic: input.italic,
+    letterSpacing: 0,
+    lineHeight: 1.2,
+  };
+  const widths = chars.map((char) => measureTextWidth(char, style));
+  const advances = widths.map((width, index) => {
+    const extraWord = chars[index] === ' ' ? input.wordSpacing : 0;
+    return width + input.letterSpacing + extraWord;
+  });
+  const natural = advances.reduce((sum, value) => sum + value, 0);
+  const minAdvance = Math.min(...advances);
+  const minLength = natural - minAdvance * 0.75 * chars.length;
+  const radius = Math.max(4, input.radius);
+  return (Math.max(0, minLength) / radius) * (180 / Math.PI);
+}
+
+/**
  * Раскладка текста по дуге.
  *
  * Алгоритм:
@@ -377,21 +489,25 @@ export function layoutSealArc(input: SealArcLayoutInput): SealArcLayout {
   });
   const natural = advances.reduce((sum, value) => sum + value, 0);
 
-  // 3–4. Растяжение до заданного угла, но НЕ сжатие.
-  // `spanAngle` — минимальный угол: текст никогда не становится мельче или
-  // плотнее, чем ему нужно по ширине. Поэтому трекинг и межсловные интервалы
-  // меняют только угол дуги, а кегль остаётся тем, что выбрал пользователь.
+  // 3–4. Подгонка под заданный угол.
+  // `spanAngle` — целевой угол: 1 («по ширине текста») — естественная
+  // раскладка; больше — растягиваем; меньше — сжимаем шаг, насколько
+  // позволяют буквы. Кегль не меняется ни при каком значении — поэтому
+  // трекинг и интервалы двигают только дугу.
   const naturalAngle = natural / radius;
   const requestedAngle = (Math.max(1, input.spanAngle) * Math.PI) / 180;
   const MAX_TOTAL_ANGLE = (340 * Math.PI) / 180;
-  let targetAngle = Math.max(naturalAngle, requestedAngle);
+  const explicitSpan = input.spanAngle > 1.001;
+  let targetAngle = explicitSpan ? requestedAngle : naturalAngle;
   // Совсем длинный текст с огромным трекингом не должен замыкаться сам в себя.
   targetAngle = Math.min(targetAngle, MAX_TOTAL_ANGLE);
 
   let extra = (targetAngle * radius - natural) / chars.length;
   // Сжимать бесконечно нельзя: буквы начнут наезжать друг на друга.
+  // Разрешаем заметное сжатие (маркер «на сужение» должен работать), но
+  // оставляем глифам место, чтобы текст оставался читаемым.
   const minAdvance = Math.min(...advances);
-  extra = Math.max(extra, -minAdvance * 0.35);
+  extra = Math.max(extra, -minAdvance * 0.75);
 
   const totalLength = natural + extra * chars.length;
   const totalAngle = totalLength / radius;
@@ -483,20 +599,39 @@ export interface SealInkGeometry {
   divider: SealDividerGeometry | null;
 }
 
-/** Дуга печати, готовая к отрисовке. */
-export interface SealArcGeometry {
+/** Строка печати, готовая к отрисовке. */
+export interface SealRingLineGeometry {
+  /** Идентификатор строки — по нему выбираются маркеры и правки. */
+  lineId: string;
+  /** Зазор между кольцами (0 — между 1-м и 2-м). */
+  slot: number;
   side: 'top' | 'bottom';
   chars: StampCharLayout[];
   cx: number;
   cy: number;
+  /** Радиус базовой линии, pt. */
   radius: number;
-  /** Фактический кегль после авто-подгонки (px). */
+  /** Фактический кегль, pt. */
   fontSize: number;
   /** Границы дуги для маркеров растяжения, градусы. */
   startAngle: number;
   endAngle: number;
-  enabled: boolean;
+  /** Центр дуги, градусы (270 — верх, 90 — низ). */
+  centerAngle: number;
   text: string;
+}
+
+/** Зазор между кольцами (или свободное место внутри последнего кольца). */
+export interface SealSlotGeometry {
+  index: number;
+  /** Радиус середины зазора, pt. */
+  center: number;
+  /** Ширина зазора по радиусу, pt. */
+  thickness: number;
+  /** Меньший радиус зазора. */
+  innerEdge: number;
+  /** Больший радиус зазора. */
+  outerEdge: number;
 }
 
 /** Полная геометрия печати в координатах шаблона. */
@@ -504,7 +639,10 @@ export interface SealParts {
   width: number;
   height: number;
   ink: SealInkGeometry;
-  arcs: SealArcGeometry[];
+  /** Строки текста по кольцам. */
+  ringLines: SealRingLineGeometry[];
+  /** Зазоры между кольцами — нужны интерфейсу конструктора. */
+  slots: SealSlotGeometry[];
   lines: StampLineLayout[];
   logo: {
     src: string;
@@ -514,6 +652,45 @@ export interface SealParts {
     height: number;
     opacity: number;
   } | null;
+}
+
+/**
+ * Кольцевые зазоры: 0 — между 1-м и 2-м кольцом, 1 — между 2-м и 3-м, …,
+ * последний — свободное место внутри самого внутреннего кольца.
+ */
+export function sealSlotGeometry(
+  rings: { radius: number; width: number }[],
+  size: number,
+): SealSlotGeometry[] {
+  const slots: SealSlotGeometry[] = [];
+  for (let index = 0; index < rings.length; index += 1) {
+    const current = rings[index];
+    const outerEdge = current.radius - current.width / 2;
+    if (index < rings.length - 1) {
+      const next = rings[index + 1];
+      const innerEdge = next.radius + next.width / 2;
+      slots.push({
+        index,
+        center: (outerEdge + innerEdge) / 2,
+        thickness: Math.max(0, outerEdge - innerEdge),
+        innerEdge,
+        outerEdge,
+      });
+      continue;
+    }
+    // Под последним кольцом: полоса внутри него. Точной «второй границы»
+    // нет (там центр), поэтому берём разумную полосу и даём двигать строку.
+    const thickness = Math.max(8, Math.min(outerEdge * 0.45, size * 0.22));
+    const innerEdge = Math.max(2, outerEdge - thickness);
+    slots.push({
+      index,
+      center: (outerEdge + innerEdge) / 2,
+      thickness: outerEdge - innerEdge,
+      innerEdge,
+      outerEdge,
+    });
+  }
+  return slots;
 }
 
 /** Точки контура кольца с «дрожанием» радиуса. */
@@ -668,109 +845,101 @@ export function computeSealParts(
     }
   }
 
-  // --- Дуговой текст ------------------------------------------------------
-  const buildArc = (
-    arc: SealArcText,
-    side: 'top' | 'bottom',
-    gapDefault: number,
-  ): SealArcGeometry => {
-    const family = resolveFamily(arc.fontId ?? template.fontId);
-    const gap = Math.max(0, (arc.gap || gapDefault) * k);
-    const fontSize = Math.max(4, arc.fontSize * k);
-    const letterSpacing = arc.letterSpacing * k;
+  // --- Текст по кольцам ---------------------------------------------------
+  const slotGeometry = sealSlotGeometry(
+    radii.map((radius, index) => ({ radius, width: ringWidths[index].width })),
+    size,
+  );
 
-    /**
-     * Радиус базовой линии.
-     *
-     * Обычный режим: верхняя дуга сидит внутри кольца макушками наружу,
-     * нижняя — прижата к кольцу и растёт макушками к центру.
-     *
-     * «Между кольцами»: буквы центрируются в кольцевом зазоре между двумя
-     * наружными кольцами — визуально текст ровно посередине зазора, а не
-     * липнет к внутреннему кольцу.
-     */
-    const radialRadius = (): number => {
-      if (arc.betweenRings && radii.length >= 2) {
-        const outerInnerEdge = radii[0] - ringWidths[0].width / 2;
-        const nextOuterEdge = radii[1] + ringWidths[1].width / 2;
-        const centerRadius = (outerInnerEdge + nextOuterEdge) / 2;
-        // Глиф занимает ~0.72 кегля; сдвигаем базовую линию так, чтобы
-        // «чернильный» прямоугольник буквы был по центру зазора.
-        const baseline =
-          side === 'top'
-            ? centerRadius - fontSize * 0.36
-            : centerRadius + fontSize * 0.36;
-        return Math.max(nextOuterEdge + 1, Math.min(outerInnerEdge - 1, baseline));
-      }
-      return arc.radius > 0 ? arc.radius * k : innerEdge - gap - (side === 'top' ? fontSize * 0.72 : 0);
-    };
+  /** Строки в одном зазоре и на одной половине встают стопкой по центру. */
+  const groups = new Map<string, SealRingLine[]>();
+  for (const line of seal.lines) {
+    if (!line.text.trim()) continue;
+    const key = `${line.slot}:${line.side}`;
+    const bucket = groups.get(key);
+    if (bucket) bucket.push(line);
+    else groups.set(key, [line]);
+  }
 
-    const radius = Math.max(size * 0.1, radialRadius());
+  const ringLines: SealRingLineGeometry[] = [];
+  for (const [key, bucket] of groups) {
+    const [slotRaw, sideRaw] = key.split(':');
+    const slotIndex = Math.min(slotGeometry.length - 1, Math.max(0, Number(slotRaw)));
+    const slot = slotGeometry[slotIndex];
+    const side: 'top' | 'bottom' = sideRaw === 'bottom' ? 'bottom' : 'top';
+    if (!slot) continue;
 
-    if (!arc.enabled) {
-      return {
+    const scaled = bucket.map((line) => ({
+      line,
+      fontSize: Math.max(3, line.fontSize * k),
+    }));
+    const gapBetween = 1.5;
+    const totalHeight =
+      scaled.reduce((sum, item) => sum + item.fontSize * 1.3, 0) +
+      Math.max(0, scaled.length - 1) * gapBetween;
+    // Идём от внешнего края зазора к внутреннему: первая строка — наружная.
+    let cursor = slot.center + totalHeight / 2;
+
+    for (const item of scaled) {
+      const height = item.fontSize * 1.3;
+      const visualCenter = cursor - height / 2;
+      cursor -= height + gapBetween;
+
+      // Базовая линия: у верхней половины буквы растут наружу от неё,
+      // у нижней — внутрь к центру. Поэтому середина «чернил» смещена.
+      const baselineCenter =
+        side === 'top' ? visualCenter - item.fontSize * 0.36 : visualCenter + item.fontSize * 0.36;
+      const radius = Math.max(size * 0.05, baselineCenter + item.line.radiusOffset * k);
+      const centerAngle =
+        (side === 'top' ? 270 : 90) + item.line.angleOffset;
+
+      const layout = layoutSealArc({
+        text: item.line.text,
+        radius,
+        fontSize: item.fontSize,
+        letterSpacing: item.line.letterSpacing * k,
+        wordSpacing: item.line.wordSpacing * k,
+        spanAngle: item.line.spanAngle,
+        centerAngle,
         side,
-        chars: [],
+        cx,
+        cy,
+        family: resolveFamily(item.line.fontId ?? template.fontId),
+        fontId: item.line.fontId ?? template.fontId,
+        color,
+        bold: item.line.bold,
+        italic: item.line.italic,
+      });
+
+      ringLines.push({
+        lineId: item.line.id,
+        slot: slotIndex,
+        side,
+        chars: layout.chars,
         cx,
         cy,
         radius,
-        fontSize,
-        startAngle: arc.centerAngle,
-        endAngle: arc.centerAngle,
-        enabled: false,
-        text: arc.text,
-      };
+        fontSize: item.fontSize,
+        startAngle: layout.startAngle,
+        endAngle: layout.endAngle,
+        centerAngle,
+        text: item.line.text,
+      });
     }
+  }
 
-    const layout = layoutSealArc({
-      text: arc.text,
-      radius,
-      fontSize,
-      letterSpacing,
-      wordSpacing: arc.wordSpacing * k,
-      spanAngle: arc.spanAngle,
-      centerAngle: arc.centerAngle,
-      side,
-      cx,
-      cy,
-      family,
-      fontId: arc.fontId ?? template.fontId,
-      color,
-      bold: arc.bold,
-      italic: arc.italic,
-    });
-
-    return {
-      side,
-      chars: layout.chars,
-      cx,
-      cy,
-      radius,
-      fontSize,
-      startAngle: layout.startAngle,
-      endAngle: layout.endAngle,
-      enabled: true,
-      text: arc.text,
-    };
-  };
-
-  const arcs = [
-    buildArc(seal.arcTop, 'top', 3),
-    buildArc(seal.arcBottom, 'bottom', 4),
-  ];
-
-  // --- Центр: что остаётся внутри дуг -------------------------------------
-  // Свободный радиус центра считаем по фактическим дугам: верхняя растёт
-  // макушками наружу от базовой линии, нижняя — внутрь. Иначе центр
-  // наезжает на буквы дуг (особенно на длинных названиях).
-  const [topArc, bottomArc] = arcs;
-  const topInner =
-    topArc.enabled && topArc.chars.length > 0 ? topArc.radius - 2 : innerEdge - 2;
-  const bottomInner =
-    bottomArc.enabled && bottomArc.chars.length > 0
-      ? bottomArc.radius - Math.max(4, bottomArc.fontSize * 0.9)
-      : innerEdge - 2;
-  const centerLimit = Math.max(size * 0.1, Math.min(topInner, bottomInner) - 2);
+  // --- Центр: что остаётся внутри текста ----------------------------------
+  // Свободный радиус центра считаем по фактическим строкам: у верхних
+  // «чернила» начинаются от базовой линии наружу, у нижних — внутрь.
+  let centerLimit = innerEdge - 2;
+  for (const ringLine of ringLines) {
+    const inner =
+      ringLine.side === 'top'
+        ? ringLine.radius
+        : ringLine.radius - ringLine.fontSize * 0.9;
+    centerLimit = Math.min(centerLimit, inner - 2);
+  }
+  centerLimit = Math.max(size * 0.1, centerLimit);
   // Оставляем поле до разделительной окружности: текст не должен её касаться.
   const maxLineWidth = Math.max(6, centerLimit * 1.45);
 
@@ -882,14 +1051,13 @@ export function computeSealParts(
       Math.max(contentHalfHeight, contentHalfWidth) / 0.78 + Math.max(1.5, size * 0.012);
     // Нижняя граница — чтобы у маленьких печатей разделитель не схлопнулся.
     const minRadius = Math.max(size * 0.14, contentHalfHeight + 2);
-    // Разделитель не должен пересекать текст верхней дуги.
-    const arcLimit = topArc.enabled && topArc.chars.length > 0 ? topArc.radius - 4 : innerEdge - 2;
     const radius =
       seal.divider.radius > 0 ? seal.divider.radius * k : Math.max(minRadius, autoRadius);
     divider = {
       cx,
       cy,
-      radius: Math.max(4, Math.min(radius, centerLimit, arcLimit)),
+      // centerLimit уже учитывает текст по кольцам — разделитель его не пересечёт.
+      radius: Math.max(4, Math.min(radius, centerLimit)),
       width: Math.max(0.2, seal.divider.width * k),
     };
   }
@@ -929,7 +1097,8 @@ export function computeSealParts(
     width,
     height,
     ink: { ink: seal.ink, rings, ghostRings, specks, divider },
-    arcs,
+    ringLines,
+    slots: slotGeometry,
     lines,
     logo,
   };

@@ -25,7 +25,8 @@ import {
   pointsToPath,
   paintSealInk,
   type SealInkGeometry,
-  type SealArcGeometry,
+  type SealRingLineGeometry,
+  type SealSlotGeometry,
 } from '@/services/sealRenderService';
 
 /** Шрифт для отрисовки штампа. */
@@ -86,13 +87,15 @@ export interface StampLayout {
   lines: StampLineLayout[];
   chars: StampCharLayout[];
   /**
-   * «Краска» круглой печати: кольца, зерно, разделитель и границы дуг.
+   * «Краска» круглой печати: кольца, зерно, разделитель и строки текста.
    * `null` — обычный штамп (рамки, прямой и круговой текст).
    */
   seal: {
     ink: SealInkGeometry;
-    /** Дуги с углами — нужны маркерам растяжения в конструкторе. */
-    arcs: SealArcGeometry[];
+    /** Строки с углами — нужны маркерам растяжения в конструкторе. */
+    ringLines: SealRingLineGeometry[];
+    /** Кольцевые зазоры — нужны перетаскиванию строк в конструкторе. */
+    slots: SealSlotGeometry[];
   } | null;
   logo: {
     src: string;
@@ -527,8 +530,8 @@ function buildSealLayout(
     divider: null,
     frames: [],
     lines: parts.lines,
-    chars: parts.arcs.flatMap((arc) => arc.chars),
-    seal: { ink: parts.ink, arcs: parts.arcs },
+    chars: parts.ringLines.flatMap((item) => item.chars),
+    seal: { ink: parts.ink, ringLines: parts.ringLines, slots: parts.slots },
     logo: parts.logo,
   };
 }
@@ -602,17 +605,25 @@ function scaleStampLayout(layout: StampLayout, scale: number): StampLayout {
                 }
               : null,
           },
-          arcs: layout.seal.arcs.map((arc) => ({
-            ...arc,
-            cx: p(arc.cx),
-            cy: p(arc.cy),
-            radius: p(arc.radius),
-            chars: arc.chars.map((char) => ({
+          ringLines: layout.seal.ringLines.map((item) => ({
+            ...item,
+            cx: p(item.cx),
+            cy: p(item.cy),
+            radius: p(item.radius),
+            fontSize: p(item.fontSize),
+            chars: item.chars.map((char) => ({
               ...char,
               x: p(char.x),
               y: p(char.y),
               fontSize: p(char.fontSize),
             })),
+          })),
+          slots: layout.seal.slots.map((slot) => ({
+            ...slot,
+            center: p(slot.center),
+            thickness: p(slot.thickness),
+            innerEdge: p(slot.innerEdge),
+            outerEdge: p(slot.outerEdge),
           })),
         }
       : null,

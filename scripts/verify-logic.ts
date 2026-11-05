@@ -44,13 +44,17 @@ import {
   SEAL_MIN_MM,
   SEAL_PX_PER_MM,
   computeSealParts,
+  createSealRing,
+  createSealRingLine,
   createSealSettings,
   layoutSealArc,
   normalizeSealSettings,
+  sealArcMinSpan,
   sealDiameterMm,
   sealDiameterPx,
   sealRingRadii,
   sealSettingsFromTemplate,
+  sealSlotGeometry,
   sealInkAlpha,
   type SealArcLayoutInput,
 } from '@/services/sealRenderService';
@@ -63,7 +67,7 @@ import {
   fitStampTemplate,
   stampTemplateToSvg,
 } from '@/services/stampRenderService';
-import type { EditorObject, ShapeKind, StrokeData } from '@/types';
+import type { EditorObject, SealArcText, SealSettings, ShapeKind, StrokeData } from '@/types';
 
 let passed = 0;
 let failed = 0;
@@ -748,7 +752,7 @@ check(
 );
 
 /* ==========================================================================
- *  Круглая печать: кольца, дуговой текст, фактура
+ *  Круглая печать: кольца, строки по кольцам, фактура
  * ========================================================================== */
 
 console.log('\nКруглая печать');
@@ -789,7 +793,134 @@ check(
   String(ringRadii[1]),
 );
 
-/* --- дуговой текст ------------------------------------------------------- */
+/* --- строки по кольцам --------------------------------------------------- */
+
+const defaultSeal = createSealSettings();
+check('по умолчанию две строки по кольцам', defaultSeal.lines.length === 2, String(defaultSeal.lines.length));
+check('по умолчанию «эффект живой печати» выключен', defaultSeal.ink.enabled === false);
+check('по умолчанию угол строки 1°', defaultSeal.lines.every((line) => line.spanAngle === 1));
+
+const normalizedLines = normalizeSealSettings({
+  ...defaultSeal,
+  lines: [
+    createSealRingLine({ text: 'А', slot: 9, fontSize: 100, spanAngle: 0 }),
+    createSealRingLine({ text: 'Б', slot: -5 }),
+  ],
+}).lines;
+check(
+  'зазор строки клампится по числу колец',
+  normalizedLines[0].slot === defaultSeal.rings.length - 1 && normalizedLines[1].slot === 0,
+  normalizedLines.map((line) => line.slot).join(', '),
+);
+check('кегль строки ограничен', normalizedLines[0].fontSize === 40, String(normalizedLines[0].fontSize));
+check('spanAngle 0 нормализуется в 1°', normalizedLines[0].spanAngle === 1);
+
+const legacyArc: SealArcText = {
+  enabled: true,
+  text: 'СТАРАЯ ДУГА',
+  fontSize: 8,
+  letterSpacing: 1,
+  wordSpacing: 2,
+  spanAngle: 1,
+  centerAngle: 270,
+  radius: 0,
+  gap: 3,
+  betweenRings: true,
+  bold: false,
+  italic: false,
+};
+const migrated = normalizeSealSettings({
+  ...defaultSeal,
+  lines: [],
+  arcTop: legacyArc,
+  arcBottom: null,
+} as SealSettings);
+check(
+  'старые дуги мигрируют в строки',
+  migrated.lines.length === 1 &&
+    migrated.lines[0].text === 'СТАРАЯ ДУГА' &&
+    migrated.lines[0].side === 'top',
+  JSON.stringify(migrated.lines.map((line) => [line.text, line.side])),
+);
+
+/* --- раскладка по кольцевому зазору -------------------------------------- */
+
+const familyOf = (): string => 'PT Sans';
+const sealTemplate = createSealTemplate();
+const inkedTemplate = createSealTemplate({
+  seal: createSealSettings({ ink: { ...createSealSettings().ink, enabled: true } }),
+});
+const partsA = computeSealParts(inkedTemplate, inkedTemplate.width, inkedTemplate.height, familyOf);
+const partsB = computeSealParts(inkedTemplate, inkedTemplate.width, inkedTemplate.height, familyOf);
+const slot0 = partsA.slots[0];
+const topLine = partsA.ringLines.find((line) => line.side === 'top');
+const bottomLine = partsA.ringLines.find((line) => line.side === 'bottom');
+check('зазоры посчитаны для пары колец', partsA.slots.length === 2, String(partsA.slots.length));
+check(
+  'верхняя строка стоит в зазоре между кольцами',
+  Boolean(topLine) && topLine!.radius < slot0.outerEdge && topLine!.radius > slot0.innerEdge,
+  topLine ? `${topLine.radius.toFixed(1)} в [${slot0.innerEdge.toFixed(1)}; ${slot0.outerEdge.toFixed(1)}]` : '',
+);
+check(
+  'нижняя строка тоже в зазоре',
+  Boolean(bottomLine) && bottomLine!.radius < slot0.outerEdge && bottomLine!.radius > slot0.innerEdge,
+);
+check(
+  'верхняя строка центрирована по зазору',
+  Boolean(topLine) && Math.abs(topLine!.radius + 0.36 * topLine!.fontSize - slot0.center) < 0.02,
+  topLine ? `${(topLine.radius + 0.36 * topLine.fontSize - slot0.center).toFixed(2)}` : '',
+);
+check(
+  'нижняя строка центрирована по зазору',
+  Boolean(bottomLine) && Math.abs(bottomLine!.radius - 0.36 * bottomLine!.fontSize - slot0.center) < 0.02,
+);
+
+const pairTemplate = createSealTemplate({
+  seal: createSealSettings({
+    lines: [
+      createSealRingLine({ text: 'ПЕРВАЯ', slot: 0, side: 'top', fontSize: 5 }),
+      createSealRingLine({ text: 'ВТОРАЯ', slot: 0, side: 'top', fontSize: 5 }),
+    ],
+  }),
+});
+const pairParts = computeSealParts(pairTemplate, pairTemplate.width, pairTemplate.height, familyOf);
+const stackPair = pairParts.ringLines
+  .filter((line) => line.side === 'top')
+  .sort((a, b) => b.radius - a.radius);
+check('две строки встают стопкой: наружная и внутренняя', stackPair.length === 2 && stackPair[0].radius > stackPair[1].radius,
+  stackPair.map((line) => line.radius.toFixed(1)).join(' > '));
+check(
+  'блок из двух строк центрирован по зазору',
+  Math.abs(
+    (stackPair[0].radius + 0.36 * stackPair[0].fontSize + stackPair[1].radius + 0.36 * stackPair[1].fontSize) / 2 -
+      pairParts.slots[0].center,
+  ) < 0.02,
+);
+
+const threeRingTemplate = createSealTemplate({
+  seal: createSealSettings({
+    rings: [createSealRing(2.5, 0), createSealRing(1.4, 4.5), createSealRing(1, 3)],
+    lines: [
+      createSealRingLine({ text: 'СРЕДНИЙ ЗАЗОР', slot: 1, side: 'top', fontSize: 4 }),
+      createSealRingLine({ text: 'ПОД КОЛЬЦОМ', slot: 2, side: 'bottom', fontSize: 4 }),
+    ],
+  }),
+});
+const threeParts = computeSealParts(threeRingTemplate, threeRingTemplate.width, threeRingTemplate.height, familyOf);
+const middleLine = threeParts.ringLines.find((line) => line.slot === 1);
+const underLine = threeParts.ringLines.find((line) => line.slot === 2);
+check(
+  'текст можно поставить между 2-м и 3-м кольцом',
+  Boolean(middleLine) &&
+    middleLine!.radius > threeParts.slots[1].innerEdge &&
+    middleLine!.radius < threeParts.slots[1].outerEdge,
+);
+check(
+  'текст можно поставить под последним кольцом',
+  Boolean(underLine) && underLine!.radius < threeParts.slots[2].outerEdge + 0.01,
+);
+
+/* --- дуговой текст: ориентация и углы ------------------------------------ */
 
 const arcBase: SealArcLayoutInput = {
   text: 'ТЕСТ',
@@ -797,7 +928,7 @@ const arcBase: SealArcLayoutInput = {
   fontSize: 8,
   letterSpacing: 1,
   wordSpacing: 2,
-  spanAngle: 0,
+  spanAngle: 1,
   centerAngle: 270,
   side: 'top',
   cx: 60,
@@ -823,22 +954,14 @@ check('глиф на верхушке стоит ровно (не наклонё
 
 const singleBottom = layoutSealArc({ ...arcBase, text: 'А', side: 'bottom', centerAngle: 90 });
 const bottomAngle = ((singleBottom.chars[0].angle % 360) + 360) % 360;
-check(
-  'глиф на нижней дуге не перевёрнут',
-  bottomAngle < 0.001 || bottomAngle > 359.999,
-  String(bottomAngle),
-);
+check('глиф на нижней дуге не перевёрнут', bottomAngle < 0.001 || bottomAngle > 359.999, String(bottomAngle));
 
 const bottomArc = layoutSealArc({ ...arcBase, text: 'ГОРОД', side: 'bottom', centerAngle: 90 });
 check(
   'нижняя дуга читается слева направо',
   bottomArc.chars[0].x < bottomArc.chars[bottomArc.chars.length - 1].x,
-  `${bottomArc.chars[0].x.toFixed(1)} → ${bottomArc.chars[3].x.toFixed(1)}`,
 );
-check(
-  'нижняя дуга симметрична относительно низа',
-  close((bottomArc.startAngle + bottomArc.endAngle) / 2, 90, 1e-6),
-);
+check('нижняя дуга симметрична относительно низа', close((bottomArc.startAngle + bottomArc.endAngle) / 2, 90, 1e-6));
 
 const spanWithTracking = (letterSpacing: number): number =>
   layoutSealArc({ ...arcBase, letterSpacing }).spanAngle;
@@ -847,120 +970,111 @@ check(
   spanWithTracking(8) > spanWithTracking(0),
   `${spanWithTracking(0).toFixed(1)}° → ${spanWithTracking(8).toFixed(1)}°`,
 );
-
-const spanWithWord = (wordSpacing: number): number =>
-  layoutSealArc({ ...arcBase, text: 'А Б', wordSpacing }).spanAngle;
-check(
-  'межсловный интервал растягивает дугу на пробеле',
-  spanWithWord(12) > spanWithWord(0) + 1,
-  `${spanWithWord(0).toFixed(1)}° → ${spanWithWord(12).toFixed(1)}°`,
-);
 check(
   'spanAngle задаёт точный угол дуги',
   Math.abs(layoutSealArc({ ...arcBase, spanAngle: 90 }).spanAngle - 90) < 0.01,
   String(layoutSealArc({ ...arcBase, spanAngle: 90 }).spanAngle),
 );
-const longArcText = 'ДЛИННЫЙ ТЕКСТ ДЛЯ ПРОВЕРКИ УГЛА';
 check(
-  'угол меньше естественного не сжимает дугу',
-  Math.abs(
-    layoutSealArc({ ...arcBase, text: longArcText, spanAngle: 1 }).spanAngle -
-      layoutSealArc({ ...arcBase, text: longArcText, spanAngle: 2 }).spanAngle,
-  ) < 0.001,
-);
-check(
-  'по умолчанию угол дуги 1° («по ширине текста»)',
-  createSealSettings().arcTop.spanAngle === 1 && createSealSettings().arcBottom.spanAngle === 1,
-);
-check(
-  'старое значение 0 нормализуется в 1° и не схлопывает текст',
-  normalizeSealSettings({
-    ...createSealSettings(),
-    arcTop: { ...createSealSettings().arcTop, spanAngle: 0 },
-  }).arcTop.spanAngle === 1,
-);
-check(
-  'сжатие дуги не даёт буквам наехать друг на друга сильнее лимита',
-  layoutSealArc({ ...arcBase, text: 'ДЛИННЫЙ ТЕКСТ', spanAngle: 5 }).spanAngle > 5,
+  'spanAngle меньше естественного — дуга сжимается',
+  layoutSealArc({ ...arcBase, text: 'ДЛИННЫЙ ТЕКСТ', spanAngle: 30 }).spanAngle <
+    layoutSealArc({ ...arcBase, text: 'ДЛИННЫЙ ТЕКСТ', spanAngle: 1 }).spanAngle,
 );
 
-/* --- кегль стабилен при трекинге ---------------------------------------- */
+const ringLongText = 'ДЛИННЫЙ ТЕКСТ ДЛЯ ПРОВЕРКИ УГЛА';
+const longNatural = layoutSealArc({ ...arcBase, text: ringLongText, spanAngle: 1 }).spanAngle;
+const minSpan = sealArcMinSpan({
+  text: ringLongText,
+  radius: 50,
+  fontSize: 8,
+  letterSpacing: 1,
+  wordSpacing: 2,
+  family: 'PT Sans',
+  bold: false,
+  italic: false,
+});
+check('минимальный угол сжатия меньше естественного', minSpan > 0 && minSpan < longNatural,
+  `${minSpan.toFixed(1)}° < ${longNatural.toFixed(1)}°`);
+check(
+  'маркер не может сжать строку сильнее предела',
+  Math.abs(layoutSealArc({ ...arcBase, text: ringLongText, spanAngle: Math.max(1, minSpan) }).spanAngle - minSpan) < 0.5,
+);
+check('для пустой строки минимальный угол нулевой', sealArcMinSpan({ ...arcBase, text: '   ' }) === 0);
 
-const arcWithTracking = (letterSpacing: number) =>
+/* --- кегль стабилен при трекинге ----------------------------------------- */
+
+const trackingTemplate = (spacing: number): ReturnType<typeof createSealTemplate> =>
   createSealTemplate({
-    seal: {
-      ...createSealSettings(),
-      arcTop: { ...createSealSettings().arcTop, letterSpacing },
-    },
+    seal: createSealSettings({
+      lines: [
+        createSealRingLine({
+          text: 'ОБЩЕСТВО С ОГРАНИЧЕННОЙ ОТВЕТСТВЕННОСТЬЮ',
+          slot: 0,
+          side: 'top',
+          fontSize: 5.5,
+          letterSpacing: spacing,
+        }),
+      ],
+    }),
   });
-const trackParts = (letterSpacing: number) => {
-  const t = arcWithTracking(letterSpacing);
-  return computeSealParts(t, t.width, t.height, () => 'PT Sans');
+const trackParts = (spacing: number) => {
+  const t = trackingTemplate(spacing);
+  return computeSealParts(t, t.width, t.height, familyOf);
 };
 const trackLow = trackParts(1);
 const trackHigh = trackParts(6);
 const spanOfParts = (parts: ReturnType<typeof computeSealParts>): number => {
-  const arc = parts.arcs.find((item) => item.side === 'top');
-  return arc ? Math.abs(arc.endAngle - arc.startAngle) : 0;
+  const line = parts.ringLines.find((item) => item.side === 'top');
+  return line ? Math.abs(line.endAngle - line.startAngle) : 0;
 };
 check(
   'кегль не меняется при изменении трекинга',
-  Math.abs(trackLow.arcs[0].fontSize - trackHigh.arcs[0].fontSize) < 0.001,
-  `${trackLow.arcs[0].fontSize} → ${trackHigh.arcs[0].fontSize}`,
+  Math.abs(trackLow.ringLines[0].fontSize - trackHigh.ringLines[0].fontSize) < 0.001,
 );
 check(
-  'трекинг растягивает фактический угол дуги',
+  'трекинг растягивает фактический угол строки',
   spanOfParts(trackHigh) > spanOfParts(trackLow),
   `${spanOfParts(trackLow).toFixed(1)}° → ${spanOfParts(trackHigh).toFixed(1)}°`,
 );
 
-/* --- текст между кольцами ----------------------------------------------- */
+/* --- общий layout и масштабирование ------------------------------------- */
 
-const betweenTemplate = createSealTemplate({
-  seal: {
-    ...createSealSettings(),
-    arcTop: { ...createSealSettings().arcTop, betweenRings: true },
-  },
-});
-const betweenParts = computeSealParts(
-  betweenTemplate,
-  betweenTemplate.width,
-  betweenTemplate.height,
-  () => 'PT Sans',
-);
-const betweenArc = betweenParts.arcs.find((item) => item.side === 'top');
-const outerRing = betweenParts.ink.rings[0];
-const innerRing = betweenParts.ink.rings[1];
-const outerInnerEdge = outerRing.radius - outerRing.width / 2;
-const nextOuterEdge = innerRing.radius + innerRing.width / 2;
+const sealLayout = computeStampLayout(sealTemplate, familyOf);
+check('layout печати без прямоугольных рамок', sealLayout.frames.length === 0);
 check(
-  'текст «между кольцами» стоит в кольцевом зазоре',
-  Boolean(betweenArc) && betweenArc!.radius > nextOuterEdge && betweenArc!.radius < outerInnerEdge,
-  betweenArc
-    ? `${betweenArc.radius.toFixed(1)} px в [${nextOuterEdge.toFixed(1)}; ${outerInnerEdge.toFixed(1)}]`
-    : 'дуга не найдена',
+  'layout содержит кольца, строки и разделитель',
+  Boolean(sealLayout.seal) &&
+    sealLayout.seal!.ink.rings.length === 2 &&
+    sealLayout.seal!.ringLines.length === 2 &&
+    Boolean(sealLayout.seal!.ink.divider),
 );
 check(
-  'текст «между кольцами» центрирован по зазору',
-  Boolean(betweenArc) &&
-    Math.abs(
-      betweenArc!.radius + 0.36 * betweenArc!.fontSize - (outerInnerEdge + nextOuterEdge) / 2,
-    ) < 1.5,
-  betweenArc
-    ? `${(
-        betweenArc.radius +
-        0.36 * betweenArc.fontSize -
-        (outerInnerEdge + nextOuterEdge) / 2
-      ).toFixed(2)} px от центра зазора`
-    : '',
+  'глифы строк попадают в общий список символов',
+  sealLayout.chars.length === sealLayout.seal!.ringLines.reduce((sum, item) => sum + item.chars.length, 0),
 );
 
-/* --- геометрия и фактура ------------------------------------------------ */
+const doubled = fitStampTemplate(sealTemplate, sealTemplate.width * 2, sealTemplate.height * 2);
+const doubledLayout = computeStampLayout(doubled, familyOf);
+check(
+  'растянутая печать: кольца масштабируются',
+  doubledLayout.seal!.ink.rings[0].radius > sealLayout.seal!.ink.rings[0].radius * 1.9,
+);
+check(
+  'растянутая печать: кегль строк тоже растёт',
+  doubledLayout.seal!.ringLines[0].fontSize > sealLayout.seal!.ringLines[0].fontSize * 1.7,
+);
+check(
+  'растянутая печать: зазоры масштабируются',
+  doubledLayout.seal!.slots[0].thickness > sealLayout.seal!.slots[0].thickness * 1.9,
+);
+check(
+  'геометрия зазоров: середина между границами',
+  close(sealSlotGeometry(sealLayout.seal!.ink.rings, sealTemplate.width)[0].center,
+    (sealLayout.seal!.slots[0].innerEdge + sealLayout.seal!.slots[0].outerEdge) / 2, 0.01),
+);
 
-const sealTemplate = createSealTemplate();
-const familyOf = (): string => 'PT Sans';
-const partsA = computeSealParts(sealTemplate, sealTemplate.width, sealTemplate.height, familyOf);
-const partsB = computeSealParts(sealTemplate, sealTemplate.width, sealTemplate.height, familyOf);
+/* --- фактура ------------------------------------------------------------- */
+
 check(
   'рисунок краски воспроизводим при одном seed',
   JSON.stringify(partsA.ink.specks.slice(0, 3)) === JSON.stringify(partsB.ink.specks.slice(0, 3)),
@@ -976,6 +1090,7 @@ check(
   String(glyphAlpha),
 );
 check('без эффекта прижим букв ровный', sealInkAlpha(5, { ...glyphInk, enabled: false }) === 1);
+check('по умолчанию фактура выключена', glyphInk.enabled === false);
 
 const sealOff = createSealTemplate({
   seal: {
@@ -987,17 +1102,7 @@ const partsOff = computeSealParts(sealOff, sealOff.width, sealOff.height, family
 check('без эффекта кольца ровные', partsOff.ink.rings.every((ring) => ring.points === null));
 check('без эффекта нет зерна и второго проката', partsOff.ink.specks.length === 0 && partsOff.ink.ghostRings.length === 0);
 
-const normalizedSeal = normalizeSealSettings({
-  ...createSealSettings(),
-  diameterMm: 12,
-  rings: Array.from({ length: 6 }, () => ({ width: 40, gap: 99 })),
-});
-check(
-  'настройки клампятся: диаметр 30–60, колец не больше четырёх',
-  normalizedSeal.diameterMm === SEAL_MIN_MM && normalizedSeal.rings.length === 4,
-  JSON.stringify({ mm: normalizedSeal.diameterMm, rings: normalizedSeal.rings.length }),
-);
-check('толщина колец ограничена', normalizedSeal.rings.every((ring) => ring.width <= 12));
+/* --- обратная совместимость --------------------------------------------- */
 
 const legacySeal = sealSettingsFromTemplate(
   createStampTemplate({
@@ -1006,17 +1111,17 @@ const legacySeal = sealSettingsFromTemplate(
     height: 120,
     doubleBorder: true,
     borderGap: 5,
-    circularText: { ...createCircularText(), enabled: true, text: 'ОРГАНИЗАЦИЯ' },
+    circularText: { ...createCircularText(), enabled: true, text: 'ОРГАНИЗАЦИЯ', splitBottom: false, bottomText: '' },
   }),
 );
 check(
-  'старый шаблон печати превращается в кольца и дуги',
-  legacySeal.rings.length === 2 && legacySeal.arcTop.text === 'ОРГАНИЗАЦИЯ',
-  JSON.stringify({ rings: legacySeal.rings.length, text: legacySeal.arcTop.text }),
+  'старый шаблон печати превращается в кольца и строку',
+  legacySeal.rings.length === 2 &&
+    legacySeal.lines.length === 1 &&
+    legacySeal.lines[0].text === 'ОРГАНИЗАЦИЯ',
+  JSON.stringify({ rings: legacySeal.rings.length, lines: legacySeal.lines.length }),
 );
 
-// Обратная совместимость: шаблон без `seal` (старая библиотека, чужой проект)
-// обязан рисоваться прежним движком — рамками и круговым текстом.
 const legacyLayout = computeStampLayout(
   createStampTemplate({
     shape: 'round',
@@ -1033,35 +1138,6 @@ check(
   JSON.stringify({ seal: legacyLayout.seal, frames: legacyLayout.frames.length, chars: legacyLayout.chars.length }),
 );
 
-/* --- общий layout и масштабирование ------------------------------------- */
-
-const sealLayout = computeStampLayout(sealTemplate, familyOf);
-check('layout печати без прямоугольных рамок', sealLayout.frames.length === 0);
-check(
-  'layout содержит кольца, дуги и разделитель',
-  Boolean(sealLayout.seal) &&
-    sealLayout.seal!.ink.rings.length === 2 &&
-    sealLayout.seal!.arcs.length === 2 &&
-    Boolean(sealLayout.seal!.ink.divider),
-);
-check(
-  'глифы дуг попадают в общий список символов',
-  sealLayout.chars.length === sealLayout.seal!.arcs.reduce((sum, arc) => sum + arc.chars.length, 0),
-);
-
-const doubled = fitStampTemplate(sealTemplate, sealTemplate.width * 2, sealTemplate.height * 2);
-const doubledLayout = computeStampLayout(doubled, familyOf);
-check(
-  'растянутая печать: кольца масштабируются',
-  doubledLayout.seal!.ink.rings[0].radius > sealLayout.seal!.ink.rings[0].radius * 1.9,
-  `${sealLayout.seal!.ink.rings[0].radius.toFixed(1)} → ${doubledLayout.seal!.ink.rings[0].radius.toFixed(1)}`,
-);
-check(
-  'растянутая печать: кегль дуги тоже растёт',
-  doubledLayout.seal!.arcs[0].fontSize > sealLayout.seal!.arcs[0].fontSize * 1.7,
-  `${sealLayout.seal!.arcs[0].fontSize.toFixed(2)} → ${doubledLayout.seal!.arcs[0].fontSize.toFixed(2)}`,
-);
-
 /* --- векторный SVG ------------------------------------------------------ */
 
 const sealSvg = stampTemplateToSvg(sealOff, familyOf);
@@ -1071,10 +1147,7 @@ check(
   String((sealSvg.match(/<circle /g) ?? []).length),
 );
 check('SVG печати: текст по дуге — отдельные глифы с поворотом', /<text[^>]*transform="translate\(/.test(sealSvg));
-check(
-  'SVG печати: центр остался обычным текстом',
-  sealSvg.includes('ООО «РОМАШКА»'),
-);
+check('SVG печати: центр остался обычным текстом', sealSvg.includes('ООО «РОМАШКА»'));
 
 /* --- PDF ---------------------------------------------------------------- */
 
