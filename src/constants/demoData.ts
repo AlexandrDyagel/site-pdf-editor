@@ -68,12 +68,12 @@ export function demoRoundSeal(): StampTemplate {
       arcTop: {
         ...createSealSettings().arcTop,
         text: 'ОБЩЕСТВО С ОГРАНИЧЕННОЙ ОТВЕТСТВЕННОСТЬЮ',
-        fontSize: 7.5,
+        fontSize: 6,
       },
       arcBottom: {
         ...createSealSettings().arcBottom,
         text: 'г. Москва · ул. Примерная, д. 1',
-        fontSize: 7,
+        fontSize: 6.5,
       },
     }),
     circularText: {

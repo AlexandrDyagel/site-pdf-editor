@@ -860,9 +860,99 @@ check(
   Math.abs(layoutSealArc({ ...arcBase, spanAngle: 90 }).spanAngle - 90) < 0.01,
   String(layoutSealArc({ ...arcBase, spanAngle: 90 }).spanAngle),
 );
+const longArcText = 'ДЛИННЫЙ ТЕКСТ ДЛЯ ПРОВЕРКИ УГЛА';
+check(
+  'угол меньше естественного не сжимает дугу',
+  Math.abs(
+    layoutSealArc({ ...arcBase, text: longArcText, spanAngle: 1 }).spanAngle -
+      layoutSealArc({ ...arcBase, text: longArcText, spanAngle: 2 }).spanAngle,
+  ) < 0.001,
+);
+check(
+  'по умолчанию угол дуги 1° («по ширине текста»)',
+  createSealSettings().arcTop.spanAngle === 1 && createSealSettings().arcBottom.spanAngle === 1,
+);
+check(
+  'старое значение 0 нормализуется в 1° и не схлопывает текст',
+  normalizeSealSettings({
+    ...createSealSettings(),
+    arcTop: { ...createSealSettings().arcTop, spanAngle: 0 },
+  }).arcTop.spanAngle === 1,
+);
 check(
   'сжатие дуги не даёт буквам наехать друг на друга сильнее лимита',
   layoutSealArc({ ...arcBase, text: 'ДЛИННЫЙ ТЕКСТ', spanAngle: 5 }).spanAngle > 5,
+);
+
+/* --- кегль стабилен при трекинге ---------------------------------------- */
+
+const arcWithTracking = (letterSpacing: number) =>
+  createSealTemplate({
+    seal: {
+      ...createSealSettings(),
+      arcTop: { ...createSealSettings().arcTop, letterSpacing },
+    },
+  });
+const trackParts = (letterSpacing: number) => {
+  const t = arcWithTracking(letterSpacing);
+  return computeSealParts(t, t.width, t.height, () => 'PT Sans');
+};
+const trackLow = trackParts(1);
+const trackHigh = trackParts(6);
+const spanOfParts = (parts: ReturnType<typeof computeSealParts>): number => {
+  const arc = parts.arcs.find((item) => item.side === 'top');
+  return arc ? Math.abs(arc.endAngle - arc.startAngle) : 0;
+};
+check(
+  'кегль не меняется при изменении трекинга',
+  Math.abs(trackLow.arcs[0].fontSize - trackHigh.arcs[0].fontSize) < 0.001,
+  `${trackLow.arcs[0].fontSize} → ${trackHigh.arcs[0].fontSize}`,
+);
+check(
+  'трекинг растягивает фактический угол дуги',
+  spanOfParts(trackHigh) > spanOfParts(trackLow),
+  `${spanOfParts(trackLow).toFixed(1)}° → ${spanOfParts(trackHigh).toFixed(1)}°`,
+);
+
+/* --- текст между кольцами ----------------------------------------------- */
+
+const betweenTemplate = createSealTemplate({
+  seal: {
+    ...createSealSettings(),
+    arcTop: { ...createSealSettings().arcTop, betweenRings: true },
+  },
+});
+const betweenParts = computeSealParts(
+  betweenTemplate,
+  betweenTemplate.width,
+  betweenTemplate.height,
+  () => 'PT Sans',
+);
+const betweenArc = betweenParts.arcs.find((item) => item.side === 'top');
+const outerRing = betweenParts.ink.rings[0];
+const innerRing = betweenParts.ink.rings[1];
+const outerInnerEdge = outerRing.radius - outerRing.width / 2;
+const nextOuterEdge = innerRing.radius + innerRing.width / 2;
+check(
+  'текст «между кольцами» стоит в кольцевом зазоре',
+  Boolean(betweenArc) && betweenArc!.radius > nextOuterEdge && betweenArc!.radius < outerInnerEdge,
+  betweenArc
+    ? `${betweenArc.radius.toFixed(1)} px в [${nextOuterEdge.toFixed(1)}; ${outerInnerEdge.toFixed(1)}]`
+    : 'дуга не найдена',
+);
+check(
+  'текст «между кольцами» центрирован по зазору',
+  Boolean(betweenArc) &&
+    Math.abs(
+      betweenArc!.radius + 0.36 * betweenArc!.fontSize - (outerInnerEdge + nextOuterEdge) / 2,
+    ) < 1.5,
+  betweenArc
+    ? `${(
+        betweenArc.radius +
+        0.36 * betweenArc.fontSize -
+        (outerInnerEdge + nextOuterEdge) / 2
+      ).toFixed(2)} px от центра зазора`
+    : '',
 );
 
 /* --- геометрия и фактура ------------------------------------------------ */

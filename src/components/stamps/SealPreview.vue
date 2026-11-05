@@ -30,6 +30,11 @@ const props = withDefaults(
 const emit = defineEmits<{
   /** Пользователь потянул маркер дуги: новый угол в градусах. */
   'span-change': [side: 'top' | 'bottom', angle: number];
+  /**
+   * Двойной клик по тексту на превью: какую подпись редактировать.
+   * `center` — строки в центре (`lineIndex` — номер строки).
+   */
+  'text-hit': [target: 'top' | 'bottom' | 'center', lineIndex: number];
 }>();
 
 const fonts = useFontsStore();
@@ -152,14 +157,69 @@ function onPointerMove(event: PointerEvent): void {
   const cy = size.value / 2;
   const angle = (Math.atan2(y - cy, x - cx) * 180) / Math.PI;
   const delta = Math.abs(normalizeAngle(angle - arcCenterAngle(side)));
-  // Угол дуги симметричен: тянем за любой конец — растём в обе стороны.
-  const span = Math.min(MAX_SPAN, Math.max(MIN_SPAN, delta * 2));
+  // Текущий фактический угол: ниже него дуга не сжимается (иначе кегль
+  // пришлось бы уменьшать, а он у нас стабилен).
+  const arc = layout.value.seal?.arcs.find((item) => item.side === side);
+  const natural = arc ? Math.abs(arc.endAngle - arc.startAngle) : 0;
+  const span = Math.min(MAX_SPAN, Math.max(MIN_SPAN, natural, delta * 2));
   emit('span-change', side, Math.round(span * 10) / 10);
 }
 
 function onPointerUp(): void {
   dragging.value = null;
   window.removeEventListener('pointermove', onPointerMove);
+}
+
+/* ======================== Двойной клик по тексту ======================== */
+
+/**
+ * Что находится под курсором.
+ *
+ * Для дуг перебираем глифы и проверяем расстояние до центра «чернильного»
+ * прямоугольника буквы; для центра — прямоугольники строк. Этого достаточно,
+ * чтобы двойной клик по надписи попадал в неё, а не в пустое поле печати.
+ */
+function hitText(event: MouseEvent): { target: 'top' | 'bottom' | 'center'; lineIndex: number } | null {
+  const element = canvas.value;
+  if (!element) return null;
+  const rect = element.getBoundingClientRect();
+  const x = (event.clientX - rect.left) / props.zoom;
+  const y = (event.clientY - rect.top) / props.zoom;
+  const seal = layout.value.seal;
+
+  for (const arc of seal?.arcs ?? []) {
+    if (!arc.enabled) continue;
+    for (const char of arc.chars) {
+      const radians = (char.angle * Math.PI) / 180;
+      const cos = Math.cos(radians);
+      const sin = Math.sin(radians);
+      const glyphWidth = char.fontSize * 0.6;
+      // Центр глифа: середина по базовой линии, приподнятая на пол-кегля.
+      const centerX = char.x + cos * (glyphWidth / 2) + sin * (char.fontSize * 0.35);
+      const centerY = char.y + sin * (glyphWidth / 2) - cos * (char.fontSize * 0.35);
+      const reach = Math.max(4, char.fontSize * 0.8);
+      if (Math.hypot(x - centerX, y - centerY) <= reach) {
+        return { target: arc.side, lineIndex: -1 };
+      }
+    }
+  }
+
+  for (const [index, line] of layout.value.lines.entries()) {
+    if (
+      x >= line.x - 2 &&
+      x <= line.x + line.width + 2 &&
+      y >= line.baseline - line.fontSize * 1.05 &&
+      y <= line.baseline + line.fontSize * 0.3
+    ) {
+      return { target: 'center', lineIndex: index };
+    }
+  }
+  return null;
+}
+
+function onDoubleClick(event: MouseEvent): void {
+  const hit = hitText(event);
+  if (hit) emit('text-hit', hit.target, hit.lineIndex);
 }
 
 onMounted(async () => {
@@ -180,7 +240,8 @@ onBeforeUnmount(() => {
       ref="canvas"
       data-testid="seal-preview-canvas"
       class="block rounded-sm"
-      :class="dragging ? 'cursor-grabbing' : ''"
+      :class="dragging ? 'cursor-grabbing' : 'cursor-default'"
+      @dblclick="onDoubleClick"
     />
 
     <!-- Маркеры дуг: тянутся мышью, задавая угол дуги -->

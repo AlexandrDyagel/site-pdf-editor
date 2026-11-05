@@ -18,6 +18,16 @@ const props = withDefaults(
   { allowNull: false, compact: false },
 );
 
+/**
+ * События пипетки. Родитель может на время выбора свернуть своё окно
+ * (`pick-start`) и вернуть его обратно (`pick-end`), иначе палитра/модалка
+ * закрывают холст и цвет взять негде.
+ */
+const emit = defineEmits<{
+  'pick-start': [];
+  'pick-end': [color: string | null];
+}>();
+
 const open = ref(false);
 const root = ref<HTMLElement | null>(null);
 
@@ -39,10 +49,16 @@ function onNativeColor(event: Event): void {
   model.value = (event.target as HTMLInputElement).value;
 }
 
-/** Пипетка: закрываем палитру и берём цвет со следующего клика по холсту. */
+/** Пипетка: закрываем палитру, просим родителя свернуться и берём цвет. */
 async function pickFromCanvas(): Promise<void> {
   open.value = false;
-  const color = await startEyedropper();
+  emit('pick-start');
+  let color: string | null = null;
+  try {
+    color = await startEyedropper();
+  } finally {
+    emit('pick-end', color);
+  }
   if (color) model.value = color;
 }
 

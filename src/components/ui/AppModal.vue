@@ -12,8 +12,16 @@ const props = withDefaults(
     width?: 'sm' | 'md' | 'lg' | 'xl' | 'full';
     closeOnBackdrop?: boolean;
     hideFooter?: boolean;
+    /** Дополнительные классы для прокручиваемого тела окна. */
+    bodyClass?: string;
+    /**
+     * «Свернуть» окно, не размонтируя его: содержимое остаётся живым, но
+     * невидимо и не перехватывает клики. Нужно пипетке — пока окно
+     * свернуто, пользователь кликает по холсту.
+     */
+    suspended?: boolean;
   }>(),
-  { width: 'md', closeOnBackdrop: true, hideFooter: false },
+  { width: 'md', closeOnBackdrop: true, hideFooter: false, bodyClass: '', suspended: false },
 );
 
 const emit = defineEmits<{ 'update:modelValue': [value: boolean] }>();
@@ -68,7 +76,9 @@ onBeforeUnmount(() => {
       <div
         v-if="modelValue"
         class="fixed inset-0 z-[100] flex items-start justify-center overflow-y-auto bg-slate-900/50 p-4 backdrop-blur-sm sm:items-center"
-        @click.self="closeOnBackdrop && close()"
+        :class="suspended ? 'pointer-events-none opacity-0' : ''"
+        :aria-hidden="suspended ? 'true' : undefined"
+        @click.self="closeOnBackdrop && !suspended && close()"
       >
         <div
           ref="panel"
@@ -109,7 +119,7 @@ onBeforeUnmount(() => {
             </div>
           </header>
 
-          <div class="max-h-[70vh] overflow-y-auto px-5 py-4">
+          <div class="max-h-[70vh] overflow-y-auto px-5 py-4" :class="bodyClass">
             <slot />
           </div>
 

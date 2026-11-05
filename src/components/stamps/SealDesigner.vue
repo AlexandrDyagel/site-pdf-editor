@@ -30,8 +30,14 @@ import {
   sealDiameterPx,
   sealSettingsFromTemplate,
 } from '@/services/sealRenderService';
-import { createSealTemplate, createStampLine } from '@/services/stampRenderService';
+import { createSealTemplate, createStampLine, computeStampLayout } from '@/services/stampRenderService';
 import { createStampObject } from '@/services/objectFactory';
+import {
+  clearSealDraft,
+  readSealDraft,
+  saveSealDraft,
+  sealDraftKey,
+} from '@/services/sealDraft';
 import { useUiStore } from '@/stores/ui';
 import { useLibraryStore } from '@/stores/library';
 import { useObjectsStore } from '@/stores/objects';
@@ -60,6 +66,33 @@ const targetObjectId = ref<string | null>(null);
 const tab = ref('rings');
 const zoom = ref(3);
 const isSaving = ref(false);
+
+/** Фон подложки превью. В документ он не попадает — это только просмотр. */
+const previewBackgrounds = [
+  { id: 'none', label: 'Без фона', color: null },
+  { id: 'white', label: 'Белый', color: '#ffffff' },
+  { id: 'paper', label: 'Бумага', color: '#f3eddf' },
+  { id: 'gray', label: 'Серый', color: '#dbe1ea' },
+  { id: 'dark', label: 'Тёмный', color: '#1f2937' },
+] as const;
+const previewBg = ref<string | null>(null);
+
+/** Пипетка свернула окно: показываем холст, но не закрываем конструктор. */
+const picking = ref(false);
+
+/** Конструктор восстановил незавершённое редактирование. */
+const restoredDraft = ref(false);
+const draftKey = ref('new');
+
+const arcTopRef = ref<InstanceType<typeof SealArcControls> | null>(null);
+const arcBottomRef = ref<InstanceType<typeof SealArcControls> | null>(null);
+const rightColumn = ref<HTMLElement | null>(null);
+
+/**
+ * Флаг «закрываем намеренно»: после вставки на документ черновик уже не
+ * нужен, и сохранять его при закрытии окна нельзя.
+ */
+let suppressDraftSave = false;
 
 const isOpen = computed({
   get: () => ui.modals.sealDesigner,
@@ -121,12 +154,34 @@ function withSealSettings(source: StampTemplate): StampTemplate {
 watch(
   () => ui.modals.sealDesigner,
   async (open) => {
-    if (!open) return;
+    if (!open) {
+      // Окно закрыли (в том числе случайно) — сохраняем черновик, чтобы при
+      // повторном открытии вернуться в то же состояние. После вставки на
+      // документ черновик не нужен — его уже очистили.
+      if (!suppressDraftSave) persistDraft();
+      suppressDraftSave = false;
+      picking.value = false;
+      return;
+    }
     const payload = ui.modalPayload;
     const objectId = typeof payload.objectId === 'string' ? payload.objectId : null;
     const templateId = typeof payload.templateId === 'string' ? payload.templateId : null;
     targetObjectId.value = objectId;
+    draftKey.value = sealDraftKey(objectId, templateId);
 
+    // 1. Черновик того же контекста — восстанавливаем как было.
+    const draft = readSealDraft(draftKey.value);
+    if (draft) {
+      template.value = withSealSettings(draft.template);
+      zoom.value = Math.min(6, Math.max(0.5, draft.zoom || fitZoomValue()));
+      tab.value = draft.tab || 'rings';
+      previewBg.value = draft.background;
+      restoredDraft.value = true;
+      await nextTick();
+      return;
+    }
+
+    // 2. Иначе — объект, шаблон из библиотеки или новая печать.
     let source: StampTemplate | null = null;
     if (objectId) {
       const object = objects.byId(objectId);
@@ -137,9 +192,33 @@ watch(
     template.value = withSealSettings(source ?? createSealTemplate());
     tab.value = 'rings';
     zoom.value = fitZoomValue();
+    previewBg.value = null;
+    restoredDraft.value = false;
     await nextTick();
   },
 );
+
+/** Черновик: сохраняем при закрытии окна, чтобы ничего не потерялось. */
+function persistDraft(): void {
+  if (!template.value?.seal) return;
+  saveSealDraft({
+    key: draftKey.value,
+    template: template.value,
+    zoom: zoom.value,
+    tab: tab.value,
+    background: previewBg.value,
+  });
+}
+
+/** Начать печать заново и забыть черновик. */
+function resetDraft(): void {
+  clearSealDraft();
+  restoredDraft.value = false;
+  template.value = withSealSettings(createSealTemplate());
+  tab.value = 'rings';
+  previewBg.value = null;
+  zoom.value = fitZoomValue();
+}
 
 /** Зум, при котором печать занимает ~380 px превью. */
 function fitZoomValue(): number {
@@ -153,6 +232,62 @@ function fitZoom(): void {
 
 function setZoom(value: number): void {
   zoom.value = Math.min(6, Math.max(0.5, Math.round(value * 100) / 100));
+}
+
+/** Фактические углы дуг — для подсказки «1° — по ширине текста». */
+const arcSpans = computed(() => {
+  const layout = computeStampLayout(template.value, (fontId) => fonts.familyOf(fontId));
+  const spans: Record<'top' | 'bottom', number> = { top: 0, bottom: 0 };
+  for (const arc of layout.seal?.arcs ?? []) {
+    spans[arc.side] = Math.abs(arc.endAngle - arc.startAngle);
+  }
+  return spans;
+});
+
+/* ======================== Фокус по двойному клику ======================== */
+
+/** Поставить фокус в поле и каретку в конец. */
+function focusInput(input: HTMLInputElement | null | undefined): void {
+  if (!input) return;
+  input.focus();
+  const end = input.value.length;
+  try {
+    input.setSelectionRange(end, end);
+  } catch {
+    /* не все типы input поддерживают выделение */
+  }
+}
+
+/** Двойной клик по надписи на превью: открыть нужную вкладку и встать в текст. */
+async function onTextHit(target: 'top' | 'bottom' | 'center', lineIndex: number): Promise<void> {
+  if (target === 'center') {
+    tab.value = 'center';
+    await nextTick();
+    const visible = template.value.lines.filter((line) => line.text.trim().length > 0);
+    const line = visible[lineIndex] ?? visible[0];
+    const index = line ? template.value.lines.indexOf(line) : 0;
+    focusInput(
+      rightColumn.value?.querySelector<HTMLInputElement>(
+        `[data-testid="seal-center-line-${index}"] input`,
+      ),
+    );
+    return;
+  }
+  tab.value = 'arcs';
+  await nextTick();
+  (target === 'top' ? arcTopRef.value : arcBottomRef.value)?.focusText();
+}
+
+/* ======================== Пипетка ======================== */
+
+/** Сворачиваем окно: пользователь кликает цвет по холсту. */
+function onPickStart(): void {
+  picking.value = true;
+}
+
+function onPickEnd(color: string | null): void {
+  picking.value = false;
+  if (color) ui.notify.info('Цвет взят с холста', color.toUpperCase());
 }
 
 /** Отладочный хук для автотестов (только dev-сборка). */
@@ -364,6 +499,11 @@ async function insertIntoDocument(): Promise<void> {
   }
 
   editor.toolOptions.lastStampId = value.id;
+  // Печать поставлена — черновик больше не нужен, следующее открытие
+  // начнётся с чистой печати.
+  clearSealDraft();
+  restoredDraft.value = false;
+  suppressDraftSave = true;
   ui.closeModal('sealDesigner');
 }
 
@@ -385,10 +525,28 @@ const arcBottom = computed<SealArcText>(() => seal.value.arcBottom);
     subtitle="Круглый оттиск: кольца, текст по дугам, центр и «мокрая» краска"
     icon="seal"
     width="xl"
+    body-class="lg:max-h-none lg:overflow-visible"
+    :suspended="picking"
   >
-    <div class="grid gap-5 lg:grid-cols-[minmax(0,1fr)_minmax(0,380px)]" data-testid="seal-designer">
+    <div
+      class="grid gap-5 lg:h-[min(62vh,700px)] lg:grid-cols-[minmax(0,1fr)_minmax(0,380px)]"
+      data-testid="seal-designer"
+    >
       <!-- ======================= Превью ======================= -->
-      <div class="space-y-3">
+      <div
+        class="space-y-3 lg:h-full lg:overflow-y-auto lg:pr-2"
+        data-testid="seal-left-column"
+      >
+        <!-- Черновик восстановлен после случайного закрытия -->
+        <div
+          v-if="restoredDraft"
+          class="flex items-center justify-between gap-2 rounded-lg bg-amber-50 px-2.5 py-1.5 text-[11px] text-amber-800 ring-1 ring-amber-200 dark:bg-amber-500/10 dark:text-amber-200 dark:ring-amber-500/30"
+          data-testid="seal-draft-notice"
+        >
+          <span>Восстановлено незавершённое редактирование.</span>
+          <button type="button" class="font-medium underline" @click="resetDraft">Сбросить</button>
+        </div>
+
         <div class="flex flex-wrap items-center justify-between gap-2">
           <div class="flex items-center gap-2">
             <span
@@ -423,19 +581,52 @@ const arcBottom = computed<SealArcText>(() => seal.value.arcBottom);
 
         <!-- Большое превью: печать видно целиком, при зуме появляется прокрутка -->
         <div
-          class="checker-bg relative flex h-[430px] items-center justify-center overflow-auto rounded-xl border border-slate-200 p-4 dark:border-slate-700"
+          class="relative flex h-[430px] items-center justify-center overflow-auto rounded-xl border border-slate-200 p-4 transition-colors dark:border-slate-700"
+          :class="previewBg ? '' : 'checker-bg'"
+          :style="previewBg ? { backgroundColor: previewBg } : undefined"
           data-testid="seal-preview-box"
         >
           <SealPreview
             :template="template"
             :zoom="zoom"
             @span-change="onSpanChange"
+            @text-hit="onTextHit"
           />
         </div>
 
+        <!-- Фон превью: только подложка, в печать и PDF не попадает -->
+        <div class="flex flex-wrap items-center gap-1.5" data-testid="seal-backgrounds">
+          <span class="text-[11px] font-medium uppercase tracking-wide text-slate-500 dark:text-slate-400">
+            Фон превью
+          </span>
+          <button
+            v-for="item in previewBackgrounds"
+            :key="item.id"
+            type="button"
+            class="flex h-6 items-center gap-1 rounded-md border px-1.5 text-[10px] transition-colors"
+            :class="
+              previewBg === item.color
+                ? 'border-brand-500 text-brand-700 dark:text-brand-300'
+                : 'border-slate-200 text-slate-500 dark:border-slate-700 dark:text-slate-400'
+            "
+            :data-testid="`seal-bg-${item.id}`"
+            @click="previewBg = item.color"
+          >
+            <span
+              class="h-3.5 w-3.5 rounded-sm ring-1 ring-inset ring-slate-900/15"
+              :class="item.color ? '' : 'checker-bg'"
+              :style="item.color ? { backgroundColor: item.color } : undefined"
+            />
+            {{ item.label }}
+          </button>
+        </div>
+        <p class="-mt-1 text-[11px] text-slate-400">
+          Фон — только подложка превью: в документ, PDF и библиотеку он не попадает.
+        </p>
+
         <p class="text-[11px] text-slate-400">
-          Маркеры на дугах тянутся мышью — так текст растягивается по окружности.
-          Колесо мыши над превью не масштабирует, используйте ползунок зума.
+          Маркеры на дугах тянутся мышью. Двойной клик по надписи открывает её поле ввода.
+          Колесо мыши над превью не масштабирует — используйте ползунок зума.
         </p>
 
         <!-- Цвет: пресеты + произвольный -->
@@ -455,7 +646,13 @@ const arcBottom = computed<SealArcText>(() => seal.value.arcBottom);
             @click="template.color = color"
           />
           <div class="w-36">
-            <AppColorPicker compact :model-value="template.color" @update:model-value="template.color = $event" />
+            <AppColorPicker
+              compact
+              :model-value="template.color"
+              @update:model-value="template.color = $event"
+              @pick-start="onPickStart"
+              @pick-end="onPickEnd"
+            />
           </div>
         </div>
 
@@ -478,7 +675,11 @@ const arcBottom = computed<SealArcText>(() => seal.value.arcBottom);
       </div>
 
       <!-- ======================= Настройки ======================= -->
-      <div class="space-y-3">
+      <div
+        ref="rightColumn"
+        class="space-y-3 lg:h-full lg:overflow-y-auto lg:pr-2"
+        data-testid="seal-right-column"
+      >
         <AppInput v-model="template.name" label="Название печати" size="sm" />
         <AppTabs v-model="tab" :items="tabs" />
 
@@ -580,20 +781,26 @@ const arcBottom = computed<SealArcText>(() => seal.value.arcBottom);
         <!-- Дуги -->
         <div v-show="tab === 'arcs'" class="space-y-3">
           <SealArcControls
+            ref="arcTopRef"
             :arc="arcTop"
             side="top"
             title="Верхняя дуга"
             hint="Читается слева направо по часовой стрелке"
             :font-options="fontOptions"
             :max-radius="maxArcRadius"
+            :ring-count="seal.rings.length"
+            :effective-span="arcSpans.top"
           />
           <SealArcControls
+            ref="arcBottomRef"
             :arc="arcBottom"
             side="bottom"
             title="Нижняя дуга"
             hint="Буквы стоят макушкой к центру"
             :font-options="fontOptions"
             :max-radius="maxArcRadius"
+            :ring-count="seal.rings.length"
+            :effective-span="arcSpans.bottom"
           />
         </div>
 
@@ -624,6 +831,7 @@ const arcBottom = computed<SealArcText>(() => seal.value.arcBottom);
                   size="sm"
                   placeholder="Текст строки"
                   class="flex-1"
+                  :data-testid="`seal-center-line-${index}`"
                   @update:model-value="updateCenterLine(index, { text: String($event ?? '') })"
                 />
                 <AppButton
@@ -696,7 +904,16 @@ const arcBottom = computed<SealArcText>(() => seal.value.arcBottom);
         <!-- Краска и эффекты -->
         <div v-show="tab === 'ink'" class="space-y-3">
           <AppSection title="Интенсивность" icon="palette">
-            <AppColorPicker v-model="template.color" label="Цвет оттиска" :presets="SEAL_COLORS" />
+            <AppColorPicker
+              v-model="template.color"
+              label="Цвет оттиска"
+              :presets="SEAL_COLORS"
+              @pick-start="onPickStart"
+              @pick-end="onPickEnd"
+            />
+            <p class="text-[11px] text-slate-400">
+              Пипетка временно сворачивает окно — цвет можно взять прямо с холста.
+            </p>
             <AppSlider
               v-model="template.opacity"
               label="Прозрачность оттиска"

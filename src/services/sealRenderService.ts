@@ -72,10 +72,14 @@ export function createSealArcText(patch: Partial<SealArcText> = {}): SealArcText
     fontSize: 9,
     letterSpacing: 1.2,
     wordSpacing: 2,
-    spanAngle: 0,
+    // 1° — «по ширине текста»: угол растёт сам от текста и трекинга,
+    // кегль при этом не меняется. Именно это значение видит пользователь,
+    // пока не начнёт специально растягивать дугу.
+    spanAngle: 1,
     centerAngle: 270,
     radius: 0,
     gap: 3,
+    betweenRings: false,
     bold: false,
     italic: false,
     ...patch,
@@ -102,7 +106,10 @@ export function createSealSettings(patch: Partial<SealSettings> = {}): SealSetti
     rings: [createSealRing(2.5, 0), createSealRing(1.4, 4.5)],
     arcTop: createSealArcText({
       text: 'ОБЩЕСТВО С ОГРАНИЧЕННОЙ ОТВЕТСТВЕННОСТЬЮ',
-      fontSize: 8,
+      // Кегль подобран так, чтобы длинное название занимало верхнюю дугу
+      // (≈225°), но не замыкалось в кольцо. В рантайме кегль не подгоняется:
+      // он стабилен и меняется только пользователем.
+      fontSize: 5.5,
       centerAngle: 270,
     }),
     arcBottom: createSealArcText({
@@ -199,10 +206,13 @@ export function normalizeSealSettings(seal: SealSettings): SealSettings {
       fontSize: clamp(arc.fontSize, 4, 40),
       letterSpacing: clamp(arc.letterSpacing, -4, 40),
       wordSpacing: clamp(arc.wordSpacing, -10, 60),
-      spanAngle: clamp(arc.spanAngle, 0, 350),
+      // 1° — минимальное значение («по ширине текста»); 0 из старых
+      // библиотек трактуем так же, иначе текст схлопнулся бы в точку.
+      spanAngle: clamp(arc.spanAngle, 1, 340),
       centerAngle: Number.isFinite(arc.centerAngle) ? arc.centerAngle : centerAngle,
       radius: clamp(arc.radius, 0, 2000),
       gap: clamp(arc.gap, 0, 60),
+      betweenRings: Boolean(arc.betweenRings),
       text: arc.text ?? '',
     };
   };
@@ -367,16 +377,21 @@ export function layoutSealArc(input: SealArcLayoutInput): SealArcLayout {
   });
   const natural = advances.reduce((sum, value) => sum + value, 0);
 
-  // 4. Растяжение под заданный угол (маркеры в превью).
-  let extra = 0;
-  if (input.spanAngle > 0) {
-    const targetLength = (input.spanAngle * Math.PI * radius) / 180;
-    extra = (targetLength - natural) / chars.length;
-    // Сжимать бесконечно нельзя: буквы начнут наезжать друг на друга.
-    // Оставляем запас, при котором текст ещё читается как текст.
-    const minAdvance = Math.min(...advances);
-    extra = Math.max(extra, -minAdvance * 0.35);
-  }
+  // 3–4. Растяжение до заданного угла, но НЕ сжатие.
+  // `spanAngle` — минимальный угол: текст никогда не становится мельче или
+  // плотнее, чем ему нужно по ширине. Поэтому трекинг и межсловные интервалы
+  // меняют только угол дуги, а кегль остаётся тем, что выбрал пользователь.
+  const naturalAngle = natural / radius;
+  const requestedAngle = (Math.max(1, input.spanAngle) * Math.PI) / 180;
+  const MAX_TOTAL_ANGLE = (340 * Math.PI) / 180;
+  let targetAngle = Math.max(naturalAngle, requestedAngle);
+  // Совсем длинный текст с огромным трекингом не должен замыкаться сам в себя.
+  targetAngle = Math.min(targetAngle, MAX_TOTAL_ANGLE);
+
+  let extra = (targetAngle * radius - natural) / chars.length;
+  // Сжимать бесконечно нельзя: буквы начнут наезжать друг на друга.
+  const minAdvance = Math.min(...advances);
+  extra = Math.max(extra, -minAdvance * 0.35);
 
   const totalLength = natural + extra * chars.length;
   const totalAngle = totalLength / radius;
@@ -654,14 +669,6 @@ export function computeSealParts(
   }
 
   // --- Дуговой текст ------------------------------------------------------
-  /**
-   * Максимальный угол авто-дуги.
-   * Без ограничения длинное название организации замыкалось бы в полное
-   * кольцо и сталкивалось с нижней дугой. Реальный оттиск так не выглядит:
-   * текст занимает верхний сектор, а не весь круг.
-   */
-  const MAX_AUTO_SPAN: Record<'top' | 'bottom', number> = { top: 240, bottom: 190 };
-
   const buildArc = (
     arc: SealArcText,
     side: 'top' | 'bottom',
@@ -669,45 +676,36 @@ export function computeSealParts(
   ): SealArcGeometry => {
     const family = resolveFamily(arc.fontId ?? template.fontId);
     const gap = Math.max(0, (arc.gap || gapDefault) * k);
-    let fontSize = Math.max(4, arc.fontSize * k);
-    let letterSpacing = arc.letterSpacing * k;
+    const fontSize = Math.max(4, arc.fontSize * k);
+    const letterSpacing = arc.letterSpacing * k;
 
-    // Авто-радиус: верхняя дуга сидит внутри кольца макушками наружу,
-    // нижняя — прижата к кольцу и растёт макушками к центру.
-    const autoRadius = (): number =>
-      side === 'top' ? innerEdge - gap - fontSize * 0.72 : innerEdge - gap;
-    let radius = arc.radius > 0 ? arc.radius * k : Math.max(size * 0.1, autoRadius());
-
-    // Подгонка по месту: если строка не влезает в сектор — уменьшаем кегль
-    // (и слегка поджимаем трекинг), пока не влезет. Ширины глифов почти
-    // линейны по кеглю, поэтому хватает двух-трёх итераций.
-    if (arc.enabled && arc.spanAngle <= 0 && arc.text.trim().length > 0) {
-      for (let iteration = 0; iteration < 4; iteration += 1) {
-        radius = arc.radius > 0 ? arc.radius * k : Math.max(size * 0.1, autoRadius());
-        const probe = layoutSealArc({
-          text: arc.text,
-          radius,
-          fontSize,
-          letterSpacing,
-          wordSpacing: arc.wordSpacing * k,
-          spanAngle: 0,
-          centerAngle: arc.centerAngle,
-          side,
-          cx,
-          cy,
-          family,
-          fontId: arc.fontId ?? template.fontId,
-          color,
-          bold: arc.bold,
-          italic: arc.italic,
-        });
-        const maxSpan = MAX_AUTO_SPAN[side];
-        if (probe.spanAngle <= maxSpan) break;
-        fontSize = Math.max(4, fontSize * (maxSpan / probe.spanAngle));
-        letterSpacing = Math.max(-fontSize * 0.25, letterSpacing * 0.9);
+    /**
+     * Радиус базовой линии.
+     *
+     * Обычный режим: верхняя дуга сидит внутри кольца макушками наружу,
+     * нижняя — прижата к кольцу и растёт макушками к центру.
+     *
+     * «Между кольцами»: буквы центрируются в кольцевом зазоре между двумя
+     * наружными кольцами — визуально текст ровно посередине зазора, а не
+     * липнет к внутреннему кольцу.
+     */
+    const radialRadius = (): number => {
+      if (arc.betweenRings && radii.length >= 2) {
+        const outerInnerEdge = radii[0] - ringWidths[0].width / 2;
+        const nextOuterEdge = radii[1] + ringWidths[1].width / 2;
+        const centerRadius = (outerInnerEdge + nextOuterEdge) / 2;
+        // Глиф занимает ~0.72 кегля; сдвигаем базовую линию так, чтобы
+        // «чернильный» прямоугольник буквы был по центру зазора.
+        const baseline =
+          side === 'top'
+            ? centerRadius - fontSize * 0.36
+            : centerRadius + fontSize * 0.36;
+        return Math.max(nextOuterEdge + 1, Math.min(outerInnerEdge - 1, baseline));
       }
-      radius = arc.radius > 0 ? arc.radius * k : Math.max(size * 0.1, autoRadius());
-    }
+      return arc.radius > 0 ? arc.radius * k : innerEdge - gap - (side === 'top' ? fontSize * 0.72 : 0);
+    };
+
+    const radius = Math.max(size * 0.1, radialRadius());
 
     if (!arc.enabled) {
       return {

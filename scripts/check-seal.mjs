@@ -93,11 +93,23 @@ try {
     if (data) for (let i = 3; i < data.length; i += 4) if (data[i] > 8) painted += 1;
     return {
       open: Boolean(document.querySelector('[data-testid=seal-designer]')),
-      template: t ? { width: t.width, height: t.height, mm: t.seal.diameterMm, rings: t.seal.rings.length } : null,
+      template: t
+        ? {
+            width: t.width,
+            height: t.height,
+            mm: t.seal.diameterMm,
+            rings: t.seal.rings.length,
+            span: t.seal.arcTop.spanAngle,
+          }
+        : null,
       painted,
       hasCanvas: Boolean(canvas),
       handles: document.querySelectorAll('[data-testid^=seal-handle-]').length,
       sizeLabel: document.querySelector('[data-testid=seal-size-label]')?.textContent.trim() ?? '',
+      bgButtons: document.querySelectorAll('[data-testid^=seal-bg-]').length,
+      leftScroll: getComputedStyle(document.querySelector('[data-testid=seal-left-column]')).overflowY,
+      rightScroll: getComputedStyle(document.querySelector('[data-testid=seal-right-column]')).overflowY,
+      backgroundNote: document.body.innerText.includes('только подложка превью'),
     };
   })()`);
   check('окно конструктора открылось', initial.open === true);
@@ -108,6 +120,135 @@ try {
   check('в подписи размера есть миллиметры и пиксели', initial.sizeLabel.includes('40') && initial.sizeLabel.includes('113'),
     initial.sizeLabel);
   check('маркеры растяжения дуг показаны', initial.handles === 4, String(initial.handles));
+  check('угол дуги по умолчанию — 1°', initial.template?.span === 1, String(initial.template?.span));
+  check('в превью есть выбор фона (5 вариантов)', initial.bgButtons === 5, String(initial.bgButtons));
+  check('подпись про фон превью: это не часть печати', initial.backgroundNote === true);
+  check(
+    'левая и правая колонки прокручиваются независимо',
+    initial.leftScroll === 'auto' && initial.rightScroll === 'auto',
+    `${initial.leftScroll} / ${initial.rightScroll}`,
+  );
+
+  console.log('\n1б. Фон превью');
+  const background = await cdp.evaluate(`(async () => {
+    document.querySelector('[data-testid=seal-bg-white]')?.click();
+    await new Promise((r) => setTimeout(r, 300));
+    const white = document.querySelector('[data-testid=seal-preview-box]');
+    const whiteState = { color: getComputedStyle(white).backgroundColor, checker: white.className.includes('checker-bg') };
+    document.querySelector('[data-testid=seal-bg-none]')?.click();
+    await new Promise((r) => setTimeout(r, 300));
+    const none = document.querySelector('[data-testid=seal-preview-box]');
+    return {
+      white: whiteState,
+      none: { checker: none.className.includes('checker-bg') },
+    };
+  })()`);
+  check('белый фон превью применяется', background.white.color === 'rgb(255, 255, 255)', background.white.color);
+  check('без фона возвращается шахматка', background.none.checker === true);
+
+  console.log('\n1в. Черновик: случайное закрытие не теряет настройки');
+  const draft = await cdp.evaluate(`(async () => {
+    const app = window.__PDF_EDITOR__;
+    const t = window.__SEAL_DESIGNER__;
+    t.name = 'Черновик-проверка';
+    t.color = '#0f766e';
+    await new Promise((r) => setTimeout(r, 200));
+    app.ui.closeModal('sealDesigner');
+    await new Promise((r) => setTimeout(r, 400));
+    const button = document.querySelector('[data-testid=open-seal-designer]');
+    if (button) button.click();
+    else app.ui.openModal('sealDesigner');
+    await new Promise((r) => setTimeout(r, 900));
+    const restored = window.__SEAL_DESIGNER__;
+    const notice = Boolean(document.querySelector('[data-testid=seal-draft-notice]'));
+    return {
+      name: restored?.name,
+      color: restored?.color,
+      notice,
+      mm: restored?.seal?.diameterMm,
+    };
+  })()`);
+  check('после закрытия черновик восстанавливается', draft.name === 'Черновик-проверка' && draft.color === '#0f766e',
+    JSON.stringify(draft));
+  check('показано уведомление о восстановлении', draft.notice === true);
+
+  const reset = await cdp.evaluate(`(async () => {
+    const button = Array.from(document.querySelectorAll('[data-testid=seal-draft-notice] button'))
+      .find((node) => node.textContent.trim() === 'Сбросить');
+    button?.click();
+    await new Promise((r) => setTimeout(r, 500));
+    const t = window.__SEAL_DESIGNER__;
+    return {
+      name: t?.name,
+      notice: Boolean(document.querySelector('[data-testid=seal-draft-notice]')),
+      mm: t?.seal?.diameterMm,
+    };
+  })()`);
+  check('«Сбросить» возвращает новую печать', reset.name === 'Новая печать' && reset.notice === false,
+    JSON.stringify(reset));
+
+  console.log('\n1г. Двойной клик по тексту на превью');
+  const dblTop = await cdp.evaluate(`(async () => {
+    const stamp = await import('/src/services/stampRenderService.ts');
+    const app = window.__PDF_EDITOR__;
+    const t = window.__SEAL_DESIGNER__;
+    const layout = stamp.computeStampLayout(t, (id) => app.fonts.familyOf(id));
+    const top = layout.seal.arcs.find((arc) => arc.side === 'top');
+    const ch = top.chars[Math.floor(top.chars.length / 2)];
+    const canvas = document.querySelector('[data-testid=seal-preview-canvas]');
+    const rect = canvas.getBoundingClientRect();
+    const zoom = rect.width / t.width;
+    const rad = (ch.angle * Math.PI) / 180;
+    const w = ch.fontSize * 0.6;
+    const cx = ch.x + Math.cos(rad) * w / 2 + Math.sin(rad) * ch.fontSize * 0.35;
+    const cy = ch.y + Math.sin(rad) * w / 2 - Math.cos(rad) * ch.fontSize * 0.35;
+    canvas.dispatchEvent(new MouseEvent('dblclick', {
+      clientX: rect.left + cx * zoom,
+      clientY: rect.top + cy * zoom,
+      bubbles: true,
+    }));
+    await new Promise((r) => setTimeout(r, 600));
+    const active = document.activeElement;
+    return {
+      testid: active?.closest('[data-testid]')?.getAttribute('data-testid'),
+      caret: active?.selectionStart,
+      length: active?.value?.length,
+    };
+  })()`);
+  check('двойной клик по верхней дуге фокусирует её текст', dblTop.testid === 'seal-arc-top-text', String(dblTop.testid));
+  check('каретка в конце текста', dblTop.caret === dblTop.length, `${dblTop.caret}/${dblTop.length}`);
+
+  const dblCenter = await cdp.evaluate(`(async () => {
+    const stamp = await import('/src/services/stampRenderService.ts');
+    const app = window.__PDF_EDITOR__;
+    const t = window.__SEAL_DESIGNER__;
+    const layout = stamp.computeStampLayout(t, (id) => app.fonts.familyOf(id));
+    const line = layout.lines[0];
+    const canvas = document.querySelector('[data-testid=seal-preview-canvas]');
+    const rect = canvas.getBoundingClientRect();
+    const zoom = rect.width / t.width;
+    canvas.dispatchEvent(new MouseEvent('dblclick', {
+      clientX: rect.left + (line.x + line.width / 2) * zoom,
+      clientY: rect.top + (line.baseline - line.fontSize * 0.4) * zoom,
+      bubbles: true,
+    }));
+    await new Promise((r) => setTimeout(r, 600));
+    const active = document.activeElement;
+    return {
+      testid: active?.closest('[data-testid]')?.getAttribute('data-testid'),
+      caret: active?.selectionStart,
+      length: active?.value?.length,
+    };
+  })()`);
+  check('двойной клик по центру фокусирует строку', dblCenter.testid === 'seal-center-line-0', String(dblCenter.testid));
+  check('каретка в конце строки', dblCenter.caret === dblCenter.length, `${dblCenter.caret}/${dblCenter.length}`);
+
+  // Возвращаемся на вкладку «Кольца» для следующих проверок.
+  await cdp.evaluate(`(() => {
+    Array.from(document.querySelectorAll('[role=tab]')).find((n) => n.textContent.trim() === 'Кольца')?.click();
+    return 'ok';
+  })()`);
+  await sleep(300);
 
   console.log('\n2. Диаметр и кольца');
   await cdp.evaluate(`(() => {
@@ -188,19 +329,61 @@ try {
     const stamp = await import('/src/services/stampRenderService.ts');
     const app = window.__PDF_EDITOR__;
     const t = window.__SEAL_DESIGNER__;
-    const spanOf = () => {
+    const arcOf = () => {
       const layout = stamp.computeStampLayout(t, (id) => app.fonts.familyOf(id));
-      const top = layout.seal.arcs.find((arc) => arc.side === 'top');
-      return Math.abs(top.endAngle - top.startAngle);
+      return layout.seal.arcs.find((arc) => arc.side === 'top');
     };
-    const before = spanOf();
+    const before = arcOf();
     t.seal.arcTop.letterSpacing = 6;
-    const after = spanOf();
+    const after = arcOf();
     t.seal.arcTop.letterSpacing = 1.2;
-    return { before, after };
+    return {
+      spanBefore: Math.abs(before.endAngle - before.startAngle),
+      spanAfter: Math.abs(after.endAngle - after.startAngle),
+      fontBefore: before.fontSize,
+      fontAfter: after.fontSize,
+    };
   })()`);
-  check('трекинг растягивает текст по дуге', tracking.after > tracking.before,
-    `${tracking.before.toFixed(1)}° → ${tracking.after.toFixed(1)}°`);
+  check('трекинг растягивает текст по дуге', tracking.spanAfter > tracking.spanBefore,
+    `${tracking.spanBefore.toFixed(1)}° → ${tracking.spanAfter.toFixed(1)}°`);
+  check(
+    'кегль не меняется при движении трекинга',
+    Math.abs(tracking.fontAfter - tracking.fontBefore) < 0.01,
+    `${tracking.fontBefore.toFixed(2)} → ${tracking.fontAfter.toFixed(2)}`,
+  );
+
+  console.log('\n3б. Текст между кольцами');
+  const between = await cdp.evaluate(`(async () => {
+    const stamp = await import('/src/services/stampRenderService.ts');
+    const app = window.__PDF_EDITOR__;
+    const t = window.__SEAL_DESIGNER__;
+    const arcOf = () => {
+      const layout = stamp.computeStampLayout(t, (id) => app.fonts.familyOf(id));
+      return { arc: layout.seal.arcs.find((item) => item.side === 'top'), rings: layout.seal.ink.rings };
+    };
+    document.querySelector('[data-testid=seal-arc-top-between] button')?.click();
+    await new Promise((r) => setTimeout(r, 400));
+    const state = arcOf();
+    const innerEdge = state.rings[0].radius - state.rings[0].width / 2;
+    const nextOuter = state.rings[1].radius + state.rings[1].width / 2;
+    return {
+      on: t.seal.arcTop.betweenRings,
+      radius: state.arc.radius,
+      innerEdge,
+      nextOuter,
+    };
+  })()`);
+  check(
+    'текст ставится между кольцами',
+    between.on === true && between.radius > between.nextOuter && between.radius < between.innerEdge,
+    `${between.radius.toFixed(1)} в [${between.nextOuter.toFixed(1)}; ${between.innerEdge.toFixed(1)}]`,
+  );
+  // Возвращаем обычное положение верхней дуги.
+  await cdp.evaluate(`(() => {
+    document.querySelector('[data-testid=seal-arc-top-between] button')?.click();
+    return 'ok';
+  })()`);
+  await sleep(300);
 
   console.log('\n4. Маркеры растяжения');
   const handle = await cdp.evaluate(`(() => {
@@ -223,7 +406,43 @@ try {
     check('маркер найден', false);
   }
 
-  console.log('\n5. Цвет, прозрачность и фактура');
+  console.log('\n5. Пипетка: окно сворачивается, цвет берётся с холста');
+  const pipetteStart = await cdp.evaluate(`(async () => {
+    const tabs = Array.from(document.querySelectorAll('[role=tab]'));
+    tabs.find((node) => node.textContent.trim() === 'Краска')?.click();
+    await new Promise((r) => setTimeout(r, 400));
+    const right = document.querySelector('[data-testid=seal-right-column]');
+    right?.querySelector('[data-testid=color-trigger]')?.click();
+    await new Promise((r) => setTimeout(r, 200));
+    right?.querySelector('[data-testid=color-eyedropper]')?.click();
+    await new Promise((r) => setTimeout(r, 400));
+    const overlay = document.querySelector('.fixed.inset-0.z-\\\\[100\\\\]');
+    const canvas = document.querySelector('[data-testid=editor-canvas]') || document.querySelector('canvas');
+    const rect = canvas.getBoundingClientRect();
+    return {
+      suspended: overlay ? overlay.className.includes('pointer-events-none') : null,
+      active: await import('/src/services/eyedropperService.ts').then((m) => m.isEyedropperActive()),
+      x: Math.round(rect.left + rect.width / 2),
+      y: Math.round(rect.top + rect.height / 2),
+    };
+  })()`);
+  check('пипетка сворачивает окно конструктора', pipetteStart.suspended === true && pipetteStart.active === true,
+    JSON.stringify(pipetteStart));
+  await cdp.click(pipetteStart.x, pipetteStart.y);
+  await sleep(900);
+  const pipetteEnd = await cdp.evaluate(`(() => {
+    const overlay = document.querySelector('.fixed.inset-0.z-\\\\[100\\\\]');
+    return {
+      suspended: overlay ? overlay.className.includes('pointer-events-none') : null,
+      color: window.__SEAL_DESIGNER__?.color,
+      modalOpen: window.__PDF_EDITOR__.ui.modals.sealDesigner,
+    };
+  })()`);
+  check('окно вернулось после выбора цвета', pipetteEnd.suspended === false && pipetteEnd.modalOpen === true,
+    JSON.stringify(pipetteEnd));
+  check('цвет с холста применён к печати', /^#[0-9a-f]{6}$/i.test(pipetteEnd.color ?? ''), String(pipetteEnd.color));
+
+  console.log('\n6. Цвет, прозрачность и фактура');
   await cdp.evaluate(`(() => {
     document.querySelector('[data-testid=seal-color-7c3aed]').click();
     return 'ok';
@@ -297,7 +516,7 @@ try {
     JSON.stringify(determinism));
   check('другой seed — другой рисунок', determinism.different === true);
 
-  console.log('\n6. Добавление на документ');
+  console.log('\n7. Добавление на документ');
   await cdp.evaluate(`(() => {
     document.querySelector('[data-testid=seal-insert]').click();
     return 'ok';
@@ -330,7 +549,7 @@ try {
   check('печать сохранена в библиотеку', (inserted?.sealsInLibrary ?? 0) >= 1, String(inserted?.sealsInLibrary));
   check('конструктор закрылся после вставки', inserted?.modalClosed === false);
 
-  console.log('\n7. Объект на странице: перемещение, поворот, прозрачность, дубли');
+  console.log('\n8. Объект на странице: перемещение, поворот, прозрачность, дубли');
   const transformed = await cdp.evaluate(`(() => {
     const app = window.__PDF_EDITOR__;
     const id = ${JSON.stringify(inserted?.id ?? '')};
@@ -378,7 +597,7 @@ try {
   })()`);
   check('копия удаляется', removed === duplicated.before, String(removed));
 
-  console.log('\n8. Векторный экспорт в PDF');
+  console.log('\n9. Векторный экспорт в PDF');
   const exported = await cdp.evaluate(`(async () => {
     const app = window.__PDF_EDITOR__;
     app.objects.select([]);
@@ -426,7 +645,7 @@ try {
     check('цвет печати попал в PDF', purple, JSON.stringify(fills.slice(0, 4)));
   }
 
-  console.log('\n9. Повторное открытие печати из объекта (через «Свойства»)');
+  console.log('\n10. Повторное открытие печати из объекта (через «Свойства»)');
   const reopened = await cdp.evaluate(`(async () => {
     const app = window.__PDF_EDITOR__;
     app.ui.closeAllModals();
