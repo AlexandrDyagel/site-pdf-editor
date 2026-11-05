@@ -759,7 +759,13 @@ function addFromCanvas(
       editor.startTextEditing(id);
       ui.setRightTab('properties');
     } else if (obj.type === 'stamp') {
-      ui.openModal('stampEditor', { templateId: obj.payload.templateId, objectId: id });
+      // Печать редактируется в конструкторе оттиска, штамп — в общем редакторе.
+      const template = obj.payload.template;
+      if (template.kind === 'seal' || template.seal) {
+        ui.openModal('sealDesigner', { templateId: obj.payload.templateId, objectId: id });
+      } else {
+        ui.openModal('stampEditor', { templateId: obj.payload.templateId, objectId: id });
+      }
     } else if (obj.type === 'signature') {
       ui.openModal('signatureEditor', { signatureId: obj.payload.modelId, objectId: id });
     } else if (obj.type === 'drawing') {

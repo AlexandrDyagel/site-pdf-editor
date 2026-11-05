@@ -21,6 +21,8 @@ import {
   type StampFontResolver,
   type StampLayout,
 } from '@/services/stampRenderService';
+import { drawSealInkToPdfPage } from '@/services/sealPdfRenderer';
+import { sealInkAlpha } from '@/services/sealRenderService';
 
 /** Контекст отрисовки штампа на странице PDF. */
 export interface StampPdfContext {
@@ -175,6 +177,11 @@ export async function drawStampToPdfPage(
   if (inner) drawFrame(page, ctx, inner, layout.borderWidth, offset, layout.color, alpha);
   if (outer) drawFrame(page, ctx, outer, layout.borderWidth, 0, layout.color, alpha);
 
+  // Круглая печать: кольца, зерно и разделитель — векторно.
+  if (layout.seal) {
+    drawSealInkToPdfPage(page, ctx, layout.seal.ink, layout.color, alpha);
+  }
+
   // Разделитель.
   if (layout.divider) {
     const start = ctx.toPdf(layout.divider.x1, layout.divider.y1);
@@ -229,8 +236,11 @@ export async function drawStampToPdfPage(
   }
 
   // Текст по кругу.
-  for (const char of layout.chars) {
-    const font = await ctx.embedFont(template.fontId, char.bold, char.italic);
+  for (const [index, char] of layout.chars.entries()) {
+    // У печати каждая буква пропечатана чуть по-разному (как у живого оттиска).
+    const glyphAlpha = layout.seal ? sealInkAlpha(index, layout.seal.ink.ink) : 1;
+    // У печати шрифт дуги может отличаться от шрифта шаблона.
+    const font = await ctx.embedFont(char.fontId ?? template.fontId, char.bold, char.italic);
     const { r, g, b } = hexToRgb(char.color);
     const point = ctx.toPdf(char.x, char.y);
     page.drawText(char.char, {
@@ -239,7 +249,7 @@ export async function drawStampToPdfPage(
       size: char.fontSize,
       font,
       color: rgb(r, g, b),
-      opacity: alpha,
+      opacity: alpha * glyphAlpha,
       rotate: degrees(ctx.rotate - char.angle),
     });
   }

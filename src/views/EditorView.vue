@@ -26,6 +26,7 @@ import LibraryPanel from '@/components/library/LibraryPanel.vue';
 import PdfDropzone from '@/components/pdf/PdfDropzone.vue';
 import PasswordPrompt from '@/components/pdf/PasswordPrompt.vue';
 import StampEditor from '@/components/stamps/StampEditor.vue';
+import SealDesigner from '@/components/stamps/SealDesigner.vue';
 import SignatureEditor from '@/components/signatures/SignatureEditor.vue';
 import DrawingEditor from '@/components/drawings/DrawingEditor.vue';
 import ExportModal from '@/components/export/ExportModal.vue';
@@ -327,6 +328,7 @@ watch(
 
     <!-- Модальные окна (общие для всех страниц — в App.vue) -->
     <StampEditor />
+    <SealDesigner />
     <SignatureEditor />
     <DrawingEditor />
     <ExportModal />

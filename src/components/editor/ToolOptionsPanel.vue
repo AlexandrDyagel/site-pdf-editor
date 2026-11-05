@@ -574,8 +574,25 @@ const documentFontsUsed = computed(() => {
         placeholder="Выберите печать"
         :options="sealOptions"
       />
-      <AppButton size="sm" icon="plus" block @click="ui.openModal('stampEditor')">
+      <AppButton
+        v-if="editor.tool === 'stamp'"
+        size="sm"
+        icon="plus"
+        block
+        @click="ui.openModal('stampEditor')"
+      >
         Создать новый штамп
+      </AppButton>
+      <AppButton
+        v-else
+        size="sm"
+        icon="seal"
+        variant="primary"
+        block
+        data-testid="open-seal-designer"
+        @click="ui.openModal('sealDesigner')"
+      >
+        Конструктор печати
       </AppButton>
       <p class="text-[11px] text-slate-400">
         Клик по странице поставит выбранный штамп. Перенести на все страницы можно из панели

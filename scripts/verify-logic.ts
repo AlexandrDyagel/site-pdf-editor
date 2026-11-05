@@ -15,7 +15,7 @@
  *    - контуры рукописных штрихов и SVG-пути.
  */
 
-import { PDFDocument, StandardFonts, degrees, rgb } from 'pdf-lib';
+import { PDFDocument, PDFName, StandardFonts, degrees, rgb } from 'pdf-lib';
 import fontkit from '@pdf-lib/fontkit';
 import { readFile } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
@@ -39,6 +39,30 @@ import { wrapText } from '@/utils/textLayout';
 import { layerAccentColor, layerBaseName, layerLabels, layerName } from '@/utils/layers';
 import { normalizeSides, polygonPath, polygonVertices } from '@/utils/shapePath';
 import { getStrokeOutline, outlineToPath, strokesToSvg } from '@/services/strokeService';
+import {
+  SEAL_MAX_MM,
+  SEAL_MIN_MM,
+  SEAL_PX_PER_MM,
+  computeSealParts,
+  createSealSettings,
+  layoutSealArc,
+  normalizeSealSettings,
+  sealDiameterMm,
+  sealDiameterPx,
+  sealRingRadii,
+  sealSettingsFromTemplate,
+  sealInkAlpha,
+  type SealArcLayoutInput,
+} from '@/services/sealRenderService';
+import { drawSealInkToPdfPage } from '@/services/sealPdfRenderer';
+import {
+  computeStampLayout,
+  createCircularText,
+  createSealTemplate,
+  createStampTemplate,
+  fitStampTemplate,
+  stampTemplateToSvg,
+} from '@/services/stampRenderService';
 import type { EditorObject, ShapeKind, StrokeData } from '@/types';
 
 let passed = 0;
@@ -722,6 +746,265 @@ check(
   /^M [\d.]+ [\d.]+( L [\d.]+ [\d.]+)* Z$/.test(plainPolygon),
   plainPolygon,
 );
+
+/* ==========================================================================
+ *  Круглая печать: кольца, дуговой текст, фактура
+ * ========================================================================== */
+
+console.log('\nКруглая печать');
+
+check(
+  'миллиметры в пиксели: 40 мм = 113.39 px',
+  close(sealDiameterPx(40), 40 * SEAL_PX_PER_MM, 0.011),
+  String(sealDiameterPx(40)),
+);
+check('обратный перевод пикселей в миллиметры', Math.abs(sealDiameterMm(sealDiameterPx(55)) - 55) < 0.15);
+check(
+  'диаметр ограничен 30–60 мм',
+  sealDiameterPx(10) === sealDiameterPx(SEAL_MIN_MM) && sealDiameterPx(90) === sealDiameterPx(SEAL_MAX_MM),
+);
+check('1 px = 1/72 дюйма', close(SEAL_PX_PER_MM, 72 / 25.4, 1e-9));
+
+const ringRadii = sealRingRadii(
+  [
+    { width: 2.5, gap: 0 },
+    { width: 1.4, gap: 4.5 },
+    { width: 1, gap: 3 },
+  ],
+  113.39,
+);
+check(
+  'кольца идут от края внутрь',
+  ringRadii.length === 3 && ringRadii[0] > ringRadii[1] && ringRadii[1] > ringRadii[2],
+  JSON.stringify(ringRadii),
+);
+check(
+  'наружное кольцо прижато к краю: R − половина толщины',
+  close(ringRadii[0], 113.39 / 2 - 1.25, 0.01),
+  String(ringRadii[0]),
+);
+check(
+  'зазор отсчитывается от внутреннего края предыдущего кольца',
+  close(ringRadii[1], ringRadii[0] - 1.25 - 4.5 - 0.7, 0.01),
+  String(ringRadii[1]),
+);
+
+/* --- дуговой текст ------------------------------------------------------- */
+
+const arcBase: SealArcLayoutInput = {
+  text: 'ТЕСТ',
+  radius: 50,
+  fontSize: 8,
+  letterSpacing: 1,
+  wordSpacing: 2,
+  spanAngle: 0,
+  centerAngle: 270,
+  side: 'top',
+  cx: 60,
+  cy: 60,
+  family: 'PT Sans',
+  color: '#000000',
+  bold: false,
+  italic: false,
+};
+
+const arcTop = layoutSealArc(arcBase);
+check('верхняя дуга: по глифу на символ', arcTop.chars.length === 4, String(arcTop.chars.length));
+check('верхняя дуга читается по часовой стрелке', arcTop.endAngle > arcTop.startAngle);
+check(
+  'верхняя дуга симметрична относительно верха',
+  close((arcTop.startAngle + arcTop.endAngle) / 2, 270, 0.01),
+  `${arcTop.startAngle.toFixed(2)}…${arcTop.endAngle.toFixed(2)}`,
+);
+
+const singleTop = layoutSealArc({ ...arcBase, text: 'А' });
+const topAngle = ((singleTop.chars[0].angle % 360) + 360) % 360;
+check('глиф на верхушке стоит ровно (не наклонён)', topAngle < 0.001 || topAngle > 359.999, String(topAngle));
+
+const singleBottom = layoutSealArc({ ...arcBase, text: 'А', side: 'bottom', centerAngle: 90 });
+const bottomAngle = ((singleBottom.chars[0].angle % 360) + 360) % 360;
+check(
+  'глиф на нижней дуге не перевёрнут',
+  bottomAngle < 0.001 || bottomAngle > 359.999,
+  String(bottomAngle),
+);
+
+const bottomArc = layoutSealArc({ ...arcBase, text: 'ГОРОД', side: 'bottom', centerAngle: 90 });
+check(
+  'нижняя дуга читается слева направо',
+  bottomArc.chars[0].x < bottomArc.chars[bottomArc.chars.length - 1].x,
+  `${bottomArc.chars[0].x.toFixed(1)} → ${bottomArc.chars[3].x.toFixed(1)}`,
+);
+check(
+  'нижняя дуга симметрична относительно низа',
+  close((bottomArc.startAngle + bottomArc.endAngle) / 2, 90, 1e-6),
+);
+
+const spanWithTracking = (letterSpacing: number): number =>
+  layoutSealArc({ ...arcBase, letterSpacing }).spanAngle;
+check(
+  'трекинг растягивает текст по дуге',
+  spanWithTracking(8) > spanWithTracking(0),
+  `${spanWithTracking(0).toFixed(1)}° → ${spanWithTracking(8).toFixed(1)}°`,
+);
+
+const spanWithWord = (wordSpacing: number): number =>
+  layoutSealArc({ ...arcBase, text: 'А Б', wordSpacing }).spanAngle;
+check(
+  'межсловный интервал растягивает дугу на пробеле',
+  spanWithWord(12) > spanWithWord(0) + 1,
+  `${spanWithWord(0).toFixed(1)}° → ${spanWithWord(12).toFixed(1)}°`,
+);
+check(
+  'spanAngle задаёт точный угол дуги',
+  Math.abs(layoutSealArc({ ...arcBase, spanAngle: 90 }).spanAngle - 90) < 0.01,
+  String(layoutSealArc({ ...arcBase, spanAngle: 90 }).spanAngle),
+);
+check(
+  'сжатие дуги не даёт буквам наехать друг на друга сильнее лимита',
+  layoutSealArc({ ...arcBase, text: 'ДЛИННЫЙ ТЕКСТ', spanAngle: 5 }).spanAngle > 5,
+);
+
+/* --- геометрия и фактура ------------------------------------------------ */
+
+const sealTemplate = createSealTemplate();
+const familyOf = (): string => 'PT Sans';
+const partsA = computeSealParts(sealTemplate, sealTemplate.width, sealTemplate.height, familyOf);
+const partsB = computeSealParts(sealTemplate, sealTemplate.width, sealTemplate.height, familyOf);
+check(
+  'рисунок краски воспроизводим при одном seed',
+  JSON.stringify(partsA.ink.specks.slice(0, 3)) === JSON.stringify(partsB.ink.specks.slice(0, 3)),
+);
+check('неровные кольца строятся по точкам', partsA.ink.rings.every((ring) => (ring.points?.length ?? 0) > 90));
+check('второй прокат смещён, но повторяет форму', partsA.ink.ghostRings.length === partsA.ink.rings.length);
+
+const glyphInk = createSealSettings().ink;
+const glyphAlpha = sealInkAlpha(5, glyphInk);
+check(
+  'прижим буквы в диапазоне 0.8…1 и воспроизводим',
+  glyphAlpha >= 0.8 && glyphAlpha <= 1 && glyphAlpha === sealInkAlpha(5, glyphInk),
+  String(glyphAlpha),
+);
+check('без эффекта прижим букв ровный', sealInkAlpha(5, { ...glyphInk, enabled: false }) === 1);
+
+const sealOff = createSealTemplate({
+  seal: {
+    ...createSealSettings(),
+    ink: { ...createSealSettings().ink, enabled: false },
+  },
+});
+const partsOff = computeSealParts(sealOff, sealOff.width, sealOff.height, familyOf);
+check('без эффекта кольца ровные', partsOff.ink.rings.every((ring) => ring.points === null));
+check('без эффекта нет зерна и второго проката', partsOff.ink.specks.length === 0 && partsOff.ink.ghostRings.length === 0);
+
+const normalizedSeal = normalizeSealSettings({
+  ...createSealSettings(),
+  diameterMm: 12,
+  rings: Array.from({ length: 6 }, () => ({ width: 40, gap: 99 })),
+});
+check(
+  'настройки клампятся: диаметр 30–60, колец не больше четырёх',
+  normalizedSeal.diameterMm === SEAL_MIN_MM && normalizedSeal.rings.length === 4,
+  JSON.stringify({ mm: normalizedSeal.diameterMm, rings: normalizedSeal.rings.length }),
+);
+check('толщина колец ограничена', normalizedSeal.rings.every((ring) => ring.width <= 12));
+
+const legacySeal = sealSettingsFromTemplate(
+  createStampTemplate({
+    shape: 'round',
+    width: 120,
+    height: 120,
+    doubleBorder: true,
+    borderGap: 5,
+    circularText: { ...createCircularText(), enabled: true, text: 'ОРГАНИЗАЦИЯ' },
+  }),
+);
+check(
+  'старый шаблон печати превращается в кольца и дуги',
+  legacySeal.rings.length === 2 && legacySeal.arcTop.text === 'ОРГАНИЗАЦИЯ',
+  JSON.stringify({ rings: legacySeal.rings.length, text: legacySeal.arcTop.text }),
+);
+
+// Обратная совместимость: шаблон без `seal` (старая библиотека, чужой проект)
+// обязан рисоваться прежним движком — рамками и круговым текстом.
+const legacyLayout = computeStampLayout(
+  createStampTemplate({
+    shape: 'round',
+    width: 120,
+    height: 120,
+    doubleBorder: true,
+    circularText: { ...createCircularText(), enabled: true, text: 'ОРГАНИЗАЦИЯ' },
+  }),
+  familyOf,
+);
+check(
+  'старый шаблон без настроек печати рисуется прежним движком',
+  legacyLayout.seal === null && legacyLayout.frames.length === 2 && legacyLayout.chars.length > 0,
+  JSON.stringify({ seal: legacyLayout.seal, frames: legacyLayout.frames.length, chars: legacyLayout.chars.length }),
+);
+
+/* --- общий layout и масштабирование ------------------------------------- */
+
+const sealLayout = computeStampLayout(sealTemplate, familyOf);
+check('layout печати без прямоугольных рамок', sealLayout.frames.length === 0);
+check(
+  'layout содержит кольца, дуги и разделитель',
+  Boolean(sealLayout.seal) &&
+    sealLayout.seal!.ink.rings.length === 2 &&
+    sealLayout.seal!.arcs.length === 2 &&
+    Boolean(sealLayout.seal!.ink.divider),
+);
+check(
+  'глифы дуг попадают в общий список символов',
+  sealLayout.chars.length === sealLayout.seal!.arcs.reduce((sum, arc) => sum + arc.chars.length, 0),
+);
+
+const doubled = fitStampTemplate(sealTemplate, sealTemplate.width * 2, sealTemplate.height * 2);
+const doubledLayout = computeStampLayout(doubled, familyOf);
+check(
+  'растянутая печать: кольца масштабируются',
+  doubledLayout.seal!.ink.rings[0].radius > sealLayout.seal!.ink.rings[0].radius * 1.9,
+  `${sealLayout.seal!.ink.rings[0].radius.toFixed(1)} → ${doubledLayout.seal!.ink.rings[0].radius.toFixed(1)}`,
+);
+check(
+  'растянутая печать: кегль дуги тоже растёт',
+  doubledLayout.seal!.arcs[0].fontSize > sealLayout.seal!.arcs[0].fontSize * 1.7,
+  `${sealLayout.seal!.arcs[0].fontSize.toFixed(2)} → ${doubledLayout.seal!.arcs[0].fontSize.toFixed(2)}`,
+);
+
+/* --- векторный SVG ------------------------------------------------------ */
+
+const sealSvg = stampTemplateToSvg(sealOff, familyOf);
+check(
+  'SVG печати: кольца и разделитель — окружности',
+  (sealSvg.match(/<circle /g) ?? []).length >= 3,
+  String((sealSvg.match(/<circle /g) ?? []).length),
+);
+check('SVG печати: текст по дуге — отдельные глифы с поворотом', /<text[^>]*transform="translate\(/.test(sealSvg));
+check(
+  'SVG печати: центр остался обычным текстом',
+  sealSvg.includes('ООО «РОМАШКА»'),
+);
+
+/* --- PDF ---------------------------------------------------------------- */
+
+let sealPdfDrawn = false;
+try {
+  const pdfDoc = await PDFDocument.create();
+  const page = pdfDoc.addPage([595, 842]);
+  drawSealInkToPdfPage(
+    page,
+    { toPdf: (x, y) => ({ x: 120 + x, y: 700 - y }), rotate: 0 },
+    partsA.ink,
+    '#b91c1c',
+    0.8,
+  );
+  const saved = await PDFDocument.load(await pdfDoc.save());
+  sealPdfDrawn = Boolean(saved.getPage(0).node.get(PDFName.of('Contents')));
+} catch {
+  sealPdfDrawn = false;
+}
+check('PDF: «краска» печати рисуется без ошибок', sealPdfDrawn);
 
 /* ==========================================================================
  *  Итог

@@ -11,6 +11,7 @@ import { createId } from '@/utils/id';
 /** Доступные модальные окна. */
 export type ModalName =
   | 'stampEditor'
+  | 'sealDesigner'
   | 'signatureEditor'
   | 'drawingEditor'
   | 'export'
@@ -52,6 +53,7 @@ export interface ConfirmState {
 export const useUiStore = defineStore('ui', () => {
   const modals = ref<Record<ModalName, boolean>>({
     stampEditor: false,
+    sealDesigner: false,
     signatureEditor: false,
     drawingEditor: false,
     export: false,

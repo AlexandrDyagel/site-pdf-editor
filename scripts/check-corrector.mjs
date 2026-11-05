@@ -191,16 +191,15 @@ try {
 
   console.log('\n3. Печать: сохранение в библиотеку и вставка на страницу');
   const beforeSeals = await cdp.evaluate(`window.__PDF_EDITOR__.library.items.filter((i) => i.type === 'seal').length`);
-  await cdp.evaluate(`window.__PDF_EDITOR__.ui.openModal('stampEditor', { kind: 'seal' }); 'ok'`);
+  await cdp.evaluate(`window.__PDF_EDITOR__.ui.openModal('sealDesigner'); 'ok'`);
   await sleep(2200);
   const clicked = await cdp.evaluate(`(() => {
-    const button = Array.from(document.querySelectorAll('button'))
-      .find((b) => b.textContent.trim().includes('Вставить на страницу'));
+    const button = document.querySelector('[data-testid=seal-insert]');
     if (!button) return false;
     button.click();
     return true;
   })()`);
-  check('кнопка «Вставить на страницу» доступна', clicked === true);
+  check('кнопка «Добавить на документ» доступна', clicked === true);
   await sleep(2500);
 
   const sealState = await cdp.evaluate(`(() => {

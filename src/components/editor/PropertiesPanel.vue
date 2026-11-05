@@ -420,6 +420,11 @@ function setSmartThreshold(threshold: number): void {
 function openStampEditor(): void {
   const payload = stampPayload.value;
   if (!payload) return;
+  // Печать редактируется в конструкторе оттиска, штамп — в общем редакторе.
+  if (payload.template.kind === 'seal' || payload.template.seal) {
+    ui.openModal('sealDesigner', { templateId: payload.templateId, objectId: single.value?.id });
+    return;
+  }
   ui.openModal('stampEditor', { templateId: payload.templateId, objectId: single.value?.id });
 }
 

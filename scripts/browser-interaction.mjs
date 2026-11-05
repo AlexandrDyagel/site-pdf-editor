@@ -231,12 +231,11 @@ try {
   check('в проекте есть объекты редактора', (saved.objects ?? 0) > 0, `объектов: ${saved.objects}`);
 
   console.log('\n=== Библиотека: сохранение печати через интерфейс ===');
-  await cdp.evaluate(`window.__PDF_EDITOR__.ui.openModal('stampEditor', { kind: 'seal' }); 'ok'`);
+  await cdp.evaluate(`window.__PDF_EDITOR__.ui.openModal('sealDesigner'); 'ok'`);
   await sleep(2200);
   const beforeSeals = await cdp.evaluate(`window.__PDF_EDITOR__.library.items.filter((i) => i.type === 'seal').length`);
   await cdp.evaluate(`(() => {
-    const button = Array.from(document.querySelectorAll('button'))
-      .find((b) => b.textContent.trim().includes('Вставить на страницу'));
+    const button = document.querySelector('[data-testid=seal-insert]');
     button?.click();
     return 'ok';
   })()`);
@@ -247,7 +246,7 @@ try {
       seals: app.library.items.filter((i) => i.type === 'seal').length,
       objects: app.objects.objects.length,
       types: app.objects.objects.map((o) => o.type),
-      modalOpen: app.ui.modals.stampEditor,
+      modalOpen: app.ui.modals.sealDesigner,
     };
   })()`);
   check('новая печать сохранена в библиотеку', sealState.seals === beforeSeals + 1, `печатей: ${beforeSeals} → ${sealState.seals}`);

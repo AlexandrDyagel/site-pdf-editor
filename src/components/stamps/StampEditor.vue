@@ -11,7 +11,7 @@ import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue';
 import type { StampTemplate, StampTextLine } from '@/types';
 import { STAMP_COLORS } from '@/constants';
 import { createId } from '@/utils/id';
-import { createStampLine, createStampTemplate, createSealTemplate, computeStampLayout, paintStampLayout } from '@/services/stampRenderService';
+import { createStampLine, createStampTemplate, computeStampLayout, paintStampLayout } from '@/services/stampRenderService';
 import { createStampObject } from '@/services/objectFactory';
 import { loadImage } from '@/utils/image';
 import { strokesToSvg } from '@/services/strokeService';
@@ -93,9 +93,7 @@ watch(
     const fromLibrary = templateId ? library.stampById(templateId) : undefined;
     template.value = fromLibrary
       ? (JSON.parse(JSON.stringify(fromLibrary)) as StampTemplate)
-      : kind === 'seal'
-        ? createSealTemplate()
-        : createStampTemplate();
+      : createStampTemplate();
     await ensureLogo();
     await nextTick();
   },
@@ -152,8 +150,15 @@ watch(
 /* ======================== Редактирование ======================== */
 
 function setKind(kind: 'stamp' | 'seal'): void {
+  // Круглая печать настраивается в отдельном конструкторе: у неё своя
+  // модель (кольца, дуги, фактура), и старые поля штампа её не описывают.
+  if (kind === 'seal') {
+    ui.closeModal('stampEditor');
+    ui.openModal('sealDesigner', { templateId: template.value.id || undefined });
+    return;
+  }
   const previous = template.value;
-  const base = kind === 'seal' ? createSealTemplate() : createStampTemplate();
+  const base = createStampTemplate();
   template.value = {
     ...base,
     id: previous.id,
@@ -253,29 +258,6 @@ const presets: { label: string; build: () => StampTemplate }[] = [
           createStampLine('КОПИЯ ВЕРНА', { fontSize: 14, bold: true }),
           createStampLine('Секретарь ______________', { fontSize: 9 }),
         ],
-      }),
-  },
-  {
-    label: 'Круглая печать',
-    build: () =>
-      createSealTemplate({
-        name: 'Печать организации',
-        lines: [
-          createStampLine('ООО «Ромашка»', { fontSize: 11, bold: true }),
-          createStampLine('ОГРН 1234567890123', { fontSize: 8 }),
-        ],
-        circularText: {
-          enabled: true,
-          text: 'ОБЩЕСТВО С ОГРАНИЧЕННОЙ ОТВЕТСТВЕННОСТЬЮ',
-          bottomText: 'г. Москва · ИНН 7701234567',
-          fontSize: 9,
-          radius: 0,
-          startAngle: 270,
-          direction: 'cw',
-          letterSpacing: 1,
-          color: null,
-          splitBottom: true,
-        },
       }),
   },
 ];
@@ -447,6 +429,9 @@ void AppIcon;
               @click="applyPreset(preset.build)"
             >
               {{ preset.label }}
+            </AppButton>
+            <AppButton size="sm" variant="subtle" icon="seal" @click="setKind('seal')">
+              Круглая печать…
             </AppButton>
           </div>
         </div>

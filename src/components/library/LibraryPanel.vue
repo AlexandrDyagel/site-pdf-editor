@@ -135,7 +135,11 @@ function insertItem(id: string): void {
 function editItem(id: string): void {
   const record = library.byId(id);
   if (!record) return;
-  if (record.type === 'stamp' || record.type === 'seal') {
+  if (record.type === 'seal') {
+    ui.openModal('sealDesigner', { templateId: id });
+    return;
+  }
+  if (record.type === 'stamp') {
     ui.openModal('stampEditor', { templateId: id });
     return;
   }
@@ -263,7 +267,9 @@ function countOf(type: LibraryItemType): number {
               ? ui.openModal('drawingEditor')
               : library.activeType === 'image'
                 ? ui.openModal('imageLibrary')
-                : ui.openModal('stampEditor', { kind: library.activeType === 'seal' ? 'seal' : 'stamp' })
+                : library.activeType === 'seal'
+                  ? ui.openModal('sealDesigner')
+                  : ui.openModal('stampEditor', { kind: 'stamp' })
         "
       >
         Создать

@@ -7,6 +7,7 @@
 import type { SignatureTemplate, StampTemplate, StrokeData, StrokePoint } from '@/types';
 import { createId } from '@/utils/id';
 import { createSealTemplate, createStampLine, createStampTemplate } from '@/services/stampRenderService';
+import { createSealRing, createSealSettings } from '@/services/sealRenderService';
 import { renderStrokesPreview } from '@/services/imageExportService';
 
 /** Образец прямоугольного штампа «УТВЕРЖДАЮ». */
@@ -56,14 +57,29 @@ export function demoRoundSeal(): StampTemplate {
     doubleBorder: true,
     borderGap: 6,
     lines: [
-      createStampLine('ООО «РОМАШКА»', { fontSize: 11, bold: true }),
-      createStampLine('ОГРН 1234567890123', { fontSize: 8 }),
-      createStampLine('ИНН 7701234567', { fontSize: 8 }),
+      createStampLine('ООО «РОМАШКА»', { fontSize: 9, bold: true }),
+      createStampLine('ОГРН 1234567890123', { fontSize: 6.5 }),
+      createStampLine('ИНН 7701234567', { fontSize: 6.5 }),
     ],
+    // Печать рисуется по своей модели: кольца и две дуги.
+    seal: createSealSettings({
+      diameterMm: 45,
+      rings: [createSealRing(2.6, 0), createSealRing(1.4, 4.5)],
+      arcTop: {
+        ...createSealSettings().arcTop,
+        text: 'ОБЩЕСТВО С ОГРАНИЧЕННОЙ ОТВЕТСТВЕННОСТЬЮ',
+        fontSize: 7.5,
+      },
+      arcBottom: {
+        ...createSealSettings().arcBottom,
+        text: 'г. Москва · ул. Примерная, д. 1',
+        fontSize: 7,
+      },
+    }),
     circularText: {
-      enabled: true,
-      text: 'ОБЩЕСТВО С ОГРАНИЧЕННОЙ ОТВЕТСТВЕННОСТЬЮ',
-      bottomText: 'г. Москва · ул. Примерная, д. 1',
+      enabled: false,
+      text: '',
+      bottomText: '',
       fontSize: 8.5,
       radius: 0,
       startAngle: 270,

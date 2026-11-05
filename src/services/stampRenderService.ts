@@ -13,9 +13,20 @@
  *  Y направлен вниз, единицы — PDF points.
  */
 
-import type { StampCircularText, StampTemplate, StampTextLine } from '@/types';
+import type { SealSettings, StampCircularText, StampTemplate, StampTextLine } from '@/types';
 import { createId } from '@/utils/id';
 import { measureTextWidth } from '@/utils/textLayout';
+import {
+  computeSealParts,
+  createSealSettings,
+  sealDiameterPx,
+  sealInkToSvg,
+  sealInkAlpha,
+  pointsToPath,
+  paintSealInk,
+  type SealInkGeometry,
+  type SealArcGeometry,
+} from '@/services/sealRenderService';
 
 /** Шрифт для отрисовки штампа. */
 export interface StampFontResolver {
@@ -51,6 +62,8 @@ export interface StampCharLayout {
   fontSize: number;
   color: string;
   family: string;
+  /** Шрифт (FontAsset.id) — для встраивания в PDF. */
+  fontId?: string;
   bold: boolean;
   italic: boolean;
 }
@@ -72,6 +85,15 @@ export interface StampLayout {
   frames: { shape: StampTemplate['shape']; x: number; y: number; width: number; height: number; radius: number }[];
   lines: StampLineLayout[];
   chars: StampCharLayout[];
+  /**
+   * «Краска» круглой печати: кольца, зерно, разделитель и границы дуг.
+   * `null` — обычный штамп (рамки, прямой и круговой текст).
+   */
+  seal: {
+    ink: SealInkGeometry;
+    /** Дуги с углами — нужны маркерам растяжения в конструкторе. */
+    arcs: SealArcGeometry[];
+  } | null;
   logo: {
     src: string;
     x: number;
@@ -151,20 +173,25 @@ export function createStampTemplate(patch: Partial<StampTemplate> = {}): StampTe
 
 /** Новый шаблон круглой печати. */
 export function createSealTemplate(patch: Partial<StampTemplate> = {}): StampTemplate {
+  const seal = createSealSettings();
+  const diameterPx = sealDiameterPx(seal.diameterMm);
   const base = createStampTemplate({
     name: 'Новая печать',
     shape: 'round',
-    width: 120,
-    height: 120,
+    width: diameterPx,
+    height: diameterPx,
     color: '#b91c1c',
-    borderWidth: 2,
-    doubleBorder: true,
-    borderGap: 5,
+    borderWidth: seal.rings[0]?.width ?? 2,
+    doubleBorder: seal.rings.length > 1,
+    borderGap: seal.rings[1]?.gap ?? 4,
     lines: [
-      createStampLine('ООО «Ромашка»', { fontSize: 11, bold: true }),
-      createStampLine('ОГРН 1234567890123', { fontSize: 8 }),
+      createStampLine('ООО «РОМАШКА»', { fontSize: 9, bold: true }),
+      createStampLine('ОГРН 1234567890123', { fontSize: 6.5 }),
+      createStampLine('ИНН 7701234567', { fontSize: 6.5 }),
     ],
-    circularText: { ...createCircularText(), enabled: true },
+    // Прежний дуговой текст не дублируем: у печати своя модель дуг.
+    circularText: { ...createCircularText(), enabled: false },
+    seal,
     ...patch,
   });
   return { ...base, kind: 'seal' };
@@ -208,6 +235,14 @@ export function computeStampLayout(
   options: { textOverride?: string | null; colorOverride?: string | null; scale?: number } = {},
 ): StampLayout {
   const { textOverride = null, colorOverride = null, scale = 1 } = options;
+
+  // Круглая печать из конструктора оттиска: своя геометрия (кольца, дуги,
+  // фактура). Всё остальное — прежний путь штампов.
+  if (template.seal && isRound(template.shape)) {
+    const sealLayout = buildSealLayout(template, resolveFamily, textOverride, colorOverride);
+    return scale === 1 ? sealLayout : scaleStampLayout(sealLayout, scale);
+  }
+
   const width = Math.max(8, template.width);
   const height = Math.max(8, template.height);
   const color = colorOverride || template.color;
@@ -414,6 +449,7 @@ export function computeStampLayout(
         y: scalePoint(char.y),
         fontSize: scalePoint(char.fontSize),
       })),
+      seal: null,
       logo: logo
         ? {
             ...logo,
@@ -441,7 +477,154 @@ export function computeStampLayout(
     frames,
     lines,
     chars,
+    seal: null,
     logo,
+  };
+}
+
+/**
+ * Геометрия круглой печати в формате общего `StampLayout`.
+ *
+ * Отличие от обычного штампа: нет прямоугольных рамок, а вместо них —
+ * кольца; текст по кругу приходит уже разложенным по дугам, вместе с
+ * границами дуг (они нужны маркерам растяжения в конструкторе).
+ */
+function buildSealLayout(
+  template: StampTemplate,
+  resolveFamily: StampFontResolver,
+  textOverride: string | null,
+  colorOverride: string | null,
+): StampLayout {
+  const width = Math.max(8, template.width);
+  const height = Math.max(8, template.height);
+  const color = colorOverride || template.color;
+
+  // Переопределение первой строки (панель «Свойства») применяем ДО расчёта:
+  // иначе ширина строки не совпадёт с нарисованной.
+  const effective: StampTemplate = {
+    ...template,
+    color,
+    lines: textOverride
+      ? template.lines.map((line, index) =>
+          index === 0 ? { ...line, text: textOverride } : line,
+        )
+      : template.lines,
+  };
+
+  const parts = computeSealParts(effective, width, height, resolveFamily);
+
+  return {
+    width,
+    height,
+    shape: template.shape,
+    color,
+    borderWidth: template.borderWidth,
+    doubleBorder: false,
+    borderGap: 0,
+    cornerRadius: 0,
+    opacity: template.opacity,
+    backgroundColor: template.backgroundColor,
+    divider: null,
+    frames: [],
+    lines: parts.lines,
+    chars: parts.arcs.flatMap((arc) => arc.chars),
+    seal: { ink: parts.ink, arcs: parts.arcs },
+    logo: parts.logo,
+  };
+}
+
+/**
+ * Масштабирование готовой раскладки.
+ * Нужно для растрового превью с `pixelRatio` (см. `paintStampTemplate`).
+ */
+function scaleStampLayout(layout: StampLayout, scale: number): StampLayout {
+  const p = (value: number): number => value * scale;
+  const scaleRing = (ring: SealInkGeometry['rings'][number]): SealInkGeometry['rings'][number] => {
+    const points = ring.points ? ring.points.map((point) => ({ x: p(point.x), y: p(point.y) })) : null;
+    return {
+      ...ring,
+      cx: p(ring.cx),
+      cy: p(ring.cy),
+      radius: p(ring.radius),
+      width: p(ring.width),
+      points,
+      path: points ? pointsToPath(points) : null,
+    };
+  };
+
+  return {
+    ...layout,
+    width: p(layout.width),
+    height: p(layout.height),
+    borderWidth: p(layout.borderWidth),
+    borderGap: p(layout.borderGap),
+    frames: layout.frames.map((frame) => ({
+      ...frame,
+      x: p(frame.x),
+      y: p(frame.y),
+      width: p(frame.width),
+      height: p(frame.height),
+      radius: p(frame.radius),
+    })),
+    lines: layout.lines.map((line) => ({
+      ...line,
+      x: p(line.x),
+      baseline: p(line.baseline),
+      fontSize: p(line.fontSize),
+      width: p(line.width),
+      letterSpacing: p(line.letterSpacing),
+    })),
+    chars: layout.chars.map((char) => ({
+      ...char,
+      x: p(char.x),
+      y: p(char.y),
+      fontSize: p(char.fontSize),
+    })),
+    seal: layout.seal
+      ? {
+          ink: {
+            ...layout.seal.ink,
+            rings: layout.seal.ink.rings.map(scaleRing),
+            ghostRings: layout.seal.ink.ghostRings.map(scaleRing),
+            specks: layout.seal.ink.specks.map((speck) => ({
+              ...speck,
+              x: p(speck.x),
+              y: p(speck.y),
+              radius: p(speck.radius),
+            })),
+            divider: layout.seal.ink.divider
+              ? {
+                  ...layout.seal.ink.divider,
+                  cx: p(layout.seal.ink.divider.cx),
+                  cy: p(layout.seal.ink.divider.cy),
+                  radius: p(layout.seal.ink.divider.radius),
+                  width: p(layout.seal.ink.divider.width),
+                }
+              : null,
+          },
+          arcs: layout.seal.arcs.map((arc) => ({
+            ...arc,
+            cx: p(arc.cx),
+            cy: p(arc.cy),
+            radius: p(arc.radius),
+            chars: arc.chars.map((char) => ({
+              ...char,
+              x: p(char.x),
+              y: p(char.y),
+              fontSize: p(char.fontSize),
+            })),
+          })),
+        }
+      : null,
+    logo: layout.logo
+      ? {
+          ...layout.logo,
+          x: p(layout.logo.x),
+          y: p(layout.logo.y),
+          width: p(layout.logo.width),
+          height: p(layout.logo.height),
+        }
+      : null,
   };
 }
 
@@ -518,6 +701,11 @@ export function paintStampLayout(
     ctx.restore();
   }
 
+  // «Краска» круглой печати: кольца, второй прокат, зерно, разделитель.
+  if (layout.seal) {
+    paintSealInk(ctx, layout.seal.ink, layout.color);
+  }
+
   // Внешняя и внутренняя рамки.
   const offset = layout.doubleBorder ? layout.borderWidth + layout.borderGap : 0;
   if (layout.frames[1]) {
@@ -559,8 +747,13 @@ export function paintStampLayout(
   }
 
   // Круговой текст.
-  for (const char of layout.chars) {
+  for (const [index, char] of layout.chars.entries()) {
     ctx.save();
+    // У печати каждая буква пропечатана чуть по-разному — как у живого
+    // оттиска. Остальные штампы рисуются ровно.
+    if (layout.seal) {
+      ctx.globalAlpha *= sealInkAlpha(index, layout.seal.ink.ink);
+    }
     ctx.translate(char.x, char.y);
     ctx.rotate((char.angle * Math.PI) / 180);
     ctx.fillStyle = char.color;
@@ -642,6 +835,11 @@ export function stampTemplateToSvg(
   if (layout.frames[1]) parts.push(frameToSvg(layout.frames[1], offset));
   if (layout.frames[0]) parts.push(frameToSvg(layout.frames[0], 0));
 
+  // Кольца, зерно и разделитель печати — векторными примитивами.
+  if (layout.seal) {
+    parts.push(...sealInkToSvg(layout.seal.ink, layout.color, layout.opacity));
+  }
+
   if (layout.divider) {
     parts.push(
       `<line x1="${layout.divider.x1}" y1="${layout.divider.y1}" x2="${layout.divider.x2}" y2="${layout.divider.y2}" stroke="${layout.color}" stroke-width="${Math.max(
@@ -668,11 +866,14 @@ export function stampTemplateToSvg(
     );
   }
 
-  for (const char of layout.chars) {
+  for (const [index, char] of layout.chars.entries()) {
+    const glyphAlpha = layout.seal ? sealInkAlpha(index, layout.seal.ink.ink) : 1;
     parts.push(
       `<text x="0" y="0" transform="translate(${char.x} ${char.y}) rotate(${char.angle})" font-family="${escape(
         char.family,
-      )}" font-size="${char.fontSize}" fill="${char.color}">${escape(char.char)}</text>`,
+      )}" font-size="${char.fontSize}" fill="${char.color}"${
+        glyphAlpha < 0.999 ? ` opacity="${glyphAlpha.toFixed(2)}"` : ''
+      }>${escape(char.char)}</text>`,
     );
   }
 
@@ -699,6 +900,9 @@ export function cloneStampTemplate(template: StampTemplate, patch: Partial<Stamp
     updatedAt: now,
     lines: template.lines.map((line) => ({ ...line, id: createId('line') })),
     circularText: { ...template.circularText },
+    // Печать копируем полностью: вложенные массивы колец и дуг нельзя
+    // оставлять общими с библиотечным шаблоном.
+    seal: template.seal ? (JSON.parse(JSON.stringify(template.seal)) as SealSettings) : null,
     logo: template.logo ? { ...template.logo } : null,
     ...patch,
   };
@@ -736,6 +940,9 @@ export function fitStampTemplate(
     ...template,
     width: targetWidth,
     height: targetHeight,
+    // Настройки печати (`seal`) здесь НЕ масштабируются сознательно:
+    // `computeSealParts` сам считает коэффициент по диаметру и пересчитывает
+    // кольца, дуги и шрифты один раз. Иначе масштаб применился бы дважды.
     borderWidth: scale(template.borderWidth),
     borderGap: scale(template.borderGap),
     cornerRadius: scale(template.cornerRadius),
