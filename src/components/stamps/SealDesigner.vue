@@ -12,7 +12,7 @@
  * зазор и половина кольца. Строки центрируются по зазору, тянутся мышью и
  * имеют контекстное меню.
  */
-import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue';
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import type { SealRingLine, StampTemplate, StampTextLine } from '@/types';import { SEAL_COLORS } from '@/constants';
 import { createId } from '@/utils/id';
 import {
@@ -31,7 +31,9 @@ import { createSealTemplate, createStampLine, computeStampLayout } from '@/servi
 import { createStampObject } from '@/services/objectFactory';
 import {
   clearSealDraft,
+  readSealBackground,
   readSealDraft,
+  saveSealBackground,
   saveSealDraft,
   sealDraftKey,
 } from '@/services/sealDraft';
@@ -67,6 +69,20 @@ const isSaving = ref(false);
 const selectedLineId = ref<string | null>(null);
 /** Выбранная строка в центре (клик по ней показывает свойства справа). */
 const selectedCenterIndex = ref<number | null>(null);
+/** Выбранное кольцо (клик по кольцу показывает его настройки справа). */
+const selectedRingIndex = ref<number | null>(null);
+/** Выбран логотип: показываем рамку, углы и маркер поворота. */
+const selectedLogo = ref(false);
+
+/** Сколько строк максимум может стоять в одном кольцевом зазоре. */
+const MAX_LINES_PER_SLOT = 2;
+
+/* ======================== Локальная история (Ctrl+Z) ======================== */
+
+let undoStack: string[] = [];
+let redoStack: string[] = [];
+let historyApplying = false;
+let historyTimer: number | null = null;
 
 /** Фон подложки превью. В документ он не попадает — это только просмотр. */
 const previewBackgrounds = [
@@ -180,14 +196,19 @@ watch(
 
     // 1. Черновик того же контекста — восстанавливаем как было.
     const draft = readSealDraft(draftKey.value);
+    const rememberedBackground = readSealBackground(draftKey.value);
     if (draft) {
       template.value = withSealSettings(draft.template);
       zoom.value = Math.min(6, Math.max(0.5, draft.zoom || fitZoomValue()));
       tab.value = draft.tab || 'rings';
-      previewBg.value = draft.background;
+      // Фон запоминается отдельно: он переживает и вставку, и закрытие окна.
+      previewBg.value = rememberedBackground ?? draft.background;
       selectedLineId.value = draft.selectedLineId;
       selectedCenterIndex.value = null;
+      selectedRingIndex.value = null;
+      selectedLogo.value = false;
       restoredDraft.value = true;
+      resetHistory();
       await nextTick();
       return;
     }
@@ -203,10 +224,14 @@ watch(
     template.value = withSealSettings(source ?? createSealTemplate());
     tab.value = 'rings';
     zoom.value = fitZoomValue();
-    previewBg.value = null;
+    // Фон, выбранный для этой печати раньше, тоже помним.
+    previewBg.value = rememberedBackground ?? null;
     selectedLineId.value = null;
     selectedCenterIndex.value = null;
+    selectedRingIndex.value = null;
+    selectedLogo.value = false;
     restoredDraft.value = false;
+    resetHistory();
     await nextTick();
   },
 );
@@ -224,6 +249,10 @@ function persistDraft(): void {
   });
 }
 
+// Фон превью запоминаем сразу: даже если окно закроют «накрест» или после
+// вставки черновик очистится, при следующем редактировании он вернётся.
+watch(previewBg, (value) => saveSealBackground(draftKey.value, value));
+
 /** Начать печать заново и забыть черновик. */
 function resetDraft(): void {
   clearSealDraft();
@@ -233,7 +262,9 @@ function resetDraft(): void {
   previewBg.value = null;
   selectedLineId.value = null;
   selectedCenterIndex.value = null;
+  selectedRingIndex.value = null;
   zoom.value = fitZoomValue();
+  resetHistory();
 }
 
 /** Зум, при котором печать занимает ~380 px превью. */
@@ -261,6 +292,173 @@ watch(
   { deep: true, immediate: true },
 );
 
+/* ======================== Локальная история и клавиатура ======================== */
+
+/** Текущее состояние — точка отсчёта для Ctrl+Z. */
+function resetHistory(): void {
+  if (historyTimer !== null) {
+    window.clearTimeout(historyTimer);
+    historyTimer = null;
+  }
+  undoStack = [JSON.stringify(template.value)];
+  redoStack = [];
+  historyApplying = false;
+}
+
+function pushHistory(): void {
+  const snapshot = JSON.stringify(template.value);
+  if (undoStack[undoStack.length - 1] === snapshot) return;
+  undoStack.push(snapshot);
+  if (undoStack.length > 80) undoStack.shift();
+  redoStack = [];
+}
+
+function applyHistory(): void {
+  const snapshot = undoStack[undoStack.length - 1];
+  if (!snapshot) return;
+  historyApplying = true;
+  template.value = JSON.parse(snapshot) as StampTemplate;
+  // Выбор мог указывать на удалённую строку/кольцо.
+  if (
+    selectedLineId.value &&
+    !template.value.seal?.lines.some((line) => line.id === selectedLineId.value)
+  ) {
+    selectedLineId.value = null;
+  }
+  if (
+    selectedCenterIndex.value !== null &&
+    selectedCenterIndex.value >= template.value.lines.length
+  ) {
+    selectedCenterIndex.value = null;
+  }
+  if (
+    selectedRingIndex.value !== null &&
+    selectedRingIndex.value >= (template.value.seal?.rings.length ?? 0)
+  ) {
+    selectedRingIndex.value = null;
+  }
+  void nextTick(() => {
+    historyApplying = false;
+  });
+}
+
+function undo(): void {
+  pushHistory();
+  if (undoStack.length < 2) return;
+  const current = undoStack.pop();
+  if (current) redoStack.push(current);
+  applyHistory();
+}
+
+function redo(): void {
+  const snapshot = redoStack.pop();
+  if (!snapshot) return;
+  undoStack.push(snapshot);
+  applyHistory();
+}
+
+// Каждое изменение шаблона попадает в историю (с небольшой задержкой, чтобы
+// перетаскивание ползунка не создавало сотню шагов).
+watch(
+  () => template.value,
+  () => {
+    if (historyApplying) return;
+    if (historyTimer !== null) window.clearTimeout(historyTimer);
+    historyTimer = window.setTimeout(() => {
+      historyTimer = null;
+      pushHistory();
+    }, 250);
+  },
+  { deep: true },
+);
+
+/** Ctrl+Z / Ctrl+Shift+Z / Ctrl+Y и Delete внутри конструктора. */
+function onDesignerKeydown(event: KeyboardEvent): void {
+  if (!ui.modals.sealDesigner) return;
+  const target = event.target as HTMLElement | null;
+  const typing = Boolean(
+    target &&
+      (target.tagName === 'INPUT' ||
+        target.tagName === 'TEXTAREA' ||
+        target.tagName === 'SELECT' ||
+        target.isContentEditable),
+  );
+  const mod = event.ctrlKey || event.metaKey;
+  // event.code не зависит от раскладки: Ctrl+Z работает и на русской.
+  const code = event.code;
+
+  if (mod && !event.altKey && code === 'KeyZ') {
+    // В поле ввода Ctrl+Z — родная отмена набора, её не перехватываем.
+    if (typing) return;
+    event.preventDefault();
+    event.stopPropagation();
+    event.stopImmediatePropagation();
+    if (event.shiftKey) redo();
+    else undo();
+    return;
+  }
+  if (mod && !event.altKey && code === 'KeyY') {
+    if (typing) return;
+    event.preventDefault();
+    event.stopPropagation();
+    event.stopImmediatePropagation();
+    redo();
+    return;
+  }
+  if (!mod && !event.altKey && (event.key === 'Delete' || event.key === 'Backspace')) {
+    if (typing) return;
+    if (selectedLineId.value) {
+      event.preventDefault();
+      event.stopPropagation();
+      event.stopImmediatePropagation();
+      deleteLine(selectedLineId.value);
+      return;
+    }
+    if (selectedCenterIndex.value !== null) {
+      event.preventDefault();
+      event.stopPropagation();
+      event.stopImmediatePropagation();
+      removeCenterLine(selectedCenterIndex.value);
+      return;
+    }
+    if (selectedLogo.value) {
+      event.preventDefault();
+      event.stopPropagation();
+      event.stopImmediatePropagation();
+      removeLogo();
+      return;
+    }
+    if (selectedRingIndex.value !== null) {
+      event.preventDefault();
+      event.stopPropagation();
+      event.stopImmediatePropagation();
+      removeRing(selectedRingIndex.value);
+    }
+  }
+}
+
+onMounted(() => {
+  window.addEventListener('keydown', onDesignerKeydown, true);
+  if (import.meta.env.DEV) {
+    // Отладочный хук для браузерных проверок.
+    (
+      window as unknown as {
+        __SEAL_DESIGNER_KEYBOARD__?: {
+          undo: () => void;
+          redo: () => void;
+          stackSize: () => number;
+          handle: (event: KeyboardEvent) => void;
+        };
+      }
+    ).__SEAL_DESIGNER_KEYBOARD__ = {
+      undo: () => undo(),
+      redo: () => redo(),
+      stackSize: () => undoStack.length,
+      handle: (event) => onDesignerKeydown(event),
+    };
+  }
+});
+
 /* ======================== Кольца ======================== */
 
 function setDiameter(value: number): void {
@@ -275,28 +473,87 @@ function setDiameter(value: number): void {
 }
 
 /**
+ * Снимок радиусов строк: нужен, чтобы структурные изменения колец
+ * (добавление/удаление) не сдвигали уже нарисованный текст.
+ */
+function captureLineRadii(): Map<string, number> {
+  const layout = computeStampLayout(template.value, (id) => fonts.familyOf(id));
+  return new Map((layout.seal?.ringLines ?? []).map((line) => [line.lineId, line.radius]));
+}
+
+/** Возвращает строки на прежние радиусы, меняя только их собственные смещения. */
+function restoreLineRadii(before: Map<string, number>): void {
+  const settings = template.value.seal;
+  if (!settings) return;
+  const layout = computeStampLayout(template.value, (id) => fonts.familyOf(id));
+  for (const geometry of layout.seal?.ringLines ?? []) {
+    const target = before.get(geometry.lineId);
+    if (target == null) continue;
+    const line = settings.lines.find((item) => item.id === geometry.lineId);
+    if (!line) continue;
+    const base = geometry.radius - line.radiusOffset;
+    line.radiusOffset = Math.round((target - base) * 10) / 10;
+  }
+}
+
+/**
  * Добавить кольцо кнопкой.
  *
- * Новое кольцо всегда встаёт внутрь — под уже нарисованным текстом. Строка,
- * стоявшая «под последним кольцом», просто оказывается в новом зазоре, а
- * кольцо — под ней.
+ * Новое кольцо всегда встаёт внутрь — под уже нарисованным текстом. Позиции
+ * строк фиксируются до и восстанавливаются после, поэтому текст не «уезжает».
  */
 function addRing(): void {
   const settings = template.value.seal;
   if (!settings || settings.rings.length >= SEAL_MAX_RINGS) return;
+  const before = captureLineRadii();
   settings.rings.push(createSealRing(1, 4));
+  restoreLineRadii(before);
   ui.notify.info('Кольцо добавлено', 'Оно встало внутрь — под текст, который уже есть на печати');
 }
 
-/** Удалить кольцо (минимум одно остаётся). */
+/** Удалить кольцо (минимум одно остаётся); текст остаётся на своих местах. */
 function removeRing(index: number): void {
   const settings = template.value.seal;
   if (!settings || settings.rings.length <= 1) return;
+  const before = captureLineRadii();
   settings.rings.splice(index, 1);
   settings.rings[0].gap = 0;
   for (const line of settings.lines) {
     line.slot = Math.min(line.slot, settings.rings.length - 1);
   }
+  restoreLineRadii(before);
+  if (selectedRingIndex.value !== null) {
+    if (selectedRingIndex.value === index) selectedRingIndex.value = null;
+    else if (selectedRingIndex.value > index) selectedRingIndex.value -= 1;
+  }
+}
+
+/**
+ * Кольцо потянули на превью: меняем расстояние до предыдущего кольца.
+ * Текст при этом остаётся на своих местах.
+ */
+function onRingResize(ringIndex: number, radius: number): void {
+  const settings = template.value.seal;
+  if (!settings || ringIndex <= 0) return;
+  const layout = computeStampLayout(template.value, (id) => fonts.familyOf(id));
+  const rings = layout.seal?.ink.rings;
+  const prev = rings?.[ringIndex - 1];
+  const current = rings?.[ringIndex];
+  if (!prev || !current) return;
+  const before = captureLineRadii();
+  const gap = prev.radius - prev.width / 2 - radius - current.width / 2;
+  settings.rings[ringIndex].gap = Math.min(16, Math.max(0.5, Math.round(gap * 10) / 10));
+  restoreLineRadii(before);
+}
+
+/** Удаление кольца из контекстного меню. */
+function onRingDelete(ringIndex: number): void {
+  removeRing(ringIndex);
+}
+
+/** Сколько строк уже стоит в зазоре (можно исключить одну — при переносе). */
+function lineCountInSlot(slot: number, excludeId?: string): number {
+  return seal.value.lines.filter((line) => line.slot === slot && line.id !== excludeId).length;
 }
 
 /* ======================== Строки по кольцам ======================== */
@@ -308,7 +565,9 @@ function lineIndex(lineId: string): number {
 /** Выбрать строку (и при желании показать её настройки справа). */
 function selectLine(lineId: string | null, options: { reveal?: boolean } = {}): void {
   selectedLineId.value = lineId;
-  if (lineId) selectedCenterIndex.value = null;
+  selectedRingIndex.value = null;
+  selectedLogo.value = false;
+  selectedCenterIndex.value = null;
   if (!lineId || options.reveal === false) return;
   tab.value = 'text';
   void nextTick(() => {
@@ -320,10 +579,27 @@ function selectLine(lineId: string | null, options: { reveal?: boolean } = {}): 
   });
 }
 
+/** Выбрать кольцо: открыть «Кольца» и показать его карточку. */
+function selectRing(index: number, options: { reveal?: boolean } = {}): void {
+  selectedRingIndex.value = index;
+  selectedLineId.value = null;
+  selectedCenterIndex.value = null;
+  selectedLogo.value = false;
+  tab.value = 'rings';
+  if (options.reveal === false) return;
+  void nextTick(() => {
+    rightColumn.value
+      ?.querySelector(`[data-testid="seal-ring-${index}"]`)
+      ?.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+  });
+}
+
 /** Выбрать строку центра: открыть «Центр» и показать её карточку. */
 function selectCenterLine(index: number, options: { reveal?: boolean } = {}): void {
   selectedCenterIndex.value = index;
   selectedLineId.value = null;
+  selectedRingIndex.value = null;
+  selectedLogo.value = false;
   tab.value = 'center';
   if (options.reveal === false) return;
   void nextTick(() => {
@@ -333,14 +609,46 @@ function selectCenterLine(index: number, options: { reveal?: boolean } = {}): vo
   });
 }
 
+/** Клик по логотипу: выделяем его, чтобы показать углы и поворот. */
+function selectLogo(): void {
+  selectedLogo.value = true;
+  selectedLineId.value = null;
+  selectedCenterIndex.value = null;
+  selectedRingIndex.value = null;
+  tab.value = 'center';
+  void nextTick(() => {
+    rightColumn.value
+      ?.querySelector('[data-testid=seal-logo-section]')
+      ?.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+  });
+}
+
 function addLine(): void {
   const settings = template.value.seal;
   if (!settings) return;
   const active = settings.lines.find((line) => line.id === selectedLineId.value);
+
+  // Ищем зазор со свободным местом: сначала текущий, потом остальные.
+  const preferred = active ? active.slot : 0;
+  let slot = preferred;
+  if (lineCountInSlot(slot) >= MAX_LINES_PER_SLOT) {
+    slot = settings.rings.findIndex((_, index) => lineCountInSlot(index) < MAX_LINES_PER_SLOT);
+  }
+  if (slot < 0) {
+    ui.notify.warning(
+      'В каждом зазоре уже по две строки',
+      'Добавьте ещё кольцо или удалите строку — больше двух строк в зазоре не помещается',
+    );
+    return;
+  }
+
+  // В зазоре максимум две строки — по одной на верхнюю и нижнюю половину.
+  const topTaken = settings.lines.some((line) => line.slot === slot && line.side === 'top');
+  const side: 'top' | 'bottom' = topTaken ? 'bottom' : 'top';
   const line = createSealRingLine({
     text: 'Новая строка',
-    slot: active ? active.slot : 0,
-    side: active ? active.side : 'top',
+    slot,
+    side,
     fontSize: active ? active.fontSize : 7,
     letterSpacing: active ? active.letterSpacing : 1,
     wordSpacing: active ? active.wordSpacing : 2,
@@ -352,6 +660,17 @@ function addLine(): void {
 function updateLine(lineId: string, patch: Partial<SealRingLine>): void {
   const settings = template.value.seal;
   if (!settings) return;
+  const current = settings.lines.find((line) => line.id === lineId);
+  if (!current) return;
+  // В один зазор — не больше двух строк.
+  if (
+    patch.slot !== undefined &&
+    patch.slot !== current.slot &&
+    lineCountInSlot(patch.slot, lineId) >= MAX_LINES_PER_SLOT
+  ) {
+    ui.notify.warning('В этом зазоре уже две строки', 'Выберите другой зазор или удалите строку');
+    return;
+  }
   settings.lines = settings.lines.map((line) =>
     line.id === lineId ? { ...line, ...patch } : line,
   );
@@ -365,7 +684,7 @@ function deleteLine(lineId: string): void {
 }
 
 function onSpanChange(lineId: string, angle: number): void {
-  updateLine(lineId, { spanAngle: Math.min(340, Math.max(1, Math.round(angle * 10) / 10)) });
+  updateLine(lineId, { spanAngle: Math.min(400, Math.max(1, Math.round(angle * 10) / 10)) });
 }
 
 function onLineMove(lineId: string, radiusOffset: number, angleOffset: number): void {
@@ -430,18 +749,63 @@ async function clearPreview(): Promise<void> {
   template.value.logo = null;
   selectedLineId.value = null;
   selectedCenterIndex.value = null;
+  selectedRingIndex.value = null;
   ui.notify.info('Превью очищено', 'Остались кольца и настройки краски — можно собирать печать с нуля');
 }
 
 /* ======================== Центр ======================== */
 
+/** Видимые строки центра — в том же порядке, что и в раскладке. */
+function visibleCenterLines(): StampTextLine[] {
+  return template.value.lines.filter((line) => line.text.trim().length > 0);
+}
+
+/** Индекс строки в шаблоне по индексу в раскладке. */
+function templateCenterIndex(layoutIndex: number): number {
+  const line = visibleCenterLines()[layoutIndex];
+  return line ? template.value.lines.indexOf(line) : -1;
+}
+
+/** Запомнить, где строки центра стояли до структурного изменения. */
+function captureCenterPositions(): Map<string, { x: number; y: number }> {
+  const layout = computeStampLayout(template.value, (id) => fonts.familyOf(id));
+  const map = new Map<string, { x: number; y: number }>();
+  const visible = visibleCenterLines();
+  layout.lines.forEach((geometry, index) => {
+    const line = visible[index];
+    if (line) map.set(line.id, { x: geometry.x, y: geometry.baseline });
+  });
+  return map;
+}
+
+/** Вернуть строки на прежние места: добавляение/удаление соседей их не двигает. */
+function restoreCenterPositions(before: Map<string, { x: number; y: number }>): void {
+  const layout = computeStampLayout(template.value, (id) => fonts.familyOf(id));
+  const visible = visibleCenterLines();
+  layout.lines.forEach((geometry, index) => {
+    const line = visible[index];
+    const target = line ? before.get(line.id) : undefined;
+    if (!line || !target) return;
+    line.offsetX = Math.round(((line.offsetX ?? 0) + target.x - geometry.x) * 10) / 10;
+    line.offsetY = Math.round(((line.offsetY ?? 0) + target.y - geometry.baseline) * 10) / 10;
+  });
+  template.value.lines = [...template.value.lines];
+}
+
 function addCenterLine(): void {
   if (template.value.lines.length >= 3) return;
+  const before = captureCenterPositions();
   template.value.lines.push(createStampLine('Новая строка', { fontSize: 9 }));
+  restoreCenterPositions(before);
+  // Новая строка не должна наехать на соседнюю — чуть опускаем её.
+  const added = template.value.lines[template.value.lines.length - 1];
+  if (added) added.offsetY = template.value.lines.length > 1 ? 14 : 0;
 }
 
 function removeCenterLine(index: number): void {
+  const before = captureCenterPositions();
   template.value.lines = template.value.lines.filter((_, position) => position !== index);
+  restoreCenterPositions(before);
   if (selectedCenterIndex.value !== null) {
     if (selectedCenterIndex.value === index) selectedCenterIndex.value = null;
     else if (selectedCenterIndex.value > index) selectedCenterIndex.value -= 1;
@@ -452,6 +816,49 @@ function updateCenterLine(index: number, patch: Partial<StampTextLine>): void {
   template.value.lines = template.value.lines.map((line, position) =>
     position === index ? { ...line, ...patch } : line,
   );
+}
+
+/** Маркер растянул строку центра: меняем трекинг, кегль не трогаем. */
+function onCenterStretch(layoutIndex: number, width: number): void {
+  const index = templateCenterIndex(layoutIndex);
+  if (index < 0) return;
+  const line = template.value.lines[index];
+  const layout = computeStampLayout(template.value, (id) => fonts.familyOf(id));
+  const geometry = layout.lines[layoutIndex];
+  if (!geometry) return;
+  const chars = Math.max(1, Array.from(line.text).length);
+  if (chars < 2) return;
+  const delta = (width - geometry.width) / (chars - 1);
+  updateCenterLine(index, {
+    letterSpacing: Math.round(Math.min(60, Math.max(-10, line.letterSpacing + delta)) * 10) / 10,
+  });
+}
+
+/** Строку центра перетащили — свободное положение в любом месте. */
+function onCenterMove(layoutIndex: number, offsetX: number, offsetY: number): void {
+  const index = templateCenterIndex(layoutIndex);
+  if (index < 0) return;
+  updateCenterLine(index, { offsetX, offsetY });
+}
+
+/* ======================== Логотип ======================== */
+
+function onLogoMove(offsetX: number, offsetY: number): void {
+  const logo = template.value.logo;
+  if (!logo) return;
+  template.value.logo = { ...logo, offsetX, offsetY };
+}
+
+function onLogoResize(width: number, height: number): void {
+  const logo = template.value.logo;
+  if (!logo) return;
+  template.value.logo = { ...logo, width, height };
+}
+
+function onLogoRotate(rotation: number): void {
+  const logo = template.value.logo;
+  if (!logo) return;
+  template.value.logo = { ...logo, rotation: ((rotation % 360) + 360) % 360 };
 }
 
 /** Загрузка логотипа в центр печати. */
@@ -469,11 +876,17 @@ async function uploadLogo(): Promise<void> {
     offsetX: 0,
     offsetY: 0,
     opacity: 1,
+    rotation: 0,
   };
+  selectedLogo.value = true;
+  selectedLineId.value = null;
+  selectedCenterIndex.value = null;
+  selectedRingIndex.value = null;
 }
 
 function removeLogo(): void {
   template.value.logo = null;
+  selectedLogo.value = false;
 }
 
 /* ======================== Пресеты ======================== */
@@ -526,7 +939,10 @@ function applyPreset(builder: () => StampTemplate): void {
     name: next.name,
   });
   selectedLineId.value = null;
+  selectedCenterIndex.value = null;
+  selectedRingIndex.value = null;
   zoom.value = fitZoomValue();
+  resetHistory();
 }
 
 /* ======================== Сохранение и вставка ======================== */
@@ -591,6 +1007,7 @@ async function insertIntoDocument(): Promise<void> {
       { payload: { templateId: value.id, template: value } },
       'Обновление печати',
     );
+    saveSealBackground(`object:${targetObjectId.value}`, previewBg.value);
     ui.notify.success('Печать обновлена на странице');
   } else {
     const object = createStampObject(value, {
@@ -600,6 +1017,9 @@ async function insertIntoDocument(): Promise<void> {
       templateId: value.id,
     });
     objects.add([object], 'Добавление печати');
+    // Запоминаем фон для этой печати, чтобы он вернулся при редактировании.
+    saveSealBackground(`object:${object.id}`, previewBg.value);
+    saveSealBackground(`template:${value.id}`, previewBg.value);
     ui.notify.success('Печать добавлена на страницу', 'Переместите, поверните или растяните её на холсте');
   }
 
@@ -611,6 +1031,11 @@ async function insertIntoDocument(): Promise<void> {
 }
 
 onBeforeUnmount(() => {
+  window.removeEventListener('keydown', onDesignerKeydown, true);
+  if (historyTimer !== null) {
+    window.clearTimeout(historyTimer);
+    historyTimer = null;
+  }
   if (import.meta.env.DEV) {
     delete (window as unknown as { __SEAL_DESIGNER__?: StampTemplate }).__SEAL_DESIGNER__;
   }
@@ -698,12 +1123,24 @@ function onPickEnd(color: string | null): void {
             :template="template"
             :zoom="zoom"
             :selected-line-id="selectedLineId"
+            :selected-center-index="selectedCenterIndex"
+            :selected-ring-index="selectedRingIndex"
+            :selected-logo="selectedLogo"
             @select-line="selectLine($event)"
             @span-change="onSpanChange"
             @line-move="onLineMove"
             @text-hit="onTextHit"
             @center-hit="onCenterHit"
             @center-select="selectCenterLine"
+            @center-stretch="onCenterStretch"
+            @center-move="onCenterMove"
+            @ring-select="selectRing"
+            @ring-resize="onRingResize"
+            @ring-delete="onRingDelete"
+            @logo-select="selectLogo"
+            @logo-move="onLogoMove"
+            @logo-resize="onLogoResize"
+            @logo-rotate="onLogoRotate"
             @edit-line="onTextHit"
             @delete-line="deleteLine"
           />
@@ -837,8 +1274,15 @@ function onPickEnd(color: string | null): void {
             <div
               v-for="(ring, index) in seal.rings"
               :key="`ring-${index}`"
-              class="rounded-lg border border-slate-200 p-2 dark:border-slate-700"
+              class="rounded-lg border p-2 transition-colors"
+              :class="
+                selectedRingIndex === index
+                  ? 'border-brand-400 bg-brand-50/40 dark:border-brand-500/60 dark:bg-brand-500/5'
+                  : 'border-slate-200 dark:border-slate-700'
+              "
               :data-testid="`seal-ring-${index}`"
+              :data-active="selectedRingIndex === index ? 'true' : 'false'"
+              @pointerdown="selectRing(index, { reveal: false })"
             >
               <div class="mb-1 flex items-center justify-between">
                 <span
@@ -1044,17 +1488,29 @@ function onPickEnd(color: string | null): void {
                 />
                 <AppInput
                   :model-value="line.letterSpacing"
-                  label="Трекинг, pt"
+                  label="Между буквами, pt"
                   type="number"
                   size="sm"
                   :step="0.1"
                   @update:model-value="updateCenterLine(index, { letterSpacing: Number($event) || 0 })"
                 />
+                <AppInput
+                  :model-value="line.wordSpacing ?? 0"
+                  label="Между словами, pt"
+                  type="number"
+                  size="sm"
+                  :step="0.1"
+                  :data-testid="`seal-center-line-${index}-word`"
+                  @update:model-value="updateCenterLine(index, { wordSpacing: Number($event) || 0 })"
+                />
+                <div class="flex items-end text-[11px] leading-tight text-slate-400">
+                  Клик по строке на превью — маркеры растяжения; строку можно перетащить.
+                </div>
               </div>
             </div>
           </AppSection>
 
-          <AppSection title="Логотип или герб" icon="image">
+          <AppSection title="Логотип или герб" icon="image" data-testid="seal-logo-section">
             <div v-if="template.logo" class="space-y-2">
               <div class="flex items-center gap-3">
                 <span
@@ -1076,8 +1532,8 @@ function onPickEnd(color: string | null): void {
                 :precision="2"
               />
               <p class="text-[11px] text-slate-400">
-                Логотип вписывается в центр автоматически, сохраняя пропорции. Поддерживаются
-                PNG, JPEG и SVG.
+                Логотип — объект: тяните его мышью, растягивайте за углы (Shift — пропорции) и
+                вращайте за круглый маркер. Поддерживаются PNG, JPEG и SVG.
               </p>
             </div>
             <div v-else class="space-y-2">

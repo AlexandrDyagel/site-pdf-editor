@@ -45,6 +45,8 @@ export interface StampLineLayout {
   fontSize: number;
   width: number;
   letterSpacing: number;
+  /** Расстояние между словами, pt. */
+  wordSpacing?: number;
   color: string;
   fontId: string;
   family: string;
@@ -104,6 +106,8 @@ export interface StampLayout {
     width: number;
     height: number;
     opacity: number;
+    /** Поворот вокруг центра, градусы. */
+    rotation?: number;
   } | null;
 }
 
@@ -133,6 +137,7 @@ export function createStampLine(text: string, patch: Partial<StampTextLine> = {}
     italic: false,
     align: 'center',
     letterSpacing: 0,
+    wordSpacing: 0,
     offsetY: 0,
     color: null,
     ...patch,
@@ -445,6 +450,7 @@ export function computeStampLayout(
         fontSize: scalePoint(line.fontSize),
         width: scalePoint(line.width),
         letterSpacing: scalePoint(line.letterSpacing),
+        wordSpacing: scalePoint(line.wordSpacing ?? 0),
       })),
       chars: chars.map((char) => ({
         ...char,
@@ -576,6 +582,7 @@ function scaleStampLayout(layout: StampLayout, scale: number): StampLayout {
       fontSize: p(line.fontSize),
       width: p(line.width),
       letterSpacing: p(line.letterSpacing),
+      wordSpacing: p(line.wordSpacing ?? 0),
     })),
     chars: layout.chars.map((char) => ({
       ...char,
@@ -746,10 +753,12 @@ export function paintStampLayout(
     ctx.fillStyle = line.color;
     ctx.font = `${line.italic ? 'italic ' : ''}${line.bold ? '700' : '400'} ${line.fontSize}px "${line.family}"`;
     let cursor = line.x;
-    if (line.letterSpacing) {
+    const wordSpacing = line.wordSpacing ?? 0;
+    if (line.letterSpacing || wordSpacing) {
       for (const char of line.text) {
         ctx.fillText(char, cursor, line.baseline);
-        cursor += ctx.measureText(char).width + line.letterSpacing;
+        cursor +=
+          ctx.measureText(char).width + line.letterSpacing + (char === ' ' ? wordSpacing : 0);
       }
     } else {
       ctx.fillText(line.text, cursor, line.baseline);
@@ -779,7 +788,17 @@ export function paintStampLayout(
   if (layout.logo && logoImage) {
     ctx.save();
     ctx.globalAlpha *= Math.max(0, Math.min(1, layout.logo.opacity));
-    ctx.drawImage(logoImage, layout.logo.x, layout.logo.y, layout.logo.width, layout.logo.height);
+    const centerX = layout.logo.x + layout.logo.width / 2;
+    const centerY = layout.logo.y + layout.logo.height / 2;
+    ctx.translate(centerX, centerY);
+    ctx.rotate(((layout.logo.rotation ?? 0) * Math.PI) / 180);
+    ctx.drawImage(
+      logoImage,
+      -layout.logo.width / 2,
+      -layout.logo.height / 2,
+      layout.logo.width,
+      layout.logo.height,
+    );
     ctx.restore();
   }
 
@@ -873,7 +892,9 @@ export function stampTemplateToSvg(
         line.fontSize
       }" font-weight="${line.bold ? 700 : 400}"${
         line.italic ? ' font-style="italic"' : ''
-      } fill="${line.color}" letter-spacing="${line.letterSpacing}">${escape(line.text)}</text>`,
+      } fill="${line.color}" letter-spacing="${line.letterSpacing}"${
+        line.wordSpacing ? ` word-spacing="${line.wordSpacing}"` : ''
+      }>${escape(line.text)}</text>`,
     );
   }
 
@@ -889,10 +910,12 @@ export function stampTemplateToSvg(
   }
 
   if (layout.logo) {
+    const logoCenterX = layout.logo.x + layout.logo.width / 2;
+    const logoCenterY = layout.logo.y + layout.logo.height / 2;
     parts.push(
       `<image x="${layout.logo.x}" y="${layout.logo.y}" width="${layout.logo.width}" height="${
         layout.logo.height
-      }" opacity="${layout.logo.opacity}" href="${layout.logo.src}" />`,
+      }" opacity="${layout.logo.opacity}" transform="rotate(${layout.logo.rotation ?? 0} ${logoCenterX} ${logoCenterY})" href="${layout.logo.src}" />`,
     );
   }
 
@@ -961,7 +984,9 @@ export function fitStampTemplate(
       ...line,
       fontSize: scale(line.fontSize),
       letterSpacing: scale(line.letterSpacing),
+      wordSpacing: scale(line.wordSpacing ?? 0),
       offsetY: scale(line.offsetY, scaleY),
+      offsetX: scale(line.offsetX ?? 0),
     })),
     circularText: {
       ...template.circularText,

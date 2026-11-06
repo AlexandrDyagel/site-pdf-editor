@@ -492,8 +492,12 @@ export interface StampTextLine {
   align: 'left' | 'center' | 'right';
   /** Межбуквенное расстояние, pt. */
   letterSpacing: number;
+  /** Расстояние между словами, pt. */
+  wordSpacing?: number;
   /** Смещение по вертикали от центра, pt (0 — авто-раскладка). */
   offsetY: number;
+  /** Смещение по горизонтали от центра, pt (0 — авто-раскладка). */
+  offsetX?: number;
   color: string | null;
   /** Шрифт (FontAsset.id). */
   fontId?: string;
@@ -647,6 +651,11 @@ export interface SealSettings {
   arcTop?: SealArcText | null;
   /** @deprecated Старые шаблоны: нижняя дуга. Читается при импорте. */
   arcBottom?: SealArcText | null;
+  /**
+   * Версия модели. 2 — строки позиционируются независимо (у каждой своё
+   * смещение). Старые шаблоны (без версии) при чтении раскладываются стопкой.
+   */
+  version?: number;
 }
 
 /** Логотип/иконка внутри штампа. */
@@ -658,6 +667,8 @@ export interface StampLogo {
   offsetX: number;
   offsetY: number;
   opacity: number;
+  /** Поворот логотипа вокруг центра, градусы. */
+  rotation?: number;
 }
 
 /** Шаблон штампа. */

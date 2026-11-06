@@ -62,3 +62,22 @@ export function readSealDraft(key: string): SealDraft | null {
 export function clearSealDraft(): void {
   draft = null;
 }
+
+/**
+ * Выбранный фон превью запоминается отдельно от черновика.
+ *
+ * Фон — не часть печати, но при повторном редактировании той же печати он
+ * должен остаться тем же. Храним его по контексту (объект/шаблон/новая печать),
+ * поэтому он переживает и вставку на документ, и закрытие окна.
+ */
+const backgrounds = new Map<string, string | null>();
+
+/** Запомнить фон превью для контекста. */
+export function saveSealBackground(key: string, background: string | null): void {
+  backgrounds.set(key, background);
+}
+
+/** Восстановить фон превью для контекста. */
+export function readSealBackground(key: string): string | null | undefined {
+  return backgrounds.has(key) ? backgrounds.get(key) : undefined;
+}

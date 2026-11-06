@@ -875,26 +875,42 @@ check(
   Boolean(bottomLine) && Math.abs(bottomLine!.radius - 0.36 * bottomLine!.fontSize - slot0.center) < 0.02,
 );
 
+const firstLine = createSealRingLine({ text: 'ПЕРВАЯ', slot: 0, side: 'top', fontSize: 5 });
+const singleTemplate = createSealTemplate({
+  seal: createSealSettings({ lines: [firstLine] }),
+});
 const pairTemplate = createSealTemplate({
   seal: createSealSettings({
     lines: [
       createSealRingLine({ text: 'ПЕРВАЯ', slot: 0, side: 'top', fontSize: 5 }),
-      createSealRingLine({ text: 'ВТОРАЯ', slot: 0, side: 'top', fontSize: 5 }),
+      // Вторая строка смещена вниз собственным смещением — первая не двигается.
+      createSealRingLine({ text: 'ВТОРАЯ', slot: 0, side: 'top', fontSize: 5, radiusOffset: -6 }),
     ],
   }),
 });
+const singleParts = computeSealParts(singleTemplate, singleTemplate.width, singleTemplate.height, familyOf);
 const pairParts = computeSealParts(pairTemplate, pairTemplate.width, pairTemplate.height, familyOf);
 const stackPair = pairParts.ringLines
   .filter((line) => line.side === 'top')
   .sort((a, b) => b.radius - a.radius);
-check('две строки встают стопкой: наружная и внутренняя', stackPair.length === 2 && stackPair[0].radius > stackPair[1].radius,
-  stackPair.map((line) => line.radius.toFixed(1)).join(' > '));
 check(
-  'блок из двух строк центрирован по зазору',
-  Math.abs(
-    (stackPair[0].radius + 0.36 * stackPair[0].fontSize + stackPair[1].radius + 0.36 * stackPair[1].fontSize) / 2 -
-      pairParts.slots[0].center,
-  ) < 0.02,
+  'строки независимы: вторая не двигает первую',
+  Math.abs(singleParts.ringLines[0].radius - stackPair[0].radius) < 0.01,
+  `${singleParts.ringLines[0].radius.toFixed(2)} → ${stackPair[0].radius.toFixed(2)}`,
+);
+check(
+  'смещение задаёт положение только своей строки',
+  stackPair.length === 2 && Math.abs(stackPair[0].radius - stackPair[1].radius - 6) < 0.05,
+  stackPair.map((line) => line.radius.toFixed(1)).join(' / '),
+);
+check(
+  'каждая строка центрируется по зазору сама',
+  Math.abs(stackPair[0].radius + 0.36 * stackPair[0].fontSize - pairParts.slots[0].center) < 0.02 &&
+    Math.abs(stackPair[1].radius + 0.36 * stackPair[1].fontSize - (pairParts.slots[0].center - 6)) < 0.02,
+  `${(stackPair[0].radius + 0.36 * stackPair[0].fontSize).toFixed(2)} / ${(
+    stackPair[1].radius +
+    0.36 * stackPair[1].fontSize
+  ).toFixed(2)} при центре ${pairParts.slots[0].center.toFixed(2)}`,
 );
 
 const threeRingTemplate = createSealTemplate({

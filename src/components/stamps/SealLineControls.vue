@@ -195,7 +195,7 @@ const spanHint = computed(() => {
       label="Угол дуги"
       unit="°"
       :min="1"
-      :max="340"
+      :max="400"
       :step="1"
       :data-testid="`seal-line-${props.index}-span`"
       @update:model-value="props.line.spanAngle = Number($event)"

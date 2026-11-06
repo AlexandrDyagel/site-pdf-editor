@@ -49,6 +49,60 @@ export interface KonvaStageApi {
   requestDraw: () => void;
 }
 
+/**
+ * Маркер поворота у выделенного объекта.
+ *
+ * Konva по умолчанию рисует квадратик; здесь — синий круг с белой стрелкой
+ * «поворот», как в макете. Вызывается для каждой ручки Transformer, поэтому
+ * стилизуем только `rotater`, остальные остаются стандартными.
+ */
+function styleRotationAnchor(anchor: Konva.Rect): void {
+  if (!anchor.hasName('rotater')) return;
+  const size = 22;
+  const radius = size / 2;
+  anchor.setAttrs({
+    width: size,
+    height: size,
+    offsetX: radius,
+    offsetY: radius,
+    cornerRadius: radius,
+    fill: '#2f6bff',
+    stroke: '#ffffff',
+    strokeWidth: 1.5,
+  });
+  anchor.sceneFunc((context, shape) => {
+    const c = context as unknown as CanvasRenderingContext2D;
+    context.beginPath();
+    context.arc(radius, radius, radius - 1, 0, Math.PI * 2);
+    context.closePath();
+    context.fillStrokeShape(shape);
+
+    // Белая дуга-стрелка: «повернуть».
+    c.save();
+    c.strokeStyle = '#ffffff';
+    c.lineWidth = 2;
+    c.lineCap = 'round';
+    c.beginPath();
+    c.arc(radius, radius, radius * 0.46, Math.PI * 0.35, Math.PI * 1.75, false);
+    c.stroke();
+    c.beginPath();
+    c.moveTo(radius + radius * 0.22, radius - radius * 0.62);
+    c.lineTo(radius + radius * 0.74, radius - radius * 0.34);
+    c.lineTo(radius + radius * 0.22, radius - radius * 0.02);
+    c.closePath();
+    c.fillStyle = '#ffffff';
+    c.fill();
+    c.restore();
+  });
+  // Кликабелен весь круг, а не только «чернила» стрелки.
+  anchor.hitFunc((context, shape) => {
+    context.beginPath();
+    context.arc(radius, radius, radius, 0, Math.PI * 2);
+    context.closePath();
+    context.fillStrokeShape(shape);
+  });
+}
+
 export function useKonvaStage(containerRef: Ref<HTMLDivElement | null>): KonvaStageApi {
   const editor = useEditorStore();
   const settings = useSettingsStore();
@@ -181,6 +235,7 @@ export function useKonvaStage(containerRef: Ref<HTMLDivElement | null>): KonvaSt
       anchorFill: '#ffffff',
       anchorSize: 8,
       anchorCornerRadius: 2,
+      anchorStyleFunc: (anchor) => styleRotationAnchor(anchor),
       rotateAnchorOffset: 22,
       padding: 2,
       ignoreStroke: true,

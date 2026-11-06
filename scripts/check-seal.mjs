@@ -797,6 +797,325 @@ try {
   })()`);
   check('«Очистить» удаляет все строки', cleared.lines === 0 && cleared.centerLines === 0, JSON.stringify(cleared));
 
+  console.log('\n13. Кольца, центр, логотип и клавиатура');
+
+  await cdp.evaluate(`(async () => {
+    const stamp = await import('/src/services/stampRenderService.ts');
+    window.__sealLayout = () => stamp.computeStampLayout(window.__SEAL_DESIGNER__, (id) => window.__PDF_EDITOR__.fonts.familyOf(id));
+    window.__ringPoint = (index = 0) => {
+      const t = window.__SEAL_DESIGNER__;
+      const ring = window.__sealLayout().seal.ink.rings[index];
+      const canvas = document.querySelector('[data-testid=seal-preview-canvas]');
+      const rect = canvas.getBoundingClientRect();
+      const zoom = rect.width / t.width;
+      return { x: rect.left + (ring.cx - ring.radius) * zoom, y: rect.top + ring.cy * zoom };
+    };
+    window.__centerPoint = (index = 0) => {
+      const t = window.__SEAL_DESIGNER__;
+      const line = window.__sealLayout().lines[index];
+      if (!line) return null;
+      const canvas = document.querySelector('[data-testid=seal-preview-canvas]');
+      const rect = canvas.getBoundingClientRect();
+      const zoom = rect.width / t.width;
+      return {
+        x: rect.left + (line.x + line.width / 2) * zoom,
+        y: rect.top + (line.baseline - line.fontSize * 0.4) * zoom,
+      };
+    };
+    window.__clickTab = (label) => Array.from(document.querySelectorAll('[role=tab]')).find((n) => n.textContent.trim() === label)?.click();
+    return 'ok';
+  })()`);
+
+  // --- кольцо: выбор, штрих, перетаскивание, меню ---
+  const ringPoint = await cdp.evaluate(`window.__ringPoint(1)`);
+  await cdp.click(ringPoint.x, ringPoint.y);
+  await sleep(500);
+  const ringSelected = await cdp.evaluate(`(() => {
+    const d = document.querySelector('[data-testid=seal-designer]');
+    return {
+      tab: Array.from(d.querySelectorAll('[role=tab]')).find((n) => n.getAttribute('aria-selected') === 'true')?.textContent.trim(),
+      active: document.querySelector('[data-testid=seal-ring-1]')?.getAttribute('data-active'),
+    };
+  })()`);
+  check('клик по кольцу показывает его настройки', ringSelected.tab === 'Кольца' && ringSelected.active === 'true',
+    JSON.stringify(ringSelected));
+
+  const ringDrag = await cdp.evaluate(`(async () => {
+    const t = window.__SEAL_DESIGNER__;
+    const ring = window.__sealLayout().seal.ink.rings[1];
+    const canvas = document.querySelector('[data-testid=seal-preview-canvas]');
+    const rect = canvas.getBoundingClientRect();
+    const zoom = rect.width / t.width;
+    const p = window.__ringPoint(1);
+    const options = { bubbles: true, clientX: p.x, clientY: p.y, button: 0, pointerId: 21 };
+    const beforeGap = t.seal.rings[1].gap;
+    canvas.dispatchEvent(new PointerEvent('pointerdown', options));
+    window.dispatchEvent(new PointerEvent('pointermove', { bubbles: true, clientX: p.x + 10, clientY: p.y, pointerId: 21 }));
+    window.dispatchEvent(new PointerEvent('pointerup', { bubbles: true, pointerId: 21 }));
+    await new Promise((r) => setTimeout(r, 500));
+    return { beforeGap, afterGap: t.seal.rings[1].gap, radius: ring.radius };
+  })()`);
+  check('кольцо тянется — меняется расстояние до предыдущего',
+    Math.abs(ringDrag.afterGap - ringDrag.beforeGap) > 0.2, JSON.stringify(ringDrag));
+
+  const ringMenuPoint = await cdp.evaluate(`window.__ringPoint(1)`);
+  await cdp.send('Input.dispatchMouseEvent', {
+    type: 'mousePressed', x: ringMenuPoint.x, y: ringMenuPoint.y, button: 'right', buttons: 2, clickCount: 1,
+  });
+  await cdp.send('Input.dispatchMouseEvent', {
+    type: 'mouseReleased', x: ringMenuPoint.x, y: ringMenuPoint.y, button: 'right', buttons: 0, clickCount: 1,
+  });
+  await sleep(400);
+  const ringMenu = await cdp.evaluate(`(() => ({
+    open: Boolean(document.querySelector('[data-testid=seal-menu-ring-delete]')),
+    rings: window.__SEAL_DESIGNER__.seal.rings.length,
+  }))()`);
+  if (ringMenu.open) {
+    await cdp.evaluate(`document.querySelector('[data-testid=seal-menu-ring-delete]').click(); 'ok'`);
+    await sleep(500);
+  }
+  const ringDeleted = await cdp.evaluate(`window.__SEAL_DESIGNER__.seal.rings.length`);
+  check('контекстное меню кольца удаляет его', ringMenu.open && ringDeleted === ringMenu.rings - 1,
+    JSON.stringify({ ...ringMenu, after: ringDeleted }));
+
+  // --- строка центра: маркеры, растяжение, перетаскивание ---
+  await cdp.evaluate(`window.__clickTab('Центр'); 'ok'`);
+  await sleep(300);
+  await cdp.evaluate(`document.querySelector('[data-testid=seal-add-line]').click(); 'ok'`);
+  await sleep(600);
+  const centerPoint = await cdp.evaluate(`window.__centerPoint(0)`);
+  await cdp.click(centerPoint.x, centerPoint.y);
+  await sleep(500);
+  const centerSelected = await cdp.evaluate(`(() => ({
+    handles: document.querySelectorAll('[data-testid^=seal-center-handle-]').length,
+    active: document.querySelector('[data-testid=seal-center-card-0]')?.getAttribute('data-active'),
+  }))()`);
+  check('клик по строке центра показывает маркеры', centerSelected.handles === 2 && centerSelected.active === 'true',
+    JSON.stringify(centerSelected));
+
+  const centerHandle = await cdp.evaluate(`(() => {
+    const node = document.querySelector('[data-testid=seal-center-handle-1]')?.getBoundingClientRect();
+    return node ? { x: node.x + node.width / 2, y: node.y + node.height / 2 } : null;
+  })()`);
+  await cdp.drag(centerHandle, { x: centerHandle.x + 18, y: centerHandle.y }, 8);
+  await sleep(500);
+  const centerStretch = await cdp.evaluate(`(() => ({
+    letterSpacing: window.__SEAL_DESIGNER__.lines[0].letterSpacing,
+    width: window.__sealLayout().lines[0].width,
+  }))()`);
+  check('маркер растягивает строку центра через трекинг', centerStretch.letterSpacing !== 0,
+    JSON.stringify(centerStretch));
+
+  const centerDrag = await cdp.evaluate(`(() => {
+    const t = window.__SEAL_DESIGNER__;
+    const p = window.__centerPoint(0);
+    const canvas = document.querySelector('[data-testid=seal-preview-canvas]');
+    const options = { bubbles: true, clientX: p.x, clientY: p.y, button: 0, pointerId: 31 };
+    canvas.dispatchEvent(new PointerEvent('pointerdown', options));
+    window.dispatchEvent(new PointerEvent('pointermove', { bubbles: true, clientX: p.x + 12, clientY: p.y + 8, pointerId: 31 }));
+    window.dispatchEvent(new PointerEvent('pointerup', { bubbles: true, pointerId: 31 }));
+    return new Promise((resolve) => setTimeout(() => resolve({ x: t.lines[0].offsetX, y: t.lines[0].offsetY }), 500));
+  })()`);
+  check('строку центра можно перетащить в любое место',
+    Math.abs(centerDrag.x) > 0.5 || Math.abs(centerDrag.y) > 0.5, JSON.stringify(centerDrag));
+
+  const centerIndependence = await cdp.evaluate(`(async () => {
+    const before = window.__sealLayout().lines[0]?.baseline;
+    document.querySelector('[data-testid=seal-add-line]').click();
+    await new Promise((r) => setTimeout(r, 600));
+    const after = window.__sealLayout().lines[0]?.baseline;
+    return { before, after, lines: window.__SEAL_DESIGNER__.lines.length };
+  })()`);
+  check('добавление строки центра не двигает первую',
+    Math.abs(centerIndependence.after - centerIndependence.before) < 0.1,
+    JSON.stringify(centerIndependence));
+
+  const centerWord = await cdp.evaluate(`(async () => {
+    const input = document.querySelector('[data-testid=seal-center-line-0-word] input');
+    if (!input) return { error: 'нет поля' };
+    const before = window.__sealLayout().lines[0].width;
+    input.value = '6';
+    input.dispatchEvent(new Event('input', { bubbles: true }));
+    await new Promise((r) => setTimeout(r, 500));
+    return { before, after: window.__sealLayout().lines[0].width, wordSpacing: window.__SEAL_DESIGNER__.lines[0].wordSpacing };
+  })()`);
+  check('у строки центра есть межсловный интервал',
+    centerWord.error === undefined && centerWord.after > centerWord.before,
+    JSON.stringify(centerWord));
+
+  // --- угол 400 ---
+  await cdp.evaluate(`window.__clickTab('Текст'); 'ok'`);
+  await sleep(300);
+  await cdp.evaluate(`document.querySelector('[data-testid=seal-add-ring-line]')?.click(); 'ok'`);
+  await sleep(500);
+  const angle400 = await cdp.evaluate(`(async () => {
+    const slider = document.querySelector('[data-testid=seal-line-0-span] input');
+    if (!slider) return { error: 'нет ползунка' };
+    slider.value = '400';
+    slider.dispatchEvent(new Event('input', { bubbles: true }));
+    await new Promise((r) => setTimeout(r, 500));
+    const line = window.__SEAL_DESIGNER__.seal.lines[0];
+    const geo = window.__sealLayout().seal.ringLines.find((item) => item.lineId === line.id);
+    return { target: line.spanAngle, actual: Math.abs(geo.endAngle - geo.startAngle) };
+  })()`);
+  check('угол дуги можно выставить до 400°', angle400.target === 400 && Math.abs(angle400.actual - 400) < 1.5,
+    JSON.stringify(angle400));
+
+  // --- Ctrl+Z на русской раскладке и Del ---
+  const undoStart = await cdp.evaluate(`(() => {
+    window.__SEAL_DESIGNER__.seal.lines[0].text = 'ПРОВЕРКА ОТМЕНЫ';
+    return { lines: window.__SEAL_DESIGNER__.seal.lines.length };
+  })()`);
+  await sleep(500);
+  await cdp.evaluate(`document.body.focus(); 'ok'`);
+  await cdp.pressKey('я', 'KeyZ', 90, 2);
+  await sleep(600);
+  const undoResult = await cdp.evaluate(`(() => ({
+    text: window.__SEAL_DESIGNER__.seal.lines[0]?.text,
+    lines: window.__SEAL_DESIGNER__.seal.lines.length,
+  }))()`);
+  check('Ctrl+Z работает на русской раскладке', undoResult.text !== 'ПРОВЕРКА ОТМЕНЫ',
+    JSON.stringify({ start: undoStart, now: undoResult }));
+
+  const deleteState = await cdp.evaluate(`(async () => {
+    const card = document.querySelector('[data-testid=seal-line-0]');
+    card?.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true }));
+    await new Promise((r) => setTimeout(r, 300));
+    return { lines: window.__SEAL_DESIGNER__.seal.lines.length };
+  })()`);
+  await cdp.pressKey('Delete', 'Delete', 46, 0);
+  await sleep(600);
+  const afterKeyDelete = await cdp.evaluate(`window.__SEAL_DESIGNER__.seal.lines.length`);
+  check('Delete удаляет выбранную строку', afterKeyDelete === deleteState.lines - 1,
+    JSON.stringify({ before: deleteState.lines, after: afterKeyDelete }));
+  await cdp.pressKey('я', 'KeyZ', 90, 2);
+  await sleep(600);
+  const afterUndoDelete = await cdp.evaluate(`window.__SEAL_DESIGNER__.seal.lines.length`);
+  check('Ctrl+Z возвращает удалённую строку', afterUndoDelete === deleteState.lines,
+    JSON.stringify({ expected: deleteState.lines, after: afterUndoDelete }));
+
+  // --- логотип как объект ---
+  await cdp.evaluate(`(async () => {
+    const t = window.__SEAL_DESIGNER__;
+    const png = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAgAAAAIAQMAAAD+wSzIAAAABlBMVEX///+/v7+jQ3Y5AAAADklEQVQI12P4AIX8EAgALgAD/aNpbtEAAAAASUVORK5CYII=';
+    t.logo = { src: png, width: 30, height: 20, offsetX: 0, offsetY: 0, opacity: 1, rotation: 0 };
+    return 'ok';
+  })()`);
+  await sleep(700);
+  const logoPoint = await cdp.evaluate(`(() => {
+    const logo = window.__sealLayout().logo;
+    const t = window.__SEAL_DESIGNER__;
+    const canvas = document.querySelector('[data-testid=seal-preview-canvas]');
+    const rect = canvas.getBoundingClientRect();
+    const zoom = rect.width / t.width;
+    return { x: rect.left + (logo.x + logo.width / 2) * zoom, y: rect.top + (logo.y + logo.height / 2) * zoom };
+  })()`);
+  await cdp.click(logoPoint.x, logoPoint.y);
+  await sleep(500);
+  const logoSelected = await cdp.evaluate(`(() => ({
+    handles: document.querySelectorAll('[data-testid^=seal-logo-handle-]').length,
+    rotate: Boolean(document.querySelector('[data-testid=seal-logo-rotate]')),
+  }))()`);
+  check('клик по логотипу показывает маркеры объекта', logoSelected.handles === 4 && logoSelected.rotate,
+    JSON.stringify(logoSelected));
+
+  const logoTransform = await cdp.evaluate(`(async () => {
+    const t = window.__SEAL_DESIGNER__;
+    const canvas = document.querySelector('[data-testid=seal-preview-canvas]');
+    const before = { w: t.logo.width, h: t.logo.height };
+    const logo = window.__sealLayout().logo;
+    const rect = canvas.getBoundingClientRect();
+    const zoom = rect.width / t.width;
+    let p = { x: rect.left + (logo.x + logo.width / 2) * zoom, y: rect.top + (logo.y + logo.height / 2) * zoom };
+    canvas.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, clientX: p.x, clientY: p.y, button: 0, pointerId: 41 }));
+    window.dispatchEvent(new PointerEvent('pointermove', { bubbles: true, clientX: p.x + 10, clientY: p.y + 6, pointerId: 41 }));
+    window.dispatchEvent(new PointerEvent('pointerup', { bubbles: true, pointerId: 41 }));
+    await new Promise((r) => setTimeout(r, 400));
+    const moved = { x: t.logo.offsetX, y: t.logo.offsetY };
+    const corner = document.querySelector('[data-testid=seal-logo-handle-se]');
+    const cr = corner?.getBoundingClientRect();
+    const cp = cr ? { x: cr.left + cr.width / 2, y: cr.top + cr.height / 2 } : null;
+    if (corner && cp) {
+      corner.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, clientX: cp.x, clientY: cp.y, button: 0, pointerId: 42 }));
+      window.dispatchEvent(new PointerEvent('pointermove', { bubbles: true, clientX: cp.x + 10, clientY: cp.y + 10, shiftKey: true, pointerId: 42 }));
+      window.dispatchEvent(new PointerEvent('pointerup', { bubbles: true, pointerId: 42 }));
+      await new Promise((r) => setTimeout(r, 400));
+    }
+    const resized = { w: t.logo.width, h: t.logo.height };
+    const rotateBtn = document.querySelector('[data-testid=seal-logo-rotate]');
+    const rr = rotateBtn?.getBoundingClientRect();
+    const rp = rr ? { x: rr.left + rr.width / 2, y: rr.top + rr.height / 2 } : null;
+    if (rotateBtn && rp) {
+      rotateBtn.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, clientX: rp.x, clientY: rp.y, button: 0, pointerId: 43 }));
+      window.dispatchEvent(new PointerEvent('pointermove', { bubbles: true, clientX: rp.x + 22, clientY: rp.y + 8, pointerId: 43 }));
+      window.dispatchEvent(new PointerEvent('pointerup', { bubbles: true, pointerId: 43 }));
+      await new Promise((r) => setTimeout(r, 400));
+    }
+    return { moved, before, resized, rotation: t.logo.rotation };
+  })()`);
+  const ratioBefore = logoTransform.before.w / logoTransform.before.h;
+  const ratioAfter = logoTransform.resized.w / logoTransform.resized.h;
+  check('логотип можно переместить', Math.abs(logoTransform.moved.x) > 0.3 || Math.abs(logoTransform.moved.y) > 0.3,
+    JSON.stringify(logoTransform.moved));
+  check('Shift сохраняет пропорции при растяжении',
+    logoTransform.resized.w > logoTransform.before.w && Math.abs(ratioAfter - ratioBefore) < 0.03,
+    JSON.stringify({ before: logoTransform.before, after: logoTransform.resized, ratios: [ratioBefore, ratioAfter] }));
+  check('логотип можно повернуть', Math.abs(logoTransform.rotation) > 1, String(logoTransform.rotation));
+
+  // --- штриховой маркер поворота у объектов ---
+  await cdp.evaluate(`window.__PDF_EDITOR__.ui.closeModal('sealDesigner'); 'ok'`);
+  await sleep(700);
+  const rotationAnchor = await cdp.evaluate(`(async () => {
+    const app = window.__PDF_EDITOR__;
+    const stage = window.__PDF_EDITOR_STAGE__;
+    if (!stage) return { error: 'нет сцены' };
+    const factory = await import('/src/services/objectFactory.ts');
+    const shape = factory.createShapeObject('rect', {
+      page: 0, x: 120, y: 120, width: 160, height: 100,
+      defaults: { stroke: '#111111', strokeWidth: 1, fill: '#ffffff' },
+    });
+    app.objects.add([shape], 'проверка маркера');
+    app.objects.select([shape.id]);
+    await new Promise((r) => setTimeout(r, 600));
+    const rotater = stage.findOne('Transformer')?.findOne('.rotater');
+    return rotater ? { fill: rotater.fill(), width: rotater.width(), name: rotater.name() } : { error: 'нет rotater' };
+  })()`);
+  check('маркер поворота — синий круг со стрелкой',
+    rotationAnchor.fill === '#2f6bff' && rotationAnchor.width === 22,
+    JSON.stringify(rotationAnchor));
+
+  // --- фон переживает закрытие и вставку ---
+  await cdp.evaluate(`window.__PDF_EDITOR__.ui.openModal('sealDesigner'); 'ok'`);
+  await sleep(900);
+  await cdp.evaluate(`document.querySelector('[data-testid=seal-bg-dark]')?.click(); 'ok'`);
+  await sleep(300);
+  await cdp.evaluate(`window.__PDF_EDITOR__.ui.closeModal('sealDesigner'); 'ok'`);
+  await sleep(600);
+  await cdp.evaluate(`window.__PDF_EDITOR__.ui.openModal('sealDesigner'); 'ok'`);
+  await sleep(900);
+  const bgAfterReopen = await cdp.evaluate(`(() => {
+    const active = Array.from(document.querySelectorAll('[data-testid=seal-backgrounds] button')).find((b) => b.className.includes('border-brand-500'));
+    return active?.textContent?.trim();
+  })()`);
+  check('фон превью переживает закрытие окна', bgAfterReopen === 'Тёмный', String(bgAfterReopen));
+
+  await cdp.evaluate(`document.querySelector('[data-testid=seal-insert]').click(); 'ok'`);
+  await sleep(1000);
+  const insertedObjectId = await cdp.evaluate(`(() => {
+    const objects = window.__PDF_EDITOR__.objects.all;
+    return objects[objects.length - 1]?.id ?? null;
+  })()`);
+  await cdp.evaluate(
+    `window.__PDF_EDITOR__.ui.openModal('sealDesigner', { objectId: ${JSON.stringify(insertedObjectId)} }); 'ok'`,
+  );
+  await sleep(1000);
+  const bgAfterInsert = await cdp.evaluate(`(() => {
+    const active = Array.from(document.querySelectorAll('[data-testid=seal-backgrounds] button')).find((b) => b.className.includes('border-brand-500'));
+    return { background: active?.textContent?.trim() };
+  })()`);
+  check('фон печати помнится после вставки на документ', bgAfterInsert.background === 'Тёмный',
+    JSON.stringify({ ...bgAfterInsert, objectId: insertedObjectId }));
+
   await cdp.evaluate(`window.__PDF_EDITOR__.ui.closeAllModals(); 'ok'`);
   await sleep(600);
 

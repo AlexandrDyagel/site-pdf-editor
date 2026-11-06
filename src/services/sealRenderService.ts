@@ -129,6 +129,7 @@ export function createSealInk(patch: Partial<SealInk> = {}): SealInk {
 export function createSealSettings(patch: Partial<SealSettings> = {}): SealSettings {
   return {
     diameterMm: SEAL_DEFAULT_MM,
+    version: 2,
     rings: [createSealRing(2.5, 0), createSealRing(1.4, 4.5)],
     lines: [
       createSealRingLine({
@@ -257,7 +258,7 @@ function normalizeRingLine(line: SealRingLine, ringCount: number): SealRingLine 
     fontSize: clamp(line.fontSize ?? 7, 3, 40),
     letterSpacing: clamp(line.letterSpacing ?? 1, -4, 40),
     wordSpacing: clamp(line.wordSpacing ?? 2, -10, 60),
-    spanAngle: clamp(line.spanAngle ?? 1, 1, 340),
+    spanAngle: clamp(line.spanAngle ?? 1, 1, 400),
     radiusOffset: clamp(line.radiusOffset ?? 0, -200, 200),
     // Угол приводим к (-180; 180], чтобы поворот всегда читался одинаково.
     angleOffset: (((angle + 180) % 360) + 360) % 360 - 180,
@@ -290,10 +291,41 @@ export function normalizeSealSettings(seal: SealSettings): SealSettings {
     .slice(0, 24)
     .map((line) => normalizeRingLine(line, rings.length));
 
+  /**
+   * Миграция старых шаблонов (без `version`).
+   *
+   * Раньше строки в одном зазоре и на одной половине складывались в стопку и
+   * центрировались блоком. Теперь каждая строка независима: чтобы старые
+   * печати не «схлопнулись» в одну линию, раздвигаем такие строки смещениями.
+   */
+  const modelVersion = seal.version ?? 1;
+  if (modelVersion < 2) {
+    const groups = new Map<string, SealRingLine[]>();
+    for (const line of lines) {
+      const key = `${line.slot}:${line.side}`;
+      const bucket = groups.get(key);
+      if (bucket) bucket.push(line);
+      else groups.set(key, [line]);
+    }
+    for (const bucket of groups.values()) {
+      if (bucket.length < 2) continue;
+      // Если пользователь уже расставил строки вручную — не трогаем.
+      if (bucket.some((line) => Math.abs(line.radiusOffset) > 0.01)) continue;
+      let cursor = 0;
+      for (const line of bucket) {
+        if (cursor > 0) {
+          line.radiusOffset = Math.round((line.radiusOffset - cursor) * 10) / 10;
+        }
+        cursor += line.fontSize * 1.3 + 1.5;
+      }
+    }
+  }
+
   return {
     diameterMm: clamp(seal.diameterMm, SEAL_MIN_MM, SEAL_MAX_MM),
     rings,
     lines,
+    version: 2,
     divider: {
       enabled: Boolean(seal.divider?.enabled),
       radius: clamp(seal.divider?.radius ?? 0, 0, 2000),
@@ -496,7 +528,7 @@ export function layoutSealArc(input: SealArcLayoutInput): SealArcLayout {
   // трекинг и интервалы двигают только дугу.
   const naturalAngle = natural / radius;
   const requestedAngle = (Math.max(1, input.spanAngle) * Math.PI) / 180;
-  const MAX_TOTAL_ANGLE = (340 * Math.PI) / 180;
+  const MAX_TOTAL_ANGLE = (400 * Math.PI) / 180;
   const explicitSpan = input.spanAngle > 1.001;
   let targetAngle = explicitSpan ? requestedAngle : naturalAngle;
   // Совсем длинный текст с огромным трекингом не должен замыкаться сам в себя.
@@ -651,6 +683,8 @@ export interface SealParts {
     width: number;
     height: number;
     opacity: number;
+    /** Поворот вокруг центра, градусы. */
+    rotation: number;
   } | null;
 }
 
@@ -851,81 +885,59 @@ export function computeSealParts(
     size,
   );
 
-  /** Строки в одном зазоре и на одной половине встают стопкой по центру. */
-  const groups = new Map<string, SealRingLine[]>();
+  /**
+   * Каждая строка живёт сама по себе: её положение = центр её зазора плюс
+   * собственное смещение. Раньше строки в одном зазоре складывались в стопку
+   * и центрировались блоком — из-за этого добавление второй строки сдвигало
+   * первую. Теперь общая раскладка на строку не влияет.
+   */
+  const ringLines: SealRingLineGeometry[] = [];
   for (const line of seal.lines) {
     if (!line.text.trim()) continue;
-    const key = `${line.slot}:${line.side}`;
-    const bucket = groups.get(key);
-    if (bucket) bucket.push(line);
-    else groups.set(key, [line]);
-  }
-
-  const ringLines: SealRingLineGeometry[] = [];
-  for (const [key, bucket] of groups) {
-    const [slotRaw, sideRaw] = key.split(':');
-    const slotIndex = Math.min(slotGeometry.length - 1, Math.max(0, Number(slotRaw)));
+    const slotIndex = Math.min(slotGeometry.length - 1, Math.max(0, line.slot));
     const slot = slotGeometry[slotIndex];
-    const side: 'top' | 'bottom' = sideRaw === 'bottom' ? 'bottom' : 'top';
     if (!slot) continue;
 
-    const scaled = bucket.map((line) => ({
-      line,
-      fontSize: Math.max(3, line.fontSize * k),
-    }));
-    const gapBetween = 1.5;
-    const totalHeight =
-      scaled.reduce((sum, item) => sum + item.fontSize * 1.3, 0) +
-      Math.max(0, scaled.length - 1) * gapBetween;
-    // Идём от внешнего края зазора к внутреннему: первая строка — наружная.
-    let cursor = slot.center + totalHeight / 2;
+    const fontSize = Math.max(3, line.fontSize * k);
+    // Базовая линия: у верхней половины буквы растут наружу от неё,
+    // у нижней — внутрь к центру. Поэтому середина «чернил» смещена.
+    const baselineCenter =
+      line.side === 'top' ? slot.center - fontSize * 0.36 : slot.center + fontSize * 0.36;
+    const radius = Math.max(size * 0.05, baselineCenter + line.radiusOffset * k);
+    const centerAngle = (line.side === 'top' ? 270 : 90) + line.angleOffset;
 
-    for (const item of scaled) {
-      const height = item.fontSize * 1.3;
-      const visualCenter = cursor - height / 2;
-      cursor -= height + gapBetween;
+    const layout = layoutSealArc({
+      text: line.text,
+      radius,
+      fontSize,
+      letterSpacing: line.letterSpacing * k,
+      wordSpacing: line.wordSpacing * k,
+      spanAngle: line.spanAngle,
+      centerAngle,
+      side: line.side,
+      cx,
+      cy,
+      family: resolveFamily(line.fontId ?? template.fontId),
+      fontId: line.fontId ?? template.fontId,
+      color,
+      bold: line.bold,
+      italic: line.italic,
+    });
 
-      // Базовая линия: у верхней половины буквы растут наружу от неё,
-      // у нижней — внутрь к центру. Поэтому середина «чернил» смещена.
-      const baselineCenter =
-        side === 'top' ? visualCenter - item.fontSize * 0.36 : visualCenter + item.fontSize * 0.36;
-      const radius = Math.max(size * 0.05, baselineCenter + item.line.radiusOffset * k);
-      const centerAngle =
-        (side === 'top' ? 270 : 90) + item.line.angleOffset;
-
-      const layout = layoutSealArc({
-        text: item.line.text,
-        radius,
-        fontSize: item.fontSize,
-        letterSpacing: item.line.letterSpacing * k,
-        wordSpacing: item.line.wordSpacing * k,
-        spanAngle: item.line.spanAngle,
-        centerAngle,
-        side,
-        cx,
-        cy,
-        family: resolveFamily(item.line.fontId ?? template.fontId),
-        fontId: item.line.fontId ?? template.fontId,
-        color,
-        bold: item.line.bold,
-        italic: item.line.italic,
-      });
-
-      ringLines.push({
-        lineId: item.line.id,
-        slot: slotIndex,
-        side,
-        chars: layout.chars,
-        cx,
-        cy,
-        radius,
-        fontSize: item.fontSize,
-        startAngle: layout.startAngle,
-        endAngle: layout.endAngle,
-        centerAngle,
-        text: item.line.text,
-      });
-    }
+    ringLines.push({
+      lineId: line.id,
+      slot: slotIndex,
+      side: line.side,
+      chars: layout.chars,
+      cx,
+      cy,
+      radius,
+      fontSize,
+      startAngle: layout.startAngle,
+      endAngle: layout.endAngle,
+      centerAngle,
+      text: line.text,
+    });
   }
 
   // --- Центр: что остаётся внутри текста ----------------------------------
@@ -952,6 +964,7 @@ export function computeSealParts(
       bold: line.bold,
       italic: line.italic,
       letterSpacing: line.letterSpacing,
+      wordSpacing: line.wordSpacing ?? 0,
       lineHeight: 1.25,
     });
     let fontSize = Math.max(3, line.fontSize);
@@ -964,30 +977,25 @@ export function computeSealParts(
     return { line, family, fontSize, lineWidth, height: fontSize * 1.32 };
   });
 
-  // Логотип: вписываем в свободный центр, сохраняя пропорции.
+  // Логотип — независимый объект: размер и положение задаёт пользователь,
+  // он не участвует в авто-раскладке строк центра.
   let logo: SealParts['logo'] = null;
   if (template.logo?.src) {
-    const hasLines = lineMetrics.length > 0;
-    const sourceWidth = Math.max(2, template.logo.width);
-    const sourceHeight = Math.max(2, template.logo.height);
-    const maxWidth = centerLimit * (hasLines ? 1.5 : 1.75);
-    const maxHeight = centerLimit * (hasLines ? 0.85 : 1.75);
-    const fit = Math.min(maxWidth / sourceWidth, maxHeight / sourceHeight, 1.6);
+    const width = Math.min(size * 0.9, Math.max(3, template.logo.width * k));
+    const height = Math.min(size * 0.9, Math.max(3, template.logo.height * k));
     logo = {
       src: template.logo.src,
-      x: 0,
-      y: 0,
-      width: sourceWidth * fit,
-      height: sourceHeight * fit,
+      x: cx - width / 2 + (template.logo.offsetX ?? 0) * k,
+      y: cy - height / 2 + (template.logo.offsetY ?? 0) * k,
+      width,
+      height,
       opacity: template.logo.opacity,
+      rotation: template.logo.rotation ?? 0,
     };
   }
 
-  // Если логотип и строки вместе не влезают по высоте — поджимаем строки.
-  const gapBetween = logo && lineMetrics.length > 0 ? Math.max(2, size * 0.02) : 0;
-  const logoHeight = logo ? logo.height : 0;
-  const availableHeight = Math.max(4, centerLimit * 1.7 - logoHeight - gapBetween);
   const baseLinesHeight = lineMetrics.reduce((sum, item) => sum + item.height, 0);
+  const availableHeight = Math.max(4, centerLimit * 1.7);
   const heightFactor =
     baseLinesHeight > availableHeight && baseLinesHeight > 0 ? availableHeight / baseLinesHeight : 1;
   if (heightFactor < 1) {
@@ -999,6 +1007,7 @@ export function computeSealParts(
         bold: metric.line.bold,
         italic: metric.line.italic,
         letterSpacing: metric.line.letterSpacing,
+        wordSpacing: metric.line.wordSpacing ?? 0,
         lineHeight: 1.25,
       });
       metric.height = metric.fontSize * 1.32;
@@ -1006,24 +1015,19 @@ export function computeSealParts(
   }
 
   const linesHeight = lineMetrics.reduce((sum, item) => sum + item.height, 0);
-  const blockHeight = logoHeight + gapBetween + linesHeight;
-  let cursorY = cy - blockHeight / 2;
-
-  if (logo) {
-    logo.x = cx - logo.width / 2 + (template.logo?.offsetX ?? 0) * k;
-    logo.y = cursorY + (template.logo?.offsetY ?? 0) * k;
-    cursorY += logo.height + gapBetween;
-  }
+  let cursorY = cy - linesHeight / 2;
 
   const lines: StampLineLayout[] = lineMetrics.map((metric) => {
     const { line, family, lineWidth } = metric;
-    const baseline = cursorY + metric.fontSize * 0.98;
+    // Смещения строки — «свободное» положение: пользователь может утащить
+    // строку центра в любое место, не двигая остальные.
+    const baseline = cursorY + metric.fontSize * 0.98 + (line.offsetY ?? 0);
     const x =
-      line.align === 'left'
+      (line.align === 'left'
         ? cx - size / 2 + metric.fontSize
         : line.align === 'right'
           ? cx + size / 2 - metric.fontSize - lineWidth
-          : cx - lineWidth / 2;
+          : cx - lineWidth / 2) + (line.offsetX ?? 0);
     cursorY += metric.height;
     return {
       text: line.text,
@@ -1032,6 +1036,7 @@ export function computeSealParts(
       fontSize: metric.fontSize,
       width: lineWidth,
       letterSpacing: line.letterSpacing,
+      wordSpacing: line.wordSpacing ?? 0,
       color: line.color || color,
       fontId: line.fontId || template.fontId,
       family,
@@ -1043,7 +1048,7 @@ export function computeSealParts(
   // --- Разделительная окружность -----------------------------------------
   let divider: SealDividerGeometry | null = null;
   if (seal.divider.enabled) {
-    const contentHalfHeight = blockHeight / 2;
+    const contentHalfHeight = linesHeight / 2;
     const contentHalfWidth = lineMetrics.reduce((max, item) => Math.max(max, item.lineWidth / 2), 0);
     // Текст занимает ~78 % диаметра разделителя: у настоящих печатей между
     // строками центра и окружностью всегда есть заметное поле.

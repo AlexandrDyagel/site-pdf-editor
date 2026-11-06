@@ -21,6 +21,8 @@ export interface LayoutFontStyle {
   bold: boolean;
   italic: boolean;
   letterSpacing: number;
+  /** Дополнительное расстояние между словами (пробелами), pt. */
+  wordSpacing?: number;
   /** Множитель межстрочного интервала. */
   lineHeight: number;
 }
@@ -92,9 +94,10 @@ export function measureInkMetrics(
  */
 export function measureTextWidth(text: string, style: LayoutFontStyle): number {
   if (!text) return 0;
+  const spaces = (text.match(/ /g) ?? []).length;
   const key = `${style.fontFamily}|${style.fontSize}|${style.bold ? 1 : 0}|${style.italic ? 1 : 0}|${
     style.letterSpacing
-  }|${text}`;
+  }|${style.wordSpacing ?? 0}|${text}`;
   const cached = widthCache.get(key);
   if (cached !== undefined) return cached;
 
@@ -102,6 +105,7 @@ export function measureTextWidth(text: string, style: LayoutFontStyle): number {
   if (!measureCtx) {
     // SSR/тесты: грубая оценка (средняя ширина глифа ~0.5em).
     width = text.length * style.fontSize * 0.52 + style.letterSpacing * Math.max(0, text.length - 1);
+    width += (style.wordSpacing ?? 0) * spaces;
     widthCache.set(key, width);
     return width;
   }
@@ -110,6 +114,9 @@ export function measureTextWidth(text: string, style: LayoutFontStyle): number {
   width = measureCtx.measureText(text).width;
   if (style.letterSpacing) {
     width += style.letterSpacing * Math.max(0, text.length - 1);
+  }
+  if (style.wordSpacing) {
+    width += style.wordSpacing * spaces;
   }
   widthCache.set(key, width);
   if (widthCache.size > 6000) widthCache.clear();

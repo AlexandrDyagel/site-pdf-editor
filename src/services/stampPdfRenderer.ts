@@ -203,7 +203,7 @@ export async function drawStampToPdfPage(
     const { r, g, b } = hexToRgb(line.color);
     const skew = line.italic ? ITALIC_SKEW : 0;
 
-    if (line.letterSpacing > 0.01) {
+    if (line.letterSpacing > 0.01 || (line.wordSpacing ?? 0) > 0.01) {
       // Посимвольно — так межбуквенное расстояние точно соблюдается.
       let advance = 0;
       for (const char of line.text) {
@@ -218,7 +218,10 @@ export async function drawStampToPdfPage(
           rotate: degrees(ctx.rotate),
           xSkew: degrees(skew),
         });
-        advance += font.widthOfTextAtSize(char, line.fontSize) + line.letterSpacing;
+        advance +=
+          font.widthOfTextAtSize(char, line.fontSize) +
+          line.letterSpacing +
+          (char === ' ' ? line.wordSpacing ?? 0 : 0);
       }
     } else {
       const point = ctx.toPdf(line.x, line.baseline);
@@ -254,16 +257,25 @@ export async function drawStampToPdfPage(
     });
   }
 
-  // Логотип.
+  // Логотип (может быть повёрнут вокруг своего центра).
   if (layout.logo && ctx.logoImage) {
-    const point = ctx.toPdf(layout.logo.x, layout.logo.y + layout.logo.height);
+    const logo = layout.logo;
+    const center = ctx.toPdf(logo.x + logo.width / 2, logo.y + logo.height / 2);
+    // Локальный поворот по часовой стрелке → в PDF (Y вверх) это минус угол.
+    const rotationRad = ((ctx.rotate - (logo.rotation ?? 0)) * Math.PI) / 180;
+    const cos = Math.cos(rotationRad);
+    const sin = Math.sin(rotationRad);
+    // Точка привязки drawImage — левый нижний угол до поворота; подбираем её
+    // так, чтобы после поворота центр картинки попал в center.
+    const anchorX = center.x - (cos * (logo.width / 2) - sin * (logo.height / 2));
+    const anchorY = center.y - (sin * (logo.width / 2) + cos * (logo.height / 2));
     page.drawImage(ctx.logoImage, {
-      x: point.x,
-      y: point.y,
-      width: layout.logo.width,
-      height: layout.logo.height,
-      rotate: degrees(ctx.rotate),
-      opacity: alpha * Math.max(0, Math.min(1, layout.logo.opacity)),
+      x: anchorX,
+      y: anchorY,
+      width: logo.width,
+      height: logo.height,
+      rotate: degrees((ctx.rotate - (logo.rotation ?? 0)) % 360),
+      opacity: alpha * Math.max(0, Math.min(1, logo.opacity)),
       blendMode: BlendMode.Normal,
     });
   }
