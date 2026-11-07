@@ -13,7 +13,8 @@
  * имеют контекстное меню.
  */
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue';
-import type { SealRingLine, StampTemplate, StampTextLine } from '@/types';import { SEAL_COLORS } from '@/constants';
+import type { SealRingLine, StampTemplate, StampTextLine } from '@/types';
+import { SEAL_COLORS } from '@/constants';
 import { createId } from '@/utils/id';
 import {
   SEAL_MAX_MM,
@@ -36,6 +37,7 @@ import {
   saveSealBackground,
   saveSealDraft,
   sealDraftKey,
+  type SealReference,
 } from '@/services/sealDraft';
 import { useUiStore } from '@/stores/ui';
 import { useLibraryStore } from '@/stores/library';
@@ -73,6 +75,12 @@ const selectedCenterIndex = ref<number | null>(null);
 const selectedRingIndex = ref<number | null>(null);
 /** Выбран логотип: показываем рамку, углы и маркер поворота. */
 const selectedLogo = ref(false);
+/** Выбран образец печати (картинка под превью). */
+const selectedReference = ref(false);
+/** Картинка-образец под превью — не часть печати, только подсказка. */
+const reference = ref<SealReference | null>(null);
+/** Ссылка на превью — нужна, чтобы сбрасывать панораму. */
+const previewRef = ref<{ resetPan: () => void } | null>(null);
 
 /** Сколько строк максимум может стоять в одном кольцевом зазоре. */
 const MAX_LINES_PER_SLOT = 2;
@@ -116,6 +124,7 @@ const tabs = [
   { id: 'rings', label: 'Кольца', icon: 'circle' },
   { id: 'text', label: 'Текст', icon: 'type' },
   { id: 'center', label: 'Центр', icon: 'seal' },
+  { id: 'logo', label: 'Логотип', icon: 'image' },
   { id: 'ink', label: 'Краска', icon: 'sliders' },
 ];
 
@@ -207,6 +216,8 @@ watch(
       selectedCenterIndex.value = null;
       selectedRingIndex.value = null;
       selectedLogo.value = false;
+      selectedReference.value = false;
+      reference.value = draft.reference ?? null;
       restoredDraft.value = true;
       resetHistory();
       await nextTick();
@@ -230,6 +241,8 @@ watch(
     selectedCenterIndex.value = null;
     selectedRingIndex.value = null;
     selectedLogo.value = false;
+    selectedReference.value = false;
+    reference.value = null;
     restoredDraft.value = false;
     resetHistory();
     await nextTick();
@@ -246,6 +259,7 @@ function persistDraft(): void {
     tab: tab.value,
     background: previewBg.value,
     selectedLineId: selectedLineId.value,
+    reference: reference.value,
   });
 }
 
@@ -263,6 +277,9 @@ function resetDraft(): void {
   selectedLineId.value = null;
   selectedCenterIndex.value = null;
   selectedRingIndex.value = null;
+  selectedLogo.value = false;
+  selectedReference.value = false;
+  reference.value = null;
   zoom.value = fitZoomValue();
   resetHistory();
 }
@@ -275,10 +292,16 @@ function fitZoomValue(): number {
 
 function fitZoom(): void {
   zoom.value = fitZoomValue();
+  previewRef.value?.resetPan();
 }
 
 function setZoom(value: number): void {
   zoom.value = Math.min(6, Math.max(0.5, Math.round(value * 100) / 100));
+}
+
+/** Ctrl+колесо на превью: плавный зум с сохранением панорамы. */
+function zoomByFactor(factor: number): void {
+  setZoom(zoom.value * factor);
 }
 
 /** Отладочный хук для автотестов (только dev-сборка). */
@@ -428,6 +451,13 @@ function onDesignerKeydown(event: KeyboardEvent): void {
       removeLogo();
       return;
     }
+    if (selectedReference.value) {
+      event.preventDefault();
+      event.stopPropagation();
+      event.stopImmediatePropagation();
+      removeReference();
+      return;
+    }
     if (selectedRingIndex.value !== null) {
       event.preventDefault();
       event.stopPropagation();
@@ -437,8 +467,35 @@ function onDesignerKeydown(event: KeyboardEvent): void {
   }
 }
 
+/**
+ * Клик вне печати снимает фокус со всего (строки, кольца, логотип, образец).
+ * Клики по панели настроек и по самому превью не трогаем: превью само решает,
+ * что выбрать, а в настройках можно продолжать править выбранный объект.
+ */
+function onGlobalPointerDown(event: PointerEvent): void {
+  if (!ui.modals.sealDesigner) return;
+  const target = event.target as HTMLElement | null;
+  if (!target) return;
+  if (target.closest('.seal-settings')) return;
+  if (target.closest('[data-testid=seal-preview-canvas]')) return;
+  if (target.closest('[data-testid=seal-text-menu]')) return;
+  if (
+    target.closest('[data-testid^=seal-handle-]') ||
+    target.closest('[data-testid^=seal-center-handle-]') ||
+    target.closest('[data-testid^=seal-logo-handle-]') ||
+    target.closest('[data-testid=seal-logo-rotate]') ||
+    target.closest('[data-testid^=seal-ref-handle-]') ||
+    target.closest('[data-testid=seal-ref-rotate]')
+  ) {
+    return;
+  }
+  // Клик по подложке превью или по шапке/фону/футеру — снять фокус.
+  clearSelection();
+}
+
 onMounted(() => {
   window.addEventListener('keydown', onDesignerKeydown, true);
+  window.addEventListener('pointerdown', onGlobalPointerDown, true);
   if (import.meta.env.DEV) {
     // Отладочный хук для браузерных проверок.
     (
@@ -455,6 +512,20 @@ onMounted(() => {
       redo: () => redo(),
       stackSize: () => undoStack.length,
       handle: (event) => onDesignerKeydown(event),
+    };
+    // Отладочный доступ к образцу (для браузерных проверок).
+    (
+      window as unknown as {
+        __SEAL_REFERENCE__?: {
+          set: (value: SealReference | null) => void;
+          get: () => SealReference | null;
+        };
+      }
+    ).__SEAL_REFERENCE__ = {
+      set: (value) => {
+        reference.value = value;
+      },
+      get: () => reference.value,
     };
   }
 });
@@ -542,7 +613,7 @@ function onRingResize(ringIndex: number, radius: number): void {
   if (!prev || !current) return;
   const before = captureLineRadii();
   const gap = prev.radius - prev.width / 2 - radius - current.width / 2;
-  settings.rings[ringIndex].gap = Math.min(16, Math.max(0.5, Math.round(gap * 10) / 10));
+  settings.rings[ringIndex].gap = Math.min(100, Math.max(0.5, Math.round(gap * 10) / 10));
   restoreLineRadii(before);
 }
 
@@ -568,6 +639,7 @@ function selectLine(lineId: string | null, options: { reveal?: boolean } = {}): 
   selectedRingIndex.value = null;
   selectedLogo.value = false;
   selectedCenterIndex.value = null;
+  selectedReference.value = false;
   if (!lineId || options.reveal === false) return;
   tab.value = 'text';
   void nextTick(() => {
@@ -585,6 +657,7 @@ function selectRing(index: number, options: { reveal?: boolean } = {}): void {
   selectedLineId.value = null;
   selectedCenterIndex.value = null;
   selectedLogo.value = false;
+  selectedReference.value = false;
   tab.value = 'rings';
   if (options.reveal === false) return;
   void nextTick(() => {
@@ -600,6 +673,7 @@ function selectCenterLine(index: number, options: { reveal?: boolean } = {}): vo
   selectedLineId.value = null;
   selectedRingIndex.value = null;
   selectedLogo.value = false;
+  selectedReference.value = false;
   tab.value = 'center';
   if (options.reveal === false) return;
   void nextTick(() => {
@@ -609,13 +683,23 @@ function selectCenterLine(index: number, options: { reveal?: boolean } = {}): vo
   });
 }
 
+/** Снять фокус со всего: строки, кольца, логотип, образец. */
+function clearSelection(): void {
+  selectedLineId.value = null;
+  selectedCenterIndex.value = null;
+  selectedRingIndex.value = null;
+  selectedLogo.value = false;
+  selectedReference.value = false;
+}
+
 /** Клик по логотипу: выделяем его, чтобы показать углы и поворот. */
 function selectLogo(): void {
   selectedLogo.value = true;
   selectedLineId.value = null;
   selectedCenterIndex.value = null;
   selectedRingIndex.value = null;
-  tab.value = 'center';
+  selectedReference.value = false;
+  tab.value = 'logo';
   void nextTick(() => {
     rightColumn.value
       ?.querySelector('[data-testid=seal-logo-section]')
@@ -889,6 +973,69 @@ function removeLogo(): void {
   selectedLogo.value = false;
 }
 
+/* ======================== Образец печати под превью ======================== */
+
+/** Выбрать образец: показываем его рамку, углы и маркер поворота. */
+function selectReference(): void {
+  selectedReference.value = true;
+  selectedLineId.value = null;
+  selectedCenterIndex.value = null;
+  selectedRingIndex.value = null;
+  selectedLogo.value = false;
+}
+
+/** Загрузка картинки-образца из файла. */
+async function uploadReference(): Promise<void> {
+  const { openFileDialog, readImageFile, ACCEPT } = await import('@/services/fileService');
+  const files = await openFileDialog({ accept: ACCEPT.images });
+  if (files.length === 0) return;
+  const image = await readImageFile(files[0]);
+  const size = Math.max(24, Math.min(template.value.width, template.value.height));
+  const width = size * 0.8;
+  const height = Math.max(8, width * (image.naturalHeight / Math.max(1, image.naturalWidth)));
+  reference.value = {
+    src: image.src,
+    x: size / 2,
+    y: size / 2,
+    width,
+    height,
+    rotation: 0,
+    opacity: 0.6,
+    visible: true,
+  };
+  selectReference();
+}
+
+function onReferenceMove(x: number, y: number): void {
+  if (!reference.value) return;
+  reference.value = { ...reference.value, x, y };
+}
+
+function onReferenceResize(width: number, height: number): void {
+  if (!reference.value) return;
+  reference.value = { ...reference.value, width, height };
+}
+
+function onReferenceRotate(rotation: number): void {
+  if (!reference.value) return;
+  reference.value = { ...reference.value, rotation: ((rotation % 360) + 360) % 360 };
+}
+
+function toggleReference(): void {
+  if (!reference.value) return;
+  reference.value = { ...reference.value, visible: !reference.value.visible };
+}
+
+function setReferenceOpacity(value: number): void {
+  if (!reference.value) return;
+  reference.value = { ...reference.value, opacity: Math.min(1, Math.max(0.05, value)) };
+}
+
+function removeReference(): void {
+  reference.value = null;
+  selectedReference.value = false;
+}
+
 /* ======================== Пресеты ======================== */
 
 const presets: { label: string; build: () => StampTemplate }[] = [
@@ -1032,6 +1179,7 @@ async function insertIntoDocument(): Promise<void> {
 
 onBeforeUnmount(() => {
   window.removeEventListener('keydown', onDesignerKeydown, true);
+  window.removeEventListener('pointerdown', onGlobalPointerDown, true);
   if (historyTimer !== null) {
     window.clearTimeout(historyTimer);
     historyTimer = null;
@@ -1120,13 +1268,17 @@ function onPickEnd(color: string | null): void {
           data-testid="seal-preview-box"
         >
           <SealPreview
+            ref="previewRef"
             :template="template"
             :zoom="zoom"
+            :reference="reference"
             :selected-line-id="selectedLineId"
             :selected-center-index="selectedCenterIndex"
             :selected-ring-index="selectedRingIndex"
             :selected-logo="selectedLogo"
+            :selected-reference="selectedReference"
             @select-line="selectLine($event)"
+            @clear-selection="clearSelection"
             @span-change="onSpanChange"
             @line-move="onLineMove"
             @text-hit="onTextHit"
@@ -1141,6 +1293,15 @@ function onPickEnd(color: string | null): void {
             @logo-move="onLogoMove"
             @logo-resize="onLogoResize"
             @logo-rotate="onLogoRotate"
+            @reference-select="selectReference"
+            @reference-move="onReferenceMove"
+            @reference-resize="onReferenceResize"
+            @reference-rotate="onReferenceRotate"
+            @add-ring="addRing"
+            @add-text="addLine"
+            @add-center-text="addCenterLine"
+            @add-reference="uploadReference"
+            @zoom-change="zoomByFactor"
             @edit-line="onTextHit"
             @delete-line="deleteLine"
           />
@@ -1176,9 +1337,60 @@ function onPickEnd(color: string | null): void {
           Фон — только подложка превью: в документ, PDF и библиотеку он не попадает.
         </p>
 
+        <!-- Образец печати: картинка-подложка под оттиском -->
+        <div class="space-y-1.5" data-testid="seal-reference-controls">
+          <div class="flex items-center justify-between gap-2">
+            <span class="text-[11px] font-medium uppercase tracking-wide text-slate-500 dark:text-slate-400">
+              Образец печати
+            </span>
+            <AppButton
+              size="xs"
+              variant="subtle"
+              icon="image"
+              data-testid="seal-reference-add"
+              @click="uploadReference"
+            >
+              {{ reference ? 'Заменить' : 'Из файла' }}
+            </AppButton>
+          </div>
+          <template v-if="reference">
+            <div class="flex flex-wrap items-center gap-1.5">
+              <AppToggle
+                :model-value="reference.visible"
+                label="Показывать образец"
+                data-testid="seal-reference-visible"
+                @update:model-value="toggleReference"
+              />
+              <AppButton size="xs" variant="ghost" icon="trash" data-testid="seal-reference-remove" @click="removeReference">
+                Убрать
+              </AppButton>
+            </div>
+            <AppSlider
+              :model-value="reference.opacity"
+              label="Прозрачность образца"
+              unit=""
+              :min="0.05"
+              :max="1"
+              :step="0.05"
+              :precision="2"
+              data-testid="seal-reference-opacity"
+              @update:model-value="setReferenceOpacity(Number($event))"
+            />
+            <p class="text-[11px] text-slate-400">
+              Образец лежит под оттиском: тяните за видимую часть, растягивайте за углы
+              (Shift — пропорции), вращайте за круглый маркер. На печать и PDF он не влияет.
+            </p>
+          </template>
+          <p v-else class="text-[11px] text-slate-400">
+            Загрузите фото или скан готовой печати — он ляжет под превью, чтобы удобно было
+            повторить оттиск. Образец не входит в печать.
+          </p>
+        </div>
+
         <p class="text-[11px] text-slate-400">
           Клик по строке выбирает её и показывает маркеры угла; строку можно тащить мышью,
-          двойной клик — правка текста, правый клик — меню. Колесо мыши превью не масштабирует.
+          двойной клик — правка текста, правый клик — меню. Панорама — колесо мыши или
+          перетаскивание средней кнопкой (или с зажатым пробелом).
         </p>
 
         <!-- Цвет: пресеты + произвольный -->
@@ -1229,7 +1441,7 @@ function onPickEnd(color: string | null): void {
       <!-- ======================= Настройки ======================= -->
       <div
         ref="rightColumn"
-        class="space-y-3 lg:h-full lg:overflow-y-auto lg:pr-2"
+        class="seal-settings space-y-3 lg:h-full lg:overflow-y-auto lg:pr-2"
         data-testid="seal-right-column"
       >
         <AppInput v-model="template.name" label="Название печати" size="sm" />
@@ -1316,38 +1528,12 @@ function onPickEnd(color: string | null): void {
                 label="Расстояние до кольца"
                 unit="pt"
                 :min="0.5"
-                :max="16"
+                :max="100"
                 :step="0.1"
                 :precision="1"
                 @update:model-value="ring.gap = Number($event)"
               />
             </div>
-          </AppSection>
-
-          <AppSection title="Разделитель центра" icon="minus">
-            <AppToggle v-model="seal.divider.enabled" label="Окружность между текстом и центром" />
-            <template v-if="seal.divider.enabled">
-              <AppSlider
-                :model-value="seal.divider.radius"
-                label="Радиус (0 — по содержимому)"
-                unit="pt"
-                :min="0"
-                :max="maxArcRadius"
-                :step="0.5"
-                :precision="1"
-                @update:model-value="seal.divider.radius = Number($event)"
-              />
-              <AppSlider
-                :model-value="seal.divider.width"
-                label="Толщина разделителя"
-                unit="pt"
-                :min="0.2"
-                :max="4"
-                :step="0.1"
-                :precision="1"
-                @update:model-value="seal.divider.width = Number($event)"
-              />
-            </template>
           </AppSection>
         </div>
 
@@ -1509,7 +1695,10 @@ function onPickEnd(color: string | null): void {
               </div>
             </div>
           </AppSection>
+        </div>
 
+        <!-- Логотип или герб -->
+        <div v-show="tab === 'logo'" class="space-y-3" data-testid="seal-logo-tab">
           <AppSection title="Логотип или герб" icon="image" data-testid="seal-logo-section">
             <div v-if="template.logo" class="space-y-2">
               <div class="flex items-center gap-3">
@@ -1537,11 +1726,12 @@ function onPickEnd(color: string | null): void {
               </p>
             </div>
             <div v-else class="space-y-2">
-              <AppButton size="sm" icon="upload" block @click="uploadLogo">
+              <AppButton size="sm" icon="upload" block data-testid="seal-logo-add" @click="uploadLogo">
                 Загрузить логотип
               </AppButton>
               <p class="text-[11px] text-slate-400">
-                PNG, JPEG или SVG. Изображение ставится в центр, текст остаётся вокруг.
+                PNG, JPEG или SVG. Логотип ставится в центр печати и ведёт себя как объект:
+                его можно двигать, растягивать и вращать.
               </p>
             </div>
           </AppSection>

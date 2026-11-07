@@ -149,7 +149,7 @@ export function createSealSettings(patch: Partial<SealSettings> = {}): SealSetti
         side: 'bottom',
       }),
     ],
-    divider: { enabled: true, radius: 0, width: 1.2 },
+    divider: { enabled: false, radius: 0, width: 1.2 },
     ink: createSealInk(),
     ...patch,
   };
@@ -277,7 +277,7 @@ export function normalizeSealSettings(seal: SealSettings): SealSettings {
     .slice(0, SEAL_MAX_RINGS)
     .map((ring, index) => ({
       width: clamp(ring.width, 0.4, 12),
-      gap: index === 0 ? 0 : clamp(ring.gap, 0.5, 24),
+      gap: index === 0 ? 0 : clamp(ring.gap, 0.5, 100),
     }));
 
   // Новые строки; если их нет — поднимаем старые дуги.
@@ -391,8 +391,10 @@ export function sealRingRadii(rings: SealRing[], size: number): number[] {
   for (const [index, ring] of rings.entries()) {
     const width = Math.max(0.2, ring.width);
     const gap = index === 0 ? 0 : Math.max(0, ring.gap);
-    const radius = innerEdge - gap - width / 2;
-    if (radius < size * 0.08) break;
+    // Кольцо можно утянуть почти к центру: радиус упирается в минимально
+    // возможный, а не пропадает — печать не должна ломаться.
+    const minRadius = Math.max(2, width / 2 + 0.5);
+    const radius = Math.max(minRadius, innerEdge - gap - width / 2);
     radii.push(radius);
     innerEdge = radius - width / 2;
   }

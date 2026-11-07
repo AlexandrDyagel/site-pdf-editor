@@ -1,6 +1,7 @@
 <script setup lang="ts">
 /**
- * Превью круглой печати с интерактивными строками, кольцами и логотипом.
+ * Превью круглой печати с интерактивными строками, кольцами, логотипом
+ * и картинкой-образцом под оттиском.
  *
  * Рисуется тем же `computeStampLayout` + `paintStampLayout`, что и объект на
  * странице и экспорт в PDF, поэтому конструктор показывает ровно то, что
@@ -13,12 +14,17 @@
  *    меняется расстояние до предыдущего;
  *  - логотип выбирается кликом: его можно тащить, растягивать за углы
  *    (Shift — с сохранением пропорций) и вращать за круглый маркер;
- *  - правый клик по тексту — «Редактировать / Удалить», по кольцу — «Удалить».
+ *  - картинка-образец под печатью ведёт себя так же и выделяется кликом по
+ *    видимой части вокруг оттиска;
+ *  - правый клик по пустому месту — меню «добавить кольцо/текст/образец»;
+ *  - колесо мыши или перетаскивание средней кнопкой (или с зажатым пробелом)
+ *    панорамирует превью.
  */
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import type { StampTemplate } from '@/types';
 import { computeStampLayout, paintStampLayout } from '@/services/stampRenderService';
 import { sealArcMinSpan } from '@/services/sealRenderService';
+import type { SealReference } from '@/services/sealDraft';
 import { useFontsStore } from '@/stores/fonts';
 import { loadImage } from '@/utils/image';
 
@@ -31,6 +37,8 @@ const props = withDefaults(
     selectedCenterIndex?: number | null;
     selectedRingIndex?: number | null;
     selectedLogo?: boolean;
+    selectedReference?: boolean;
+    reference?: SealReference | null;
   }>(),
   {
     handles: true,
@@ -38,28 +46,37 @@ const props = withDefaults(
     selectedCenterIndex: null,
     selectedRingIndex: null,
     selectedLogo: false,
+    selectedReference: false,
+    reference: null,
   },
 );
 
 const emit = defineEmits<{
   'select-line': [lineId: string | null];
+  'clear-selection': [];
   'span-change': [lineId: string, angle: number];
   'line-move': [lineId: string, radiusOffset: number, angleOffset: number];
   'text-hit': [lineId: string];
   'center-hit': [lineIndex: number];
   'center-select': [lineIndex: number];
-  /** Маркер растянул строку центра до новой ширины, pt. */
   'center-stretch': [lineIndex: number, width: number];
-  /** Строку центра перетащили (смещения от центра, pt). */
   'center-move': [lineIndex: number, offsetX: number, offsetY: number];
   'ring-select': [ringIndex: number];
-  /** Кольцо потянули: новый радиус, pt. */
   'ring-resize': [ringIndex: number, radius: number];
   'ring-delete': [ringIndex: number];
   'logo-select': [];
   'logo-move': [offsetX: number, offsetY: number];
   'logo-resize': [width: number, height: number];
   'logo-rotate': [rotation: number];
+  'reference-select': [];
+  'reference-move': [x: number, y: number];
+  'reference-resize': [width: number, height: number];
+  'reference-rotate': [rotation: number];
+  'add-ring': [];
+  'add-text': [];
+  'add-center-text': [];
+  'add-reference': [];
+  'zoom-change': [factor: number];
   'edit-line': [lineId: string];
   'delete-line': [lineId: string];
 }>();
@@ -74,12 +91,16 @@ const layout = computed(() =>
   computeStampLayout(props.template, (fontId) => fonts.familyOf(fontId)),
 );
 
-/** Контекстное меню: по тексту или по кольцу. */
-const menu = ref<
+/** Панорама превью: сдвиг в экранных пикселях. */
+const pan = ref({ x: 0, y: 0 });
+const spacePressed = ref(false);
+
+/** Контекстное меню: текст, кольцо или пустое место. */
+type MenuState =
   | { kind: 'text'; lineId: string; x: number; y: number }
   | { kind: 'ring'; ringIndex: number; x: number; y: number }
-  | null
->(null);
+  | { kind: 'empty'; x: number; y: number };
+const menu = ref<MenuState | null>(null);
 
 /* ======================== Отрисовка ======================== */
 
@@ -142,6 +163,19 @@ function draw(): void {
     context.strokeRect(-logo.width / 2, -logo.height / 2, logo.width, logo.height);
     context.restore();
   }
+
+  // Выбранный образец — пунктирная рамка.
+  if (props.selectedReference && props.reference) {
+    const reference = props.reference;
+    context.save();
+    context.translate(reference.x, reference.y);
+    context.rotate((reference.rotation * Math.PI) / 180);
+    context.setLineDash([3, 2]);
+    context.lineWidth = 1;
+    context.strokeStyle = '#2f6bff';
+    context.strokeRect(-reference.width / 2, -reference.height / 2, reference.width, reference.height);
+    context.restore();
+  }
 }
 
 watch(() => props.template, async () => {
@@ -151,6 +185,8 @@ watch(() => props.template, async () => {
 watch(() => props.zoom, () => draw());
 watch(() => props.selectedRingIndex, () => draw());
 watch(() => props.selectedLogo, () => draw());
+watch(() => props.selectedReference, () => draw());
+watch(() => props.reference, () => draw(), { deep: true });
 watch(() => fonts.loadedOnce, () => draw());
 
 /* ======================== Геометрия и попадания ======================== */
@@ -176,7 +212,7 @@ function hitRingLine(point: { x: number; y: number }): string | null {
       const glyphWidth = char.fontSize * 0.6;
       const centerX = char.x + cos * (glyphWidth / 2) + sin * (char.fontSize * 0.35);
       const centerY = char.y + sin * (glyphWidth / 2) - cos * (char.fontSize * 0.35);
-      const reach = Math.max(5, char.fontSize * 0.85);
+      const reach = Math.max(4, char.fontSize * 0.7);
       if (Math.hypot(point.x - centerX, point.y - centerY) <= reach) {
         return ringLine.lineId;
       }
@@ -210,18 +246,39 @@ function hitCenterLine(point: { x: number; y: number }): number | null {
   return null;
 }
 
-/** Логотип под курсором (с учётом поворота). */
 function hitLogo(point: { x: number; y: number }): boolean {
   const logo = layout.value.logo;
   if (!logo) return false;
-  const cx = logo.x + logo.width / 2;
-  const cy = logo.y + logo.height / 2;
-  const radians = (-(logo.rotation ?? 0) * Math.PI) / 180;
+  return pointInRotatedRect(point, logo.x + logo.width / 2, logo.y + logo.height / 2, logo.width, logo.height, logo.rotation ?? 0);
+}
+
+function pointInRotatedRect(
+  point: { x: number; y: number },
+  cx: number,
+  cy: number,
+  width: number,
+  height: number,
+  rotation: number,
+): boolean {
+  const radians = (-rotation * Math.PI) / 180;
   const dx = point.x - cx;
   const dy = point.y - cy;
   const localX = dx * Math.cos(radians) - dy * Math.sin(radians);
   const localY = dx * Math.sin(radians) + dy * Math.cos(radians);
-  return Math.abs(localX) <= logo.width / 2 + 2 && Math.abs(localY) <= logo.height / 2 + 2;
+  return Math.abs(localX) <= width / 2 + 2 && Math.abs(localY) <= height / 2 + 2;
+}
+
+function hitReference(point: { x: number; y: number }): boolean {
+  const reference = props.reference;
+  if (!reference || !reference.visible) return false;
+  return pointInRotatedRect(point, reference.x, reference.y, reference.width, reference.height, reference.rotation);
+}
+
+/** Точка вне самого оттиска — там образец можно взять мышью. */
+function isOutsideSeal(point: { x: number; y: number }): boolean {
+  const rings = layout.value.seal?.ink.rings ?? [];
+  const outer = rings.length ? rings[0].radius + rings[0].width / 2 : size.value / 2;
+  return Math.hypot(point.x - size.value / 2, point.y - size.value / 2) > outer + 2;
 }
 
 /* ======================== Маркеры ======================== */
@@ -233,9 +290,7 @@ const selectedGeometry = computed(() => {
 
 const handlePoints = computed(() => {
   const ringLine = selectedGeometry.value;
-  if (!ringLine || ringLine.chars.length === 0) {
-    return [] as { angle: number; x: number; y: number }[];
-  }
+  if (!ringLine || ringLine.chars.length === 0) return [] as { angle: number; x: number; y: number }[];
   return [ringLine.startAngle, ringLine.endAngle].map((angle) => {
     const radians = (angle * Math.PI) / 180;
     return {
@@ -261,39 +316,67 @@ const centerHandlePoints = computed(() => {
 const logoHandlePoints = computed(() => {
   const logo = layout.value.logo;
   if (!logo) return [] as { corner: 'nw' | 'ne' | 'se' | 'sw'; x: number; y: number }[];
-  const cx = logo.x + logo.width / 2;
-  const cy = logo.y + logo.height / 2;
-  const radians = ((logo.rotation ?? 0) * Math.PI) / 180;
+  return rotatedCorners(logo.x + logo.width / 2, logo.y + logo.height / 2, logo.width, logo.height, logo.rotation ?? 0);
+});
+
+const logoRotatePoint = computed(() => {
+  const logo = layout.value.logo;
+  if (!logo) return null;
+  return rotateHandlePoint(logo.x + logo.width / 2, logo.y + logo.height / 2, logo.width, logo.height, logo.rotation ?? 0);
+});
+
+const referenceHandlePoints = computed(() => {
+  const reference = props.reference;
+  if (!reference) return [] as { corner: 'nw' | 'ne' | 'se' | 'sw'; x: number; y: number }[];
+  return rotatedCorners(reference.x, reference.y, reference.width, reference.height, reference.rotation);
+});
+
+const referenceRotatePoint = computed(() => {
+  const reference = props.reference;
+  if (!reference) return null;
+  return rotateHandlePoint(reference.x, reference.y, reference.width, reference.height, reference.rotation);
+});
+
+function rotatedCorners(
+  cx: number,
+  cy: number,
+  width: number,
+  height: number,
+  rotation: number,
+): { corner: 'nw' | 'ne' | 'se' | 'sw'; x: number; y: number }[] {
+  const radians = (rotation * Math.PI) / 180;
   const cos = Math.cos(radians);
   const sin = Math.sin(radians);
   const corner = (dx: number, dy: number) => ({
     x: (cx + dx * cos - dy * sin) * props.zoom,
     y: (cy + dx * sin + dy * cos) * props.zoom,
   });
-  const hw = logo.width / 2;
-  const hh = logo.height / 2;
+  const hw = width / 2;
+  const hh = height / 2;
   return [
     { corner: 'nw' as const, ...corner(-hw, -hh) },
     { corner: 'ne' as const, ...corner(hw, -hh) },
     { corner: 'se' as const, ...corner(hw, hh) },
     { corner: 'sw' as const, ...corner(-hw, hh) },
   ];
-});
+}
 
-const logoRotatePoint = computed(() => {
-  const logo = layout.value.logo;
-  if (!logo) return null;
-  const cx = logo.x + logo.width / 2;
-  const cy = logo.y + logo.height / 2;
-  const radians = ((logo.rotation ?? 0) * Math.PI) / 180;
-  const cos = Math.cos(radians);
-  const sin = Math.sin(radians);
-  const distance = logo.height / 2 + 22 / Math.max(0.4, props.zoom);
+/** Круглый маркер поворота над фигурой (с учётом её поворота). */
+function rotateHandlePoint(
+  cx: number,
+  cy: number,
+  width: number,
+  height: number,
+  rotation: number,
+): { x: number; y: number } {
+  void width;
+  const radians = (rotation * Math.PI) / 180;
+  const distance = height / 2 + 22 / Math.max(0.4, props.zoom);
   return {
-    x: (cx - sin * distance) * props.zoom,
-    y: (cy - cos * distance) * props.zoom,
+    x: (cx + Math.sin(radians) * distance) * props.zoom,
+    y: (cy - Math.cos(radians) * distance) * props.zoom,
   };
-});
+}
 
 /* ======================== Перетаскивания ======================== */
 
@@ -304,7 +387,11 @@ type DragState =
   | { kind: 'center-stretch'; index: number; centerX: number }
   | { kind: 'logo-move'; startX: number; startY: number; startOffsetX: number; startOffsetY: number }
   | { kind: 'logo-resize'; centerX: number; centerY: number; startWidth: number; startHeight: number }
-  | { kind: 'logo-rotate'; centerX: number; centerY: number; startPointerAngle: number; startRotation: number };
+  | { kind: 'logo-rotate'; centerX: number; centerY: number; startPointerAngle: number; startRotation: number }
+  | { kind: 'reference-move'; startX: number; startY: number; startCenterX: number; startCenterY: number }
+  | { kind: 'reference-resize'; centerX: number; centerY: number; startWidth: number; startHeight: number }
+  | { kind: 'reference-rotate'; centerX: number; centerY: number; startPointerAngle: number; startRotation: number }
+  | { kind: 'pan'; startX: number; startY: number; startPanX: number; startPanY: number };
 
 let dragState: DragState | null = null;
 
@@ -326,8 +413,16 @@ function startDrag(event: PointerEvent, state: DragState): void {
 
 function onWindowMove(event: PointerEvent): void {
   const state = dragState;
+  if (!state) return;
+  if (state.kind === 'pan') {
+    pan.value = {
+      x: state.startPanX + (event.clientX - state.startX),
+      y: state.startPanY + (event.clientY - state.startY),
+    };
+    return;
+  }
   const point = toSealPoint(event);
-  if (!state || !point) return;
+  if (!point) return;
   const cx = size.value / 2;
   const cy = size.value / 2;
 
@@ -363,8 +458,7 @@ function onWindowMove(event: PointerEvent): void {
   }
 
   if (state.kind === 'center-stretch') {
-    const width = Math.max(4, Math.abs(point.x - state.centerX) * 2);
-    emit('center-stretch', state.index, Math.round(width * 10) / 10);
+    emit('center-stretch', state.index, Math.round(Math.max(4, Math.abs(point.x - state.centerX) * 2) * 10) / 10);
     return;
   }
 
@@ -401,6 +495,40 @@ function onWindowMove(event: PointerEvent): void {
     let delta = angle - state.startPointerAngle;
     delta = ((delta % 360) + 540) % 360 - 180;
     emit('logo-rotate', Math.round(state.startRotation + delta));
+    return;
+  }
+
+  if (state.kind === 'reference-move') {
+    emit(
+      'reference-move',
+      Math.round((state.startCenterX + point.x - state.startX) * 10) / 10,
+      Math.round((state.startCenterY + point.y - state.startY) * 10) / 10,
+    );
+    return;
+  }
+
+  if (state.kind === 'reference-resize') {
+    const radians = (-(props.reference?.rotation ?? 0) * Math.PI) / 180;
+    const dx = point.x - state.centerX;
+    const dy = point.y - state.centerY;
+    const localX = dx * Math.cos(radians) - dy * Math.sin(radians);
+    const localY = dx * Math.sin(radians) + dy * Math.cos(radians);
+    let width = Math.max(8, Math.abs(localX) * 2);
+    let height = Math.max(8, Math.abs(localY) * 2);
+    if (event.shiftKey) {
+      const baseRatio = state.startWidth / Math.max(1, state.startHeight);
+      if (width / height > baseRatio) height = width / baseRatio;
+      else width = height * baseRatio;
+    }
+    emit('reference-resize', Math.round(width * 10) / 10, Math.round(height * 10) / 10);
+    return;
+  }
+
+  if (state.kind === 'reference-rotate') {
+    const angle = (Math.atan2(point.y - state.centerY, point.x - state.centerX) * 180) / Math.PI;
+    let delta = angle - state.startPointerAngle;
+    delta = ((delta % 360) + 540) % 360 - 180;
+    emit('reference-rotate', Math.round(state.startRotation + delta));
   }
 }
 
@@ -412,6 +540,18 @@ function onWindowUp(): void {
 /* ======================== Клики, меню, двойной клик ======================== */
 
 function onCanvasDown(event: PointerEvent): void {
+  // Средняя кнопка и пробел+ЛКМ — панорамирование, а не выделение.
+  if (event.button === 1 || (event.button === 0 && spacePressed.value)) {
+    event.preventDefault();
+    startDrag(event, {
+      kind: 'pan',
+      startX: event.clientX,
+      startY: event.clientY,
+      startPanX: pan.value.x,
+      startPanY: pan.value.y,
+    });
+    return;
+  }
   if (event.button !== 0) return;
   const point = toSealPoint(event);
   if (!point) return;
@@ -420,49 +560,16 @@ function onCanvasDown(event: PointerEvent): void {
 
   // Выбранный логотип тянется первым — он может лежать поверх текста.
   if (props.selectedLogo && hitLogo(point)) {
-    const logo = props.template.logo;
-    if (!logo) return;
-    startDrag(event, {
-      kind: 'logo-move',
-      startX: point.x,
-      startY: point.y,
-      startOffsetX: logo.offsetX,
-      startOffsetY: logo.offsetY,
-    });
+    startLogoMove(event, point);
     return;
   }
 
-  // Логотип лежит поверх текста: клик по нему всегда выбирает логотип.
-  if (hitLogo(point)) {
-    const logo = props.template.logo;
-    if (logo) {
-      emit('logo-select');
-      startDrag(event, {
-        kind: 'logo-move',
-        startX: point.x,
-        startY: point.y,
-        startOffsetX: logo.offsetX,
-        startOffsetY: logo.offsetY,
-      });
-      return;
-    }
-  }
-
-  // Кольцо проверяем до текста: у букв «щедрый» радиус попадания, иначе
-  // кольцо под надписью выбрать нельзя. Приоритет — тонкая полоса кольца.
-  const ringIndex = hitRing(point);
-  if (ringIndex !== null) {
-    emit('ring-select', ringIndex);
-    if (ringIndex > 0) startDrag(event, { kind: 'ring', ringIndex });
-    return;
-  }
-
+  // Кольца и образец не должны перебивать выбор текста: сначала буквы.
   const lineId = hitRingLine(point);
   if (lineId) {
     emit('select-line', lineId);
-    const ringLine = layout.value.seal?.ringLines.find((item) => item.lineId === lineId);
     const templateLine = props.template.seal?.lines.find((item) => item.id === lineId);
-    if (!ringLine || !templateLine) return;
+    if (!templateLine) return;
     startDrag(event, {
       kind: 'line',
       lineId,
@@ -473,6 +580,12 @@ function onCanvasDown(event: PointerEvent): void {
       maxRadiusOffset: radiusLimit(lineId),
       moved: false,
     });
+    return;
+  }
+
+  if (hitLogo(point)) {
+    emit('logo-select');
+    startLogoMove(event, point);
     return;
   }
 
@@ -491,21 +604,40 @@ function onCanvasDown(event: PointerEvent): void {
     return;
   }
 
-  if (hitLogo(point)) {
-    const logo = props.template.logo;
-    if (!logo) return;
-    emit('logo-select');
+  const ringIndex = hitRing(point);
+  if (ringIndex !== null) {
+    emit('ring-select', ringIndex);
+    if (ringIndex > 0) startDrag(event, { kind: 'ring', ringIndex });
+    return;
+  }
+
+  // Образец лежит под оттиском: если сверху нет букв/колец/центра, клик
+  // выбирает его — как обычный объект на холсте.
+  if (props.reference?.visible && hitReference(point)) {
+    emit('reference-select');
     startDrag(event, {
-      kind: 'logo-move',
+      kind: 'reference-move',
       startX: point.x,
       startY: point.y,
-      startOffsetX: logo.offsetX,
-      startOffsetY: logo.offsetY,
+      startCenterX: props.reference.x,
+      startCenterY: props.reference.y,
     });
     return;
   }
 
-  emit('select-line', null);
+  emit('clear-selection');
+}
+
+function startLogoMove(event: PointerEvent, point: { x: number; y: number }): void {
+  const logo = props.template.logo;
+  if (!logo) return;
+  startDrag(event, {
+    kind: 'logo-move',
+    startX: point.x,
+    startY: point.y,
+    startOffsetX: logo.offsetX,
+    startOffsetY: logo.offsetY,
+  });
 }
 
 /* --- маркеры --- */
@@ -607,6 +739,35 @@ function onLogoRotateDown(event: PointerEvent): void {
   });
 }
 
+function onReferenceCornerDown(event: PointerEvent): void {
+  event.preventDefault();
+  event.stopPropagation();
+  const reference = props.reference;
+  if (!reference) return;
+  startDrag(event, {
+    kind: 'reference-resize',
+    centerX: reference.x,
+    centerY: reference.y,
+    startWidth: reference.width,
+    startHeight: reference.height,
+  });
+}
+
+function onReferenceRotateDown(event: PointerEvent): void {
+  event.preventDefault();
+  event.stopPropagation();
+  const reference = props.reference;
+  const point = toSealPoint(event);
+  if (!reference || !point) return;
+  startDrag(event, {
+    kind: 'reference-rotate',
+    centerX: reference.x,
+    centerY: reference.y,
+    startPointerAngle: (Math.atan2(point.y - reference.y, point.x - reference.x) * 180) / Math.PI,
+    startRotation: reference.rotation,
+  });
+}
+
 /* --- контекстное меню --- */
 
 function onContextMenu(event: MouseEvent): void {
@@ -616,21 +777,19 @@ function onContextMenu(event: MouseEvent): void {
   if (!point || !element) return;
   const rect = element.getBoundingClientRect();
 
-  // Сначала текст: он лежит поверх колец, и его меню важнее.
   const lineId = hitRingLine(point);
   if (lineId) {
     emit('select-line', lineId);
     menu.value = { kind: 'text', lineId, x: event.clientX - rect.left, y: event.clientY - rect.top };
     return;
   }
-  // Свободное место на кольце — меню кольца.
   const ringIndex = hitRing(point);
   if (ringIndex !== null) {
     emit('ring-select', ringIndex);
     menu.value = { kind: 'ring', ringIndex, x: event.clientX - rect.left, y: event.clientY - rect.top };
     return;
   }
-  menu.value = null;
+  menu.value = { kind: 'empty', x: event.clientX - rect.left, y: event.clientY - rect.top };
 }
 
 function closeMenu(): void {
@@ -663,9 +822,19 @@ function pickDelete(): void {
     emit('delete-line', lineId);
     return;
   }
-  const ringIndex = menu.value.ringIndex;
+  if (menu.value.kind === 'ring') {
+    const ringIndex = menu.value.ringIndex;
+    closeMenu();
+    emit('ring-delete', ringIndex);
+  }
+}
+
+function pickAdd(action: 'ring' | 'text' | 'center' | 'reference'): void {
   closeMenu();
-  emit('ring-delete', ringIndex);
+  if (action === 'ring') emit('add-ring');
+  else if (action === 'text') emit('add-text');
+  else if (action === 'center') emit('add-center-text');
+  else emit('add-reference');
 }
 
 function onDoubleClick(event: MouseEvent): void {
@@ -680,11 +849,55 @@ function onDoubleClick(event: MouseEvent): void {
   if (centerIndex !== null) emit('center-hit', centerIndex);
 }
 
+/* --- панорама --- */
+
+function onWheel(event: WheelEvent): void {
+  event.preventDefault();
+  if (event.ctrlKey || event.metaKey) {
+    emit('zoom-change', event.deltaY < 0 ? 1.1 : 1 / 1.1);
+    return;
+  }
+  pan.value = {
+    x: pan.value.x - event.deltaX,
+    y: pan.value.y - event.deltaY,
+  };
+}
+
+function onKeyDown(event: KeyboardEvent): void {
+  if (event.code === 'Space' && !isTypingTarget(event.target)) {
+    spacePressed.value = true;
+    event.preventDefault();
+  }
+}
+
+function onKeyUp(event: KeyboardEvent): void {
+  if (event.code === 'Space') spacePressed.value = false;
+}
+
+function isTypingTarget(target: EventTarget | null): boolean {
+  const element = target as HTMLElement | null;
+  return Boolean(
+    element &&
+      (element.tagName === 'INPUT' ||
+        element.tagName === 'TEXTAREA' ||
+        element.tagName === 'SELECT' ||
+        element.isContentEditable),
+  );
+}
+
+function resetPan(): void {
+  pan.value = { x: 0, y: 0 };
+}
+
+defineExpose({ resetPan });
+
 onMounted(async () => {
   await ensureLogo();
   draw();
   window.addEventListener('pointerdown', onWindowDown, true);
   window.addEventListener('keydown', onEscape);
+  window.addEventListener('keydown', onKeyDown);
+  window.addEventListener('keyup', onKeyUp);
 });
 
 onBeforeUnmount(() => {
@@ -694,85 +907,145 @@ onBeforeUnmount(() => {
   window.removeEventListener('pointerup', onRingHandleUp);
   window.removeEventListener('pointerdown', onWindowDown, true);
   window.removeEventListener('keydown', onEscape);
+  window.removeEventListener('keydown', onKeyDown);
+  window.removeEventListener('keyup', onKeyUp);
   logoImage.value = null;
 });
 </script>
 
 <template>
   <div
-    class="relative inline-flex items-center justify-center"
+    class="relative overflow-hidden"
     :style="{ width: `${displaySize}px`, height: `${displaySize}px` }"
+    :class="spacePressed ? 'cursor-grab' : ''"
+    @wheel="onWheel"
   >
-    <canvas
-      ref="canvas"
-      data-testid="seal-preview-canvas"
-      class="block cursor-pointer rounded-sm"
-      @pointerdown="onCanvasDown"
-      @dblclick="onDoubleClick"
-      @contextmenu="onContextMenu"
-    />
-
-    <!-- Маркеры строки по кольцу -->
-    <template v-if="handles && selectedLineId">
-      <button
-        v-for="(point, index) in handlePoints"
-        :key="`ring-handle-${index}`"
-        type="button"
-        :data-testid="`seal-handle-${index}`"
-        class="absolute z-10 h-3.5 w-3.5 -translate-x-1/2 -translate-y-1/2 cursor-ew-resize rounded-full border-2 border-white bg-brand-500 shadow ring-1 ring-brand-700/40 transition-transform hover:scale-125"
-        :style="{ left: `${point.x}px`, top: `${point.y}px` }"
-        title="Потяните, чтобы растянуть или сжать строку"
-        @pointerdown="onRingHandleDown"
+    <div
+      class="absolute inset-0"
+      data-testid="seal-preview-content"
+      :data-selected-reference="selectedReference ? 'true' : 'false'"
+      :data-reference-visible="reference?.visible ? 'true' : 'false'"
+      :style="{ transform: `translate(${pan.x}px, ${pan.y}px)` }"
+    >
+      <!-- Образец печати: под оттиском, не часть печати. -->
+      <img
+        v-if="reference && reference.visible"
+        :src="reference.src"
+        alt="Образец печати"
+        data-testid="seal-reference-image"
+        class="pointer-events-none absolute select-none"
+        :style="{
+          left: `${(reference.x - reference.width / 2) * zoom}px`,
+          top: `${(reference.y - reference.height / 2) * zoom}px`,
+          width: `${reference.width * zoom}px`,
+          height: `${reference.height * zoom}px`,
+          transform: `rotate(${reference.rotation}deg)`,
+          opacity: reference.opacity,
+        }"
       />
-    </template>
 
-    <!-- Маркеры строки центра -->
-    <template v-if="handles && selectedCenterIndex !== null">
-      <button
-        v-for="(point, index) in centerHandlePoints"
-        :key="`center-handle-${index}`"
-        type="button"
-        :data-testid="`seal-center-handle-${index}`"
-        class="absolute z-10 h-3.5 w-3.5 -translate-x-1/2 -translate-y-1/2 cursor-ew-resize rounded-full border-2 border-white bg-brand-500 shadow ring-1 ring-brand-700/40 transition-transform hover:scale-125"
-        :style="{ left: `${point.x}px`, top: `${point.y}px` }"
-        title="Потяните, чтобы растянуть или сжать строку центра"
-        @pointerdown="onCenterHandleDown($event, selectedCenterIndex)"
+      <canvas
+        ref="canvas"
+        data-testid="seal-preview-canvas"
+        class="relative block cursor-default rounded-sm"
+        @pointerdown="onCanvasDown"
+        @dblclick="onDoubleClick"
+        @contextmenu="onContextMenu"
+        @auxclick.prevent
       />
-    </template>
 
-    <!-- Маркеры логотипа: углы + поворот -->
-    <template v-if="handles && selectedLogo && template.logo">
-      <button
-        v-for="point in logoHandlePoints"
-        :key="`logo-${point.corner}`"
-        type="button"
-        :data-testid="`seal-logo-handle-${point.corner}`"
-        class="absolute z-10 h-2.5 w-2.5 -translate-x-1/2 -translate-y-1/2 rounded-sm border border-white bg-brand-500 shadow"
-        :style="{ left: `${point.x}px`, top: `${point.y}px` }"
-        title="Потяните, чтобы изменить размер (Shift — с сохранением пропорций)"
-        @pointerdown="onLogoCornerDown"
-      />
-      <button
-        v-if="logoRotatePoint"
-        type="button"
-        data-testid="seal-logo-rotate"
-        class="absolute z-10 flex h-5 w-5 -translate-x-1/2 -translate-y-1/2 items-center justify-center rounded-full border-2 border-white bg-brand-600 text-white shadow"
-        :style="{ left: `${logoRotatePoint.x}px`, top: `${logoRotatePoint.y}px` }"
-        title="Повернуть логотип"
-        @pointerdown="onLogoRotateDown"
-      >
-        <svg viewBox="0 0 12 12" class="h-3 w-3" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round">
-          <path d="M9.5 4.2A4 4 0 1 0 10 7.5" />
-          <path d="M10 2v2.6H7.4" />
-        </svg>
-      </button>
-    </template>
+      <!-- Маркеры строки по кольцу -->
+      <template v-if="handles && selectedLineId">
+        <button
+          v-for="(point, index) in handlePoints"
+          :key="`ring-handle-${index}`"
+          type="button"
+          :data-testid="`seal-handle-${index}`"
+          class="absolute z-10 h-3.5 w-3.5 -translate-x-1/2 -translate-y-1/2 cursor-ew-resize rounded-full border-2 border-white bg-brand-500 shadow ring-1 ring-brand-700/40 transition-transform hover:scale-125"
+          :style="{ left: `${point.x}px`, top: `${point.y}px` }"
+          title="Потяните, чтобы растянуть или сжать строку"
+          @pointerdown="onRingHandleDown"
+        />
+      </template>
+
+      <!-- Маркеры строки центра -->
+      <template v-if="handles && selectedCenterIndex !== null">
+        <button
+          v-for="(point, index) in centerHandlePoints"
+          :key="`center-handle-${index}`"
+          type="button"
+          :data-testid="`seal-center-handle-${index}`"
+          class="absolute z-10 h-3.5 w-3.5 -translate-x-1/2 -translate-y-1/2 cursor-ew-resize rounded-full border-2 border-white bg-brand-500 shadow ring-1 ring-brand-700/40 transition-transform hover:scale-125"
+          :style="{ left: `${point.x}px`, top: `${point.y}px` }"
+          title="Потяните, чтобы растянуть или сжать строку центра"
+          @pointerdown="onCenterHandleDown($event, selectedCenterIndex)"
+        />
+      </template>
+
+      <!-- Маркеры логотипа: углы + поворот -->
+      <template v-if="handles && selectedLogo && template.logo">
+        <button
+          v-for="point in logoHandlePoints"
+          :key="`logo-${point.corner}`"
+          type="button"
+          :data-testid="`seal-logo-handle-${point.corner}`"
+          class="absolute z-10 h-2.5 w-2.5 -translate-x-1/2 -translate-y-1/2 rounded-sm border border-white bg-brand-500 shadow"
+          :style="{ left: `${point.x}px`, top: `${point.y}px` }"
+          title="Потяните, чтобы изменить размер (Shift — с сохранением пропорций)"
+          @pointerdown="onLogoCornerDown"
+        />
+        <button
+          v-if="logoRotatePoint"
+          type="button"
+          data-testid="seal-logo-rotate"
+          class="absolute z-10 flex h-[22px] w-[22px] -translate-x-1/2 -translate-y-1/2 items-center justify-center rounded-full border-2 border-white shadow"
+          style="background-color: #2f6bff"
+          :style="{ left: `${logoRotatePoint.x}px`, top: `${logoRotatePoint.y}px` }"
+          title="Повернуть логотип"
+          @pointerdown="onLogoRotateDown"
+        >
+          <svg viewBox="0 0 12 12" class="h-3 w-3" fill="none" stroke="#ffffff" stroke-width="1.6" stroke-linecap="round">
+            <path d="M9.5 4.2A4 4 0 1 0 10 7.5" />
+            <path d="M10 2v2.6H7.4" />
+          </svg>
+        </button>
+      </template>
+
+      <!-- Маркеры образца: углы + поворот -->
+      <template v-if="handles && selectedReference && reference">
+        <button
+          v-for="point in referenceHandlePoints"
+          :key="`ref-${point.corner}`"
+          type="button"
+          :data-testid="`seal-ref-handle-${point.corner}`"
+          class="absolute z-10 h-2.5 w-2.5 -translate-x-1/2 -translate-y-1/2 rounded-sm border border-white bg-brand-500 shadow"
+          :style="{ left: `${point.x}px`, top: `${point.y}px` }"
+          title="Потяните, чтобы изменить размер (Shift — с сохранением пропорций)"
+          @pointerdown="onReferenceCornerDown"
+        />
+        <button
+          v-if="referenceRotatePoint"
+          type="button"
+          data-testid="seal-ref-rotate"
+          class="absolute z-10 flex h-[22px] w-[22px] -translate-x-1/2 -translate-y-1/2 items-center justify-center rounded-full border-2 border-white shadow"
+          style="background-color: #2f6bff"
+          :style="{ left: `${referenceRotatePoint.x}px`, top: `${referenceRotatePoint.y}px` }"
+          title="Повернуть образец"
+          @pointerdown="onReferenceRotateDown"
+        >
+          <svg viewBox="0 0 12 12" class="h-3 w-3" fill="none" stroke="#ffffff" stroke-width="1.6" stroke-linecap="round">
+            <path d="M9.5 4.2A4 4 0 1 0 10 7.5" />
+            <path d="M10 2v2.6H7.4" />
+          </svg>
+        </button>
+      </template>
+    </div>
 
     <!-- Контекстное меню -->
     <div
       v-if="menu"
       data-testid="seal-text-menu"
-      class="absolute z-20 min-w-[160px] animate-fade-in rounded-lg border border-slate-200 bg-white py-1 shadow-floating dark:border-slate-700 dark:bg-slate-900"
+      class="absolute z-20 min-w-[190px] animate-fade-in rounded-lg border border-slate-200 bg-white py-1 shadow-floating dark:border-slate-700 dark:bg-slate-900"
       :style="{ left: `${menu.x}px`, top: `${menu.y}px` }"
     >
       <template v-if="menu.kind === 'text'">
@@ -793,15 +1066,50 @@ onBeforeUnmount(() => {
           Удалить
         </button>
       </template>
-      <button
-        v-else
-        type="button"
-        class="flex w-full items-center gap-2 px-3 py-1.5 text-left text-xs text-rose-600 hover:bg-rose-50 dark:text-rose-400 dark:hover:bg-rose-500/10"
-        data-testid="seal-menu-ring-delete"
-        @click="pickDelete"
-      >
-        Удалить кольцо
-      </button>
+      <template v-else-if="menu.kind === 'ring'">
+        <button
+          type="button"
+          class="flex w-full items-center gap-2 px-3 py-1.5 text-left text-xs text-rose-600 hover:bg-rose-50 dark:text-rose-400 dark:hover:bg-rose-500/10"
+          data-testid="seal-menu-ring-delete"
+          @click="pickDelete"
+        >
+          Удалить кольцо
+        </button>
+      </template>
+      <template v-else>
+        <button
+          type="button"
+          class="flex w-full items-center gap-2 px-3 py-1.5 text-left text-xs text-slate-700 hover:bg-slate-100 dark:text-slate-200 dark:hover:bg-slate-800"
+          data-testid="seal-menu-add-ring"
+          @click="pickAdd('ring')"
+        >
+          Добавить кольцо
+        </button>
+        <button
+          type="button"
+          class="flex w-full items-center gap-2 px-3 py-1.5 text-left text-xs text-slate-700 hover:bg-slate-100 dark:text-slate-200 dark:hover:bg-slate-800"
+          data-testid="seal-menu-add-text"
+          @click="pickAdd('text')"
+        >
+          Добавить текст по кольцу
+        </button>
+        <button
+          type="button"
+          class="flex w-full items-center gap-2 px-3 py-1.5 text-left text-xs text-slate-700 hover:bg-slate-100 dark:text-slate-200 dark:hover:bg-slate-800"
+          data-testid="seal-menu-add-center-text"
+          @click="pickAdd('center')"
+        >
+          Добавить текст в центре
+        </button>
+        <button
+          type="button"
+          class="flex w-full items-center gap-2 px-3 py-1.5 text-left text-xs text-slate-700 hover:bg-slate-100 dark:text-slate-200 dark:hover:bg-slate-800"
+          data-testid="seal-menu-add-reference"
+          @click="pickAdd('reference')"
+        >
+          Добавить образец…
+        </button>
+      </template>
     </div>
   </div>
 </template>

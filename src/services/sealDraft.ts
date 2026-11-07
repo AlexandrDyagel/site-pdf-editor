@@ -12,6 +12,26 @@
 
 import type { StampTemplate } from '@/types';
 
+/**
+ * Картинка-образец под превью.
+ *
+ * Это не часть печати, а подложка для копирования оттиска: её можно двигать,
+ * вращать, масштабировать, гасить прозрачностью и скрывать. Хранится в
+ * черновике, чтобы случайное закрытие окна не потеряло образец.
+ */
+export interface SealReference {
+  src: string;
+  /** Центр в координатах печати, pt. */
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+  /** Поворот вокруг центра, градусы. */
+  rotation: number;
+  opacity: number;
+  visible: boolean;
+}
+
 export interface SealDraft {
   /** Контекст: какой объект/шаблон редактировали. */
   key: string;
@@ -22,6 +42,8 @@ export interface SealDraft {
   background: string | null;
   /** Какая строка текста была выбрана. */
   selectedLineId: string | null;
+  /** Картинка-образец под печатью (не часть печати). */
+  reference: SealReference | null;
 }
 
 let draft: SealDraft | null = null;
@@ -42,6 +64,9 @@ export function saveSealDraft(value: SealDraft): void {
     tab: value.tab,
     background: value.background,
     selectedLineId: value.selectedLineId ?? null,
+    reference: value.reference
+      ? (JSON.parse(JSON.stringify(value.reference)) as SealReference)
+      : null,
   };
 }
 
@@ -55,6 +80,9 @@ export function readSealDraft(key: string): SealDraft | null {
     tab: draft.tab,
     background: draft.background,
     selectedLineId: draft.selectedLineId ?? null,
+    reference: draft.reference
+      ? (JSON.parse(JSON.stringify(draft.reference)) as SealReference)
+      : null,
   };
 }
 

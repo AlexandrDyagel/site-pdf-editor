@@ -1116,6 +1116,301 @@ try {
   check('фон печати помнится после вставки на документ', bgAfterInsert.background === 'Тёмный',
     JSON.stringify({ ...bgAfterInsert, objectId: insertedObjectId }));
 
+  console.log('\n14. Меню добавления, панорама, образец и вкладки');
+
+  const emptyMenu = await cdp.evaluate(`(async () => {
+    const canvas = document.querySelector('[data-testid=seal-preview-canvas]');
+    const rect = canvas.getBoundingClientRect();
+    canvas.dispatchEvent(new MouseEvent('contextmenu', {
+      bubbles: true, clientX: rect.left + 6, clientY: rect.top + 6, button: 2,
+    }));
+    await new Promise((r) => setTimeout(r, 300));
+    return {
+      items: Array.from(document.querySelectorAll('[data-testid=seal-text-menu] button')).map((b) => b.textContent.trim()),
+    };
+  })()`);
+  check(
+    'меню на пустом месте предлагает добавить кольцо и текст',
+    ['Добавить кольцо', 'Добавить текст по кольцу', 'Добавить текст в центре'].every((label) =>
+      emptyMenu.items.includes(label),
+    ),
+    JSON.stringify(emptyMenu.items),
+  );
+
+  const ringsBeforeMenu = await cdp.evaluate(`window.__SEAL_DESIGNER__.seal.rings.length`);
+  await cdp.evaluate(`document.querySelector('[data-testid=seal-menu-add-ring]').click(); 'ok'`);
+  await sleep(600);
+  const ringsAfterMenu = await cdp.evaluate(`window.__SEAL_DESIGNER__.seal.rings.length`);
+  check('из меню добавляется кольцо', ringsAfterMenu === ringsBeforeMenu + 1,
+    JSON.stringify({ before: ringsBeforeMenu, after: ringsAfterMenu }));
+
+  // Три дуги: добавляем третью строку и проверяем, что выбирается каждая.
+  await cdp.evaluate(`(async () => {
+    const t = window.__SEAL_DESIGNER__;
+    const stamp = await import('/src/services/stampRenderService.ts');
+    while (stamp.computeStampLayout(t, (id) => window.__PDF_EDITOR__.fonts.familyOf(id)).seal.ringLines.length < 3) {
+      document.querySelector('[data-testid=seal-add-ring-line]')?.click();
+      await new Promise((r) => setTimeout(r, 400));
+      if (t.seal.lines.filter((line) => line.text.trim()).length >= 4) break;
+    }
+    return 'ok';
+  })()`);
+  await sleep(500);
+  const arcSelection = await cdp.evaluate(`(async () => {
+    const canvas = document.querySelector('[data-testid=seal-preview-canvas]');
+    const picked = [];
+    const count = window.__sealLayout().seal.ringLines.length;
+    for (let i = 0; i < count; i += 1) {
+      const g = window.__sealGlyph(i);
+      if (!g) break;
+      canvas.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, clientX: g.x, clientY: g.y, button: 0, pointerId: 120 + i }));
+      canvas.dispatchEvent(new PointerEvent('pointerup', { bubbles: true, pointerId: 120 + i }));
+      await new Promise((r) => setTimeout(r, 250));
+      picked.push({
+        lineId: g.lineId,
+        selected: window.__SEAL_DESIGNER__.seal.lines.some((line) => line.id === g.lineId) &&
+          Boolean(document.querySelector('[data-testid=seal-handle-0]')),
+        handles: document.querySelectorAll('[data-testid^=seal-handle-]').length,
+      });
+    }
+    return picked;
+  })()`);
+  check('каждую дугу текста можно выбрать кликом',
+    arcSelection.length >= 3 && arcSelection.every((item) => item.handles === 2),
+    JSON.stringify(arcSelection));
+
+  const nearRing = await cdp.evaluate(`(async () => {
+    const t = window.__SEAL_DESIGNER__;
+    const stamp = await import('/src/services/stampRenderService.ts');
+    const app = window.__PDF_EDITOR__;
+    const layout = () => stamp.computeStampLayout(t, (id) => app.fonts.familyOf(id));
+    const g = window.__sealGlyph(0);
+    const gapBefore = t.seal.rings[1]?.gap;
+    const canvas = document.querySelector('[data-testid=seal-preview-canvas]');
+    canvas.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, clientX: g.x, clientY: g.y, button: 0, pointerId: 130 }));
+    window.dispatchEvent(new PointerEvent('pointermove', { bubbles: true, clientX: g.x + 16, clientY: g.y + 6, pointerId: 130 }));
+    window.dispatchEvent(new PointerEvent('pointerup', { bubbles: true, pointerId: 130 }));
+    await new Promise((r) => setTimeout(r, 500));
+    return { gapBefore, gapAfter: t.seal.rings[1]?.gap, radius: layout().seal.ringLines[0]?.radius };
+  })()`);
+  check('текст рядом с кольцом не тянет кольцо', Math.abs((nearRing.gapAfter ?? 0) - (nearRing.gapBefore ?? 0)) < 0.01,
+    JSON.stringify(nearRing));
+
+  const cursor = await cdp.evaluate(`getComputedStyle(document.querySelector('[data-testid=seal-preview-canvas]')).cursor`);
+  check('курсор на превью — обычная стрелка', cursor === 'default', String(cursor));
+
+  const panState = await cdp.evaluate(`(async () => {
+    const canvas = document.querySelector('[data-testid=seal-preview-canvas]');
+    const content = document.querySelector('[data-testid=seal-preview-content]');
+    const before = content.style.transform;
+    canvas.dispatchEvent(new WheelEvent('wheel', { bubbles: true, cancelable: true, deltaY: 120 }));
+    await new Promise((r) => setTimeout(r, 200));
+    const afterWheel = content.style.transform;
+    const rect = canvas.getBoundingClientRect();
+    canvas.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, clientX: rect.left + 20, clientY: rect.top + 20, button: 1, pointerId: 131 }));
+    window.dispatchEvent(new PointerEvent('pointermove', { bubbles: true, clientX: rect.left + 50, clientY: rect.top + 45, pointerId: 131 }));
+    window.dispatchEvent(new PointerEvent('pointerup', { bubbles: true, pointerId: 131 }));
+    await new Promise((r) => setTimeout(r, 200));
+    return { before, afterWheel, afterDrag: content.style.transform };
+  })()`);
+  check('превью панорамируется колесом и средней кнопкой',
+    panState.afterWheel !== panState.before && panState.afterDrag !== panState.afterWheel,
+    JSON.stringify(panState));
+
+  const outside = await cdp.evaluate(`(async () => {
+    const g = window.__sealGlyph(0);
+    const canvas = document.querySelector('[data-testid=seal-preview-canvas]');
+    canvas.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, clientX: g.x, clientY: g.y, button: 0, pointerId: 132 }));
+    canvas.dispatchEvent(new PointerEvent('pointerup', { bubbles: true, pointerId: 132 }));
+    await new Promise((r) => setTimeout(r, 300));
+    const before = document.querySelectorAll('[data-testid^=seal-handle-]').length;
+    const box = document.querySelector('[data-testid=seal-preview-box]').getBoundingClientRect();
+    document.querySelector('[data-testid=seal-preview-box]').dispatchEvent(new PointerEvent('pointerdown', {
+      bubbles: true, clientX: box.left + 4, clientY: box.top + 4, button: 0, pointerId: 133,
+    }));
+    await new Promise((r) => setTimeout(r, 300));
+    return { before, after: document.querySelectorAll('[data-testid^=seal-handle-]').length };
+  })()`);
+  check('клик вне печати снимает фокус', outside.before === 2 && outside.after === 0, JSON.stringify(outside));
+
+  const shrink = await cdp.evaluate(`(async () => {
+    const t = window.__SEAL_DESIGNER__;
+    if (t.seal.rings.length < 2) document.querySelector('[data-testid=seal-add-ring]')?.click();
+    Array.from(document.querySelectorAll('[role=tab]')).find((n) => n.textContent.trim() === 'Кольца')?.click();
+    await new Promise((r) => setTimeout(r, 500));
+    const inputs = Array.from(document.querySelectorAll('[data-testid=seal-ring-1] input'));
+    const slider = inputs[inputs.length - 1];
+    if (!slider) return { error: 'нет ползунка' };
+    slider.value = '60';
+    slider.dispatchEvent(new Event('input', { bubbles: true }));
+    await new Promise((r) => setTimeout(r, 500));
+    const radii = window.__sealLayout().seal.ink.rings.map((ring) => ring.radius);
+    return { gap: t.seal.rings[1].gap, radii };
+  })()`);
+  check('кольцо можно сжать почти до центра',
+    shrink.error === undefined && Math.min(...shrink.radii) < 12,
+    JSON.stringify(shrink));
+
+  const tabsState = await cdp.evaluate(`(async () => {
+    const labels = Array.from(document.querySelectorAll('[data-testid=seal-designer] [role=tab]')).map((n) => n.textContent.trim());
+    const click = (label) => Array.from(document.querySelectorAll('[data-testid=seal-designer] [role=tab]'))
+      .find((n) => n.textContent.trim() === label)?.click();
+    click('Кольца');
+    await new Promise((r) => setTimeout(r, 250));
+    const divider = (document.querySelector('[data-testid=seal-right-column]')?.textContent ?? '').includes('Разделитель центра');
+    click('Центр');
+    await new Promise((r) => setTimeout(r, 250));
+    const logoInCenter = Boolean(document.querySelector('[data-testid=seal-logo-section]')?.offsetParent);
+    click('Логотип');
+    await new Promise((r) => setTimeout(r, 250));
+    const logoInTab = Boolean(document.querySelector('[data-testid=seal-logo-section]')?.offsetParent);
+    return { labels, divider, logoInCenter, logoInTab };
+  })()`);
+  check('во вкладке «Кольца» больше нет разделителя центра', tabsState.divider === false, JSON.stringify(tabsState));
+  check('логотип перенесён во вкладку «Логотип»',
+    tabsState.labels.includes('Логотип') && tabsState.logoInCenter === false && tabsState.logoInTab === true,
+    JSON.stringify(tabsState));
+
+  // Логотип: маркер поворота ведёт себя как у объекта.
+  const logoRotate = await cdp.evaluate(`(async () => {
+    const t = window.__SEAL_DESIGNER__;
+    const png = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAgAAAAIAQMAAAD+wSzIAAAABlBMVEX///+/v7+jQ3Y5AAAADklEQVQI12P4AIX8EAgALgAD/aNpbtEAAAAASUVORK5CYII=';
+    t.logo = { src: png, width: 30, height: 20, offsetX: 0, offsetY: 0, opacity: 1, rotation: 0 };
+    await new Promise((r) => setTimeout(r, 500));
+    const logo = window.__sealLayout().logo;
+    const canvas = document.querySelector('[data-testid=seal-preview-canvas]');
+    const rect = canvas.getBoundingClientRect();
+    const zoom = rect.width / t.width;
+    const c = { x: rect.left + (logo.x + logo.width / 2) * zoom, y: rect.top + (logo.y + logo.height / 2) * zoom };
+    canvas.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, clientX: c.x, clientY: c.y, button: 0, pointerId: 140 }));
+    canvas.dispatchEvent(new PointerEvent('pointerup', { bubbles: true, pointerId: 140 }));
+    await new Promise((r) => setTimeout(r, 400));
+    const btn = document.querySelector('[data-testid=seal-logo-rotate]');
+    const before = btn.getBoundingClientRect();
+    const p = { x: before.left + before.width / 2, y: before.top + before.height / 2 };
+    btn.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, clientX: p.x, clientY: p.y, button: 0, pointerId: 141 }));
+    window.dispatchEvent(new PointerEvent('pointermove', { bubbles: true, clientX: p.x + 30, clientY: p.y + 4, pointerId: 141 }));
+    window.dispatchEvent(new PointerEvent('pointerup', { bubbles: true, pointerId: 141 }));
+    await new Promise((r) => setTimeout(r, 400));
+    const after = document.querySelector('[data-testid=seal-logo-rotate]').getBoundingClientRect();
+    return { rotation: t.logo.rotation, beforeX: Math.round(before.left), afterX: Math.round(after.left) };
+  })()`);
+  check('маркер поворота логотипа идёт за мышью вправо',
+    logoRotate.rotation > 5 && logoRotate.afterX > logoRotate.beforeX,
+    JSON.stringify(logoRotate));
+
+  // Образец печати: загрузка (подменяем через отладочный хук), выбор, трансформации.
+  const referenceBase = await cdp.evaluate(`(async () => {
+    const t = window.__SEAL_DESIGNER__;
+    const c = document.createElement('canvas');
+    c.width = 200; c.height = 140;
+    const x = c.getContext('2d');
+    x.fillStyle = '#f59e0b'; x.fillRect(0, 0, 200, 140);
+    x.fillStyle = '#111'; x.font = 'bold 28px Arial'; x.fillText('ОБРАЗЕЦ', 22, 80);
+    window.__SEAL_REFERENCE__.set({
+      src: c.toDataURL('image/png'),
+      x: t.width * 0.75,
+      y: t.height * 0.5,
+      width: t.width * 0.45,
+      height: t.height * 0.3,
+      rotation: 0,
+      opacity: 0.6,
+      visible: true,
+    });
+    await new Promise((r) => setTimeout(r, 500));
+    return {
+      image: Boolean(document.querySelector('[data-testid=seal-reference-image]')),
+      controls: Boolean(document.querySelector('[data-testid=seal-reference-controls]')),
+    };
+  })()`);
+  check('образец печати добавляется под превью и имеет настройки',
+    referenceBase.image && referenceBase.controls, JSON.stringify(referenceBase));
+
+  const referenceTransform = await cdp.evaluate(`(async () => {
+    const img = document.querySelector('[data-testid=seal-reference-image]');
+    const r = img.getBoundingClientRect();
+    const point = { x: r.left + r.width * 0.82, y: r.top + r.height * 0.18 };
+    const canvas = document.querySelector('[data-testid=seal-preview-canvas]');
+    canvas.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, clientX: point.x, clientY: point.y, button: 0, pointerId: 150 }));
+    canvas.dispatchEvent(new PointerEvent('pointerup', { bubbles: true, pointerId: 150 }));
+    await new Promise((r2) => setTimeout(r2, 400));
+    const handles = document.querySelectorAll('[data-testid^=seal-ref-handle-]').length;
+    const before = JSON.parse(JSON.stringify(window.__SEAL_REFERENCE__.get()));
+    canvas.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, clientX: point.x, clientY: point.y, button: 0, pointerId: 151 }));
+    window.dispatchEvent(new PointerEvent('pointermove', { bubbles: true, clientX: point.x + 12, clientY: point.y + 6, pointerId: 151 }));
+    window.dispatchEvent(new PointerEvent('pointerup', { bubbles: true, pointerId: 151 }));
+    await new Promise((r2) => setTimeout(r2, 400));
+    const moved = JSON.parse(JSON.stringify(window.__SEAL_REFERENCE__.get()));
+    const corner = document.querySelector('[data-testid=seal-ref-handle-se]');
+    const cr = corner.getBoundingClientRect();
+    const cp = { x: cr.left + cr.width / 2, y: cr.top + cr.height / 2 };
+    corner.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, clientX: cp.x, clientY: cp.y, button: 0, pointerId: 152 }));
+    window.dispatchEvent(new PointerEvent('pointermove', { bubbles: true, clientX: cp.x + 14, clientY: cp.y + 14, shiftKey: true, pointerId: 152 }));
+    window.dispatchEvent(new PointerEvent('pointerup', { bubbles: true, pointerId: 152 }));
+    await new Promise((r2) => setTimeout(r2, 400));
+    const resized = JSON.parse(JSON.stringify(window.__SEAL_REFERENCE__.get()));
+    const rotateBtn = document.querySelector('[data-testid=seal-ref-rotate]');
+    const rr = rotateBtn.getBoundingClientRect();
+    const rp = { x: rr.left + rr.width / 2, y: rr.top + rr.height / 2 };
+    rotateBtn.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, clientX: rp.x, clientY: rp.y, button: 0, pointerId: 153 }));
+    window.dispatchEvent(new PointerEvent('pointermove', { bubbles: true, clientX: rp.x + 20, clientY: rp.y + 8, pointerId: 153 }));
+    window.dispatchEvent(new PointerEvent('pointerup', { bubbles: true, pointerId: 153 }));
+    await new Promise((r2) => setTimeout(r2, 400));
+    const rotated = JSON.parse(JSON.stringify(window.__SEAL_REFERENCE__.get()));
+    return { handles, before, moved, resized, rotated };
+  })()`);
+  const refRatioBefore = referenceTransform.before.width / referenceTransform.before.height;
+  const refRatioAfter = referenceTransform.resized.width / referenceTransform.resized.height;
+  check('образец выбирается и показывает маркеры объекта', referenceTransform.handles === 4,
+    JSON.stringify({ handles: referenceTransform.handles }));
+  check('образец можно перемещать',
+    Math.abs(referenceTransform.moved.x - referenceTransform.before.x) > 0.3 ||
+      Math.abs(referenceTransform.moved.y - referenceTransform.before.y) > 0.3,
+    JSON.stringify({ before: referenceTransform.before, moved: referenceTransform.moved }));
+  check('Shift сохраняет пропорции образца',
+    referenceTransform.resized.width > referenceTransform.before.width &&
+      Math.abs(refRatioAfter - refRatioBefore) < 0.03,
+    JSON.stringify({ before: referenceTransform.before, after: referenceTransform.resized }));
+  check('образец можно повернуть', Math.abs(referenceTransform.rotated.rotation) > 1,
+    String(referenceTransform.rotated.rotation));
+
+  const referenceControls = await cdp.evaluate(`(async () => {
+    const switchButton = document.querySelector('[data-testid=seal-reference-visible] button');
+    switchButton?.click();
+    await new Promise((r) => setTimeout(r, 300));
+    const hidden = !document.querySelector('[data-testid=seal-reference-image]');
+    switchButton?.click();
+    await new Promise((r) => setTimeout(r, 300));
+    const visible = Boolean(document.querySelector('[data-testid=seal-reference-image]'));
+    const slider = document.querySelector('[data-testid=seal-reference-opacity] input');
+    slider.value = '0.9';
+    slider.dispatchEvent(new Event('input', { bubbles: true }));
+    await new Promise((r) => setTimeout(r, 300));
+    return { hidden, visible, opacity: JSON.parse(JSON.stringify(window.__SEAL_REFERENCE__.get())).opacity };
+  })()`);
+  check('образец скрывается и меняет прозрачность',
+    referenceControls.hidden && referenceControls.visible && Math.abs(referenceControls.opacity - 0.9) < 0.01,
+    JSON.stringify(referenceControls));
+
+  await cdp.evaluate(`window.__PDF_EDITOR__.ui.closeModal('sealDesigner'); 'ok'`);
+  await sleep(600);
+  await cdp.evaluate(
+    `window.__PDF_EDITOR__.ui.openModal('sealDesigner', { objectId: ${JSON.stringify(insertedObjectId)} }); 'ok'`,
+  );
+  await sleep(1000);
+  const referenceRestore = await cdp.evaluate(`(() => {
+    const ref = window.__SEAL_REFERENCE__.get();
+    return {
+      image: Boolean(document.querySelector('[data-testid=seal-reference-image]')),
+      rotation: ref?.rotation,
+      opacity: ref?.opacity,
+    };
+  })()`);
+  check('образец восстанавливается после закрытия конструктора',
+    referenceRestore.image === true && Math.abs(referenceRestore.rotation) > 1 &&
+      Math.abs(referenceRestore.opacity - 0.9) < 0.01,
+    JSON.stringify(referenceRestore));
+
   await cdp.evaluate(`window.__PDF_EDITOR__.ui.closeAllModals(); 'ok'`);
   await sleep(600);
 

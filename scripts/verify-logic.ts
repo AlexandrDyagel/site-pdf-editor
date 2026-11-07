@@ -846,7 +846,15 @@ check(
 /* --- раскладка по кольцевому зазору -------------------------------------- */
 
 const familyOf = (): string => 'PT Sans';
-const sealTemplate = createSealTemplate();
+const sealTemplate = createSealTemplate({
+  // Разделитель больше не включается по умолчанию — в тестах включаем его
+  // явно, чтобы проверить саму отрисовку (старые шаблоны его сохраняют).
+  seal: createSealSettings({ divider: { enabled: true, radius: 0, width: 1.2 } }),
+});
+check(
+  'в новой печати разделитель выключен по умолчанию',
+  computeSealParts(createSealTemplate(), 120, 120, familyOf).ink.divider === null,
+);
 const inkedTemplate = createSealTemplate({
   seal: createSealSettings({ ink: { ...createSealSettings().ink, enabled: true } }),
 });
@@ -1111,6 +1119,7 @@ check('по умолчанию фактура выключена', glyphInk.enab
 const sealOff = createSealTemplate({
   seal: {
     ...createSealSettings(),
+    divider: { enabled: true, radius: 0, width: 1.2 },
     ink: { ...createSealSettings().ink, enabled: false },
   },
 });
