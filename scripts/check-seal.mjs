@@ -490,13 +490,24 @@ try {
   check('белый фон превью применяется', background.white.color === 'rgb(255, 255, 255)', background.white.color);
   check('без фона возвращается шахматка', background.none.checker === true);
 
-  await cdp.evaluate(`(() => {
-    document.querySelector('[data-testid=seal-color-7c3aed]').click();
-    return 'ok';
+  const color = await cdp.evaluate(`(async () => {
+    Array.from(document.querySelectorAll('[data-testid=seal-designer] [role=tab]'))
+      .find((n) => n.textContent.trim() === 'Краска')?.click();
+    await new Promise((r) => setTimeout(r, 400));
+    const triggers = Array.from(document.querySelectorAll('.seal-settings [data-testid=color-trigger]'));
+    const trigger = triggers.find((node) => node.offsetParent) ?? triggers[triggers.length - 1];
+    trigger?.click();
+    await new Promise((r) => setTimeout(r, 300));
+    const swatch = Array.from(document.querySelectorAll('.seal-settings button'))
+      .find((node) => node.style.backgroundColor === 'rgb(124, 58, 237)');
+    swatch?.click();
+    await new Promise((r) => setTimeout(r, 300));
+    const preset = Array.from(document.querySelectorAll('.seal-settings button'))
+      .some((node) => node.style.backgroundColor === 'rgb(39, 175, 255)');
+    return { color: window.__SEAL_DESIGNER__.color, preset };
   })()`);
-  await sleep(300);
-  const color = await cdp.evaluate(`window.__SEAL_DESIGNER__.color`);
-  check('цвет из пресета применяется', color === '#7c3aed', color);
+  check('цвет из пресета применяется', color.color === '#7c3aed', color.color);
+  check('пресет #27afff есть во вкладке «Краска»', color.preset === true);
 
   await cdp.evaluate(`(() => {
     Array.from(document.querySelectorAll('[role=tab]')).find((n) => n.textContent.trim() === 'Краска')?.click();
@@ -542,8 +553,11 @@ try {
   console.log('\n8. Пипетка сворачивает окно');
   const pipetteStart = await cdp.evaluate(`(async () => {
     const right = document.querySelector('[data-testid=seal-right-column]');
-    right?.querySelector('[data-testid=color-trigger]')?.click();
-    await new Promise((r) => setTimeout(r, 200));
+    // Палитра могла остаться открытой после выбора цвета — тогда не закрываем её.
+    if (!right?.querySelector('[data-testid=color-eyedropper]')) {
+      right?.querySelector('[data-testid=color-trigger]')?.click();
+      await new Promise((r) => setTimeout(r, 250));
+    }
     right?.querySelector('[data-testid=color-eyedropper]')?.click();
     await new Promise((r) => setTimeout(r, 400));
     const overlay = document.querySelector('.fixed.inset-0.z-\\\\[100\\\\]');
@@ -574,7 +588,7 @@ try {
 
   console.log('\n9. Вставка на документ');
   await cdp.evaluate(`(() => {
-    document.querySelector('[data-testid=seal-color-7c3aed]').click();
+    window.__SEAL_DESIGNER__.color = '#7c3aed';
     return 'ok';
   })()`);
   await sleep(300);
@@ -1410,6 +1424,158 @@ try {
     referenceRestore.image === true && Math.abs(referenceRestore.rotation) > 1 &&
       Math.abs(referenceRestore.opacity - 0.9) < 0.01,
     JSON.stringify(referenceRestore));
+
+  console.log('\n15. Полосы, курсоры, точное попадание и вкладки');
+
+  const layoutState = await cdp.evaluate(`(() => {
+    const box = document.querySelector('[data-testid=seal-preview-box]');
+    const style = getComputedStyle(box);
+    return {
+      overflow: style.overflow,
+      noHorizontalScroll: box.scrollWidth <= box.clientWidth + 1,
+      noVerticalScroll: box.scrollHeight <= box.clientHeight + 1,
+      colorControls: document.querySelectorAll('[data-testid^=seal-color-]').length,
+      tabs: Array.from(document.querySelectorAll('[data-testid=seal-designer] [role=tab]')).map((n) => n.textContent.trim()),
+    };
+  })()`);
+  check('превью без полос прокрутки',
+    layoutState.overflow === 'hidden' && layoutState.noHorizontalScroll && layoutState.noVerticalScroll,
+    JSON.stringify(layoutState));
+  check('пресеты цвета убраны из-под превью', layoutState.colorControls === 0,
+    String(layoutState.colorControls));
+  check('есть вкладки «Логотип», «Образец» и «Краска»',
+    ['Логотип', 'Образец', 'Краска'].every((label) => layoutState.tabs.includes(label)),
+    JSON.stringify(layoutState.tabs));
+
+  const sampleTab = await cdp.evaluate(`(async () => {
+    Array.from(document.querySelectorAll('[data-testid=seal-designer] [role=tab]'))
+      .find((n) => n.textContent.trim() === 'Образец')?.click();
+    await new Promise((r) => setTimeout(r, 350));
+    const tab = document.querySelector('[data-testid=seal-sample-tab]');
+    return {
+      open: Boolean(tab && tab.offsetParent),
+      reference: Boolean(tab?.querySelector('[data-testid=seal-reference-controls]')),
+      presets: Array.from(tab?.querySelectorAll('button') ?? []).map((b) => b.textContent.trim()),
+    };
+  })()`);
+  check('во вкладке «Образец» лежат пресеты и образец печати',
+    sampleTab.open && sampleTab.reference && sampleTab.presets.includes('Организация'),
+    JSON.stringify(sampleTab));
+
+  // Меню у нижнего края не прячется под полосы превью.
+  const menuEdge = await cdp.evaluate(`(async () => {
+    const box = document.querySelector('[data-testid=seal-preview-box]').getBoundingClientRect();
+    const canvas = document.querySelector('[data-testid=seal-preview-canvas]');
+    canvas.dispatchEvent(new MouseEvent('contextmenu', {
+      bubbles: true, clientX: box.right - 12, clientY: box.bottom - 12, button: 2,
+    }));
+    await new Promise((r) => setTimeout(r, 300));
+    const menu = document.querySelector('[data-testid=seal-text-menu]');
+    if (!menu) return { open: false };
+    const rect = menu.getBoundingClientRect();
+    return {
+      open: true,
+      fixed: getComputedStyle(menu).position === 'fixed',
+      inViewport: rect.left >= 0 && rect.top >= 0 && rect.right <= window.innerWidth && rect.bottom <= window.innerHeight,
+      z: getComputedStyle(menu).zIndex,
+    };
+  })()`);
+  check('меню у края превью видно целиком', menuEdge.open && menuEdge.fixed && menuEdge.inViewport,
+    JSON.stringify(menuEdge));
+  await cdp.evaluate(`document.body.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true })); 'ok'`);
+
+  // Точное попадание: кольцо и текст рядом.
+  await cdp.evaluate(`(async () => {
+    Array.from(document.querySelectorAll('[data-testid=seal-designer] [role=tab]'))
+      .find((n) => n.textContent.trim() === 'Кольца')?.click();
+    await new Promise((r) => setTimeout(r, 300));
+    const t = window.__SEAL_DESIGNER__;
+    while (t.seal.rings.length < 2) {
+      document.querySelector('[data-testid=seal-add-ring]')?.click();
+      await new Promise((r) => setTimeout(r, 300));
+    }
+    return 'ok';
+  })()`);
+  const preciseHit = await cdp.evaluate(`(async () => {
+    const t = window.__SEAL_DESIGNER__;
+    const ring = window.__sealLayout().seal.ink.rings[0];
+    const canvas = document.querySelector('[data-testid=seal-preview-canvas]');
+    const rect = canvas.getBoundingClientRect();
+    const zoom = rect.width / t.width;
+    const ringPoint = { x: rect.left + (ring.cx - ring.radius) * zoom, y: rect.top + ring.cy * zoom };
+    canvas.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, clientX: ringPoint.x, clientY: ringPoint.y, button: 0, pointerId: 401 }));
+    canvas.dispatchEvent(new PointerEvent('pointerup', { bubbles: true, pointerId: 401 }));
+    await new Promise((r) => setTimeout(r, 300));
+    const ringSelected = document.querySelector('[data-testid=seal-ring-0]')?.getAttribute('data-active') === 'true';
+    const g = window.__sealGlyph(0);
+    canvas.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, clientX: g.x, clientY: g.y, button: 0, pointerId: 402 }));
+    canvas.dispatchEvent(new PointerEvent('pointerup', { bubbles: true, pointerId: 402 }));
+    await new Promise((r) => setTimeout(r, 300));
+    return { ringSelected, textHandles: document.querySelectorAll('[data-testid^=seal-handle-]').length };
+  })()`);
+  check('точное попадание: кольцо и текст выбираются по клику',
+    preciseHit.ringSelected === true && preciseHit.textHandles === 2, JSON.stringify(preciseHit));
+
+  // Курсор над выбранным кольцом — две стрелки.
+  const ringCursor = await cdp.evaluate(`(async () => {
+    const t = window.__SEAL_DESIGNER__;
+    const ring = window.__sealLayout().seal.ink.rings[0];
+    const canvas = document.querySelector('[data-testid=seal-preview-canvas]');
+    const rect = canvas.getBoundingClientRect();
+    const zoom = rect.width / t.width;
+    const point = { x: rect.left + (ring.cx - ring.radius) * zoom, y: rect.top + ring.cy * zoom };
+    canvas.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, clientX: point.x, clientY: point.y, button: 0, pointerId: 403 }));
+    canvas.dispatchEvent(new PointerEvent('pointerup', { bubbles: true, pointerId: 403 }));
+    await new Promise((r) => setTimeout(r, 250));
+    canvas.dispatchEvent(new PointerEvent('pointermove', { bubbles: true, clientX: point.x, clientY: point.y, pointerId: 403 }));
+    await new Promise((r) => setTimeout(r, 200));
+    return { cursor: getComputedStyle(canvas).cursor };
+  })()`);
+  check('над выбранным кольцом курсор — две стрелки',
+    ringCursor.cursor === 'ew-resize' || ringCursor.cursor === 'ns-resize', String(ringCursor.cursor));
+
+  // Курсор панорамирования.
+  const panCursor = await cdp.evaluate(`(async () => {
+    const canvas = document.querySelector('[data-testid=seal-preview-canvas]');
+    const rect = canvas.getBoundingClientRect();
+    canvas.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, clientX: rect.left + 30, clientY: rect.top + 30, button: 1, pointerId: 404 }));
+    await new Promise((r) => setTimeout(r, 120));
+    const during = getComputedStyle(canvas).cursor;
+    window.dispatchEvent(new PointerEvent('pointerup', { bubbles: true, pointerId: 404 }));
+    await new Promise((r) => setTimeout(r, 120));
+    return { during, after: getComputedStyle(canvas).cursor };
+  })()`);
+  check('при панорамировании курсор — «рука»',
+    panCursor.during === 'grabbing' || panCursor.during === 'grab', JSON.stringify(panCursor));
+
+  // Логотип: маркеры как у объекта, курсоры на углах.
+  const logoMarkers = await cdp.evaluate(`(async () => {
+    const t = window.__SEAL_DESIGNER__;
+    const png = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAgAAAAIAQMAAAD+wSzIAAAABlBMVEX///+/v7+jQ3Y5AAAADklEQVQI12P4AIX8EAgALgAD/aNpbtEAAAAASUVORK5CYII=';
+    t.logo = { src: png, width: 28, height: 20, offsetX: 0, offsetY: 0, opacity: 1, rotation: 0 };
+    Array.from(document.querySelectorAll('[data-testid=seal-designer] [role=tab]'))
+      .find((n) => n.textContent.trim() === 'Логотип')?.click();
+    await new Promise((r) => setTimeout(r, 600));
+    const logo = window.__sealLayout().logo;
+    const canvas = document.querySelector('[data-testid=seal-preview-canvas]');
+    const rect = canvas.getBoundingClientRect();
+    const zoom = rect.width / t.width;
+    const point = { x: rect.left + (logo.x + logo.width / 2) * zoom, y: rect.top + (logo.y + logo.height / 2) * zoom };
+    canvas.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, clientX: point.x, clientY: point.y, button: 0, pointerId: 405 }));
+    canvas.dispatchEvent(new PointerEvent('pointerup', { bubbles: true, pointerId: 405 }));
+    await new Promise((r) => setTimeout(r, 400));
+    const nw = document.querySelector('[data-testid=seal-logo-handle-nw]');
+    const rotate = document.querySelector('[data-testid=seal-logo-rotate]');
+    return {
+      corners: document.querySelectorAll('[data-testid^=seal-logo-handle-]').length,
+      nwCursor: nw ? [...nw.classList].find((c) => c.startsWith('cursor-')) : null,
+      rotateCursor: rotate ? [...rotate.classList].find((c) => c.startsWith('cursor-')) : null,
+    };
+  })()`);
+  check('у логотипа четыре угла и курсоры как у объекта',
+    logoMarkers.corners === 4 && logoMarkers.nwCursor === 'cursor-nwse-resize' &&
+      logoMarkers.rotateCursor === 'cursor-grab',
+    JSON.stringify(logoMarkers));
 
   await cdp.evaluate(`window.__PDF_EDITOR__.ui.closeAllModals(); 'ok'`);
   await sleep(600);

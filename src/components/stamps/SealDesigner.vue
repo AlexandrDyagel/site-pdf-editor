@@ -125,6 +125,7 @@ const tabs = [
   { id: 'text', label: 'Текст', icon: 'type' },
   { id: 'center', label: 'Центр', icon: 'seal' },
   { id: 'logo', label: 'Логотип', icon: 'image' },
+  { id: 'sample', label: 'Образец', icon: 'layers' },
   { id: 'ink', label: 'Краска', icon: 'sliders' },
 ];
 
@@ -1262,7 +1263,7 @@ function onPickEnd(color: string | null): void {
 
         <!-- Большое превью -->
         <div
-          class="relative flex h-[430px] items-center justify-center overflow-auto rounded-xl border border-slate-200 p-4 transition-colors dark:border-slate-700"
+          class="relative flex h-[430px] items-center justify-center overflow-hidden rounded-xl border border-slate-200 p-4 transition-colors dark:border-slate-700"
           :class="previewBg ? '' : 'checker-bg'"
           :style="previewBg ? { backgroundColor: previewBg } : undefined"
           data-testid="seal-preview-box"
@@ -1337,105 +1338,11 @@ function onPickEnd(color: string | null): void {
           Фон — только подложка превью: в документ, PDF и библиотеку он не попадает.
         </p>
 
-        <!-- Образец печати: картинка-подложка под оттиском -->
-        <div class="space-y-1.5" data-testid="seal-reference-controls">
-          <div class="flex items-center justify-between gap-2">
-            <span class="text-[11px] font-medium uppercase tracking-wide text-slate-500 dark:text-slate-400">
-              Образец печати
-            </span>
-            <AppButton
-              size="xs"
-              variant="subtle"
-              icon="image"
-              data-testid="seal-reference-add"
-              @click="uploadReference"
-            >
-              {{ reference ? 'Заменить' : 'Из файла' }}
-            </AppButton>
-          </div>
-          <template v-if="reference">
-            <div class="flex flex-wrap items-center gap-1.5">
-              <AppToggle
-                :model-value="reference.visible"
-                label="Показывать образец"
-                data-testid="seal-reference-visible"
-                @update:model-value="toggleReference"
-              />
-              <AppButton size="xs" variant="ghost" icon="trash" data-testid="seal-reference-remove" @click="removeReference">
-                Убрать
-              </AppButton>
-            </div>
-            <AppSlider
-              :model-value="reference.opacity"
-              label="Прозрачность образца"
-              unit=""
-              :min="0.05"
-              :max="1"
-              :step="0.05"
-              :precision="2"
-              data-testid="seal-reference-opacity"
-              @update:model-value="setReferenceOpacity(Number($event))"
-            />
-            <p class="text-[11px] text-slate-400">
-              Образец лежит под оттиском: тяните за видимую часть, растягивайте за углы
-              (Shift — пропорции), вращайте за круглый маркер. На печать и PDF он не влияет.
-            </p>
-          </template>
-          <p v-else class="text-[11px] text-slate-400">
-            Загрузите фото или скан готовой печати — он ляжет под превью, чтобы удобно было
-            повторить оттиск. Образец не входит в печать.
-          </p>
-        </div>
-
         <p class="text-[11px] text-slate-400">
           Клик по строке выбирает её и показывает маркеры угла; строку можно тащить мышью,
           двойной клик — правка текста, правый клик — меню. Панорама — колесо мыши или
           перетаскивание средней кнопкой (или с зажатым пробелом).
         </p>
-
-        <!-- Цвет: пресеты + произвольный -->
-        <div class="flex flex-wrap items-center gap-1.5">
-          <span class="text-[11px] font-medium uppercase tracking-wide text-slate-500 dark:text-slate-400">
-            Цвет
-          </span>
-          <button
-            v-for="color in SEAL_COLORS"
-            :key="color"
-            type="button"
-            class="h-6 w-6 rounded-md ring-1 ring-inset ring-slate-900/15 transition-transform hover:scale-110"
-            :class="template.color.toLowerCase() === color.toLowerCase() ? 'outline outline-2 outline-offset-1 outline-brand-500' : ''"
-            :style="{ backgroundColor: color }"
-            :title="color"
-            :data-testid="`seal-color-${color.replace('#', '')}`"
-            @click="template.color = color"
-          />
-          <div class="w-36">
-            <AppColorPicker
-              compact
-              :model-value="template.color"
-              @update:model-value="template.color = $event"
-              @pick-start="onPickStart"
-              @pick-end="onPickEnd"
-            />
-          </div>
-        </div>
-
-        <div class="space-y-1.5">
-          <p class="text-[11px] font-medium uppercase tracking-wide text-slate-500 dark:text-slate-400">
-            Образцы
-          </p>
-          <div class="flex flex-wrap gap-1.5">
-            <AppButton
-              v-for="preset in presets"
-              :key="preset.label"
-              size="sm"
-              variant="subtle"
-              @click="applyPreset(preset.build)"
-            >
-              {{ preset.label }}
-            </AppButton>
-          </div>
-        </div>
       </div>
 
       <!-- ======================= Настройки ======================= -->
@@ -1734,6 +1641,73 @@ function onPickEnd(color: string | null): void {
                 его можно двигать, растягивать и вращать.
               </p>
             </div>
+          </AppSection>
+        </div>
+
+        <!-- Образец: готовые шаблоны и картинка-подложка -->
+        <div v-show="tab === 'sample'" class="space-y-3" data-testid="seal-sample-tab">
+          <AppSection title="Образцы печати" icon="layers">
+            <div class="flex flex-wrap gap-1.5">
+              <AppButton
+                v-for="preset in presets"
+                :key="preset.label"
+                size="sm"
+                variant="subtle"
+                @click="applyPreset(preset.build)"
+              >
+                {{ preset.label }}
+              </AppButton>
+            </div>
+            <p class="text-[11px] text-slate-400">
+              Готовые шаблоны заменяют настройки печати целиком.
+            </p>
+          </AppSection>
+
+          <AppSection title="Образец печати" icon="image" data-testid="seal-reference-controls">
+            <div class="flex items-center justify-between gap-2">
+              <span class="text-[11px] text-slate-400">Картинка-подложка под оттиском</span>
+              <AppButton
+                size="xs"
+                variant="subtle"
+                icon="image"
+                data-testid="seal-reference-add"
+                @click="uploadReference"
+              >
+                {{ reference ? 'Заменить' : 'Из файла' }}
+              </AppButton>
+            </div>
+            <template v-if="reference">
+              <div class="flex flex-wrap items-center gap-1.5">
+                <AppToggle
+                  :model-value="reference.visible"
+                  label="Показывать образец"
+                  data-testid="seal-reference-visible"
+                  @update:model-value="toggleReference"
+                />
+                <AppButton size="xs" variant="ghost" icon="trash" data-testid="seal-reference-remove" @click="removeReference">
+                  Убрать
+                </AppButton>
+              </div>
+              <AppSlider
+                :model-value="reference.opacity"
+                label="Прозрачность образца"
+                unit=""
+                :min="0.05"
+                :max="1"
+                :step="0.05"
+                :precision="2"
+                data-testid="seal-reference-opacity"
+                @update:model-value="setReferenceOpacity(Number($event))"
+              />
+              <p class="text-[11px] text-slate-400">
+                Образец лежит под оттиском: тяните за видимую часть, растягивайте за углы
+                (Shift — пропорции), вращайте за круглый маркер. На печать и PDF он не влияет.
+              </p>
+            </template>
+            <p v-else class="text-[11px] text-slate-400">
+              Загрузите фото или скан готовой печати — он ляжет под превью, чтобы удобно было
+              повторить оттиск. Образец не входит в печать.
+            </p>
           </AppSection>
         </div>
 

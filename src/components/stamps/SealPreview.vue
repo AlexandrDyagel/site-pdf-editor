@@ -94,6 +94,15 @@ const layout = computed(() =>
 /** Панорама превью: сдвиг в экранных пикселях. */
 const pan = ref({ x: 0, y: 0 });
 const spacePressed = ref(false);
+const panning = ref(false);
+/** Курсор наведения на выбранное кольцо: две стрелки, как у маркеров. */
+const ringHover = ref<'' | 'ew-resize' | 'ns-resize'>('');
+const cursorStyle = computed(() => {
+  if (panning.value) return 'grabbing';
+  if (spacePressed.value) return 'grab';
+  if (ringHover.value) return ringHover.value;
+  return 'default';
+});
 
 /** Контекстное меню: текст, кольцо или пустое место. */
 type MenuState =
@@ -149,7 +158,7 @@ function draw(): void {
     }
   }
 
-  // Выбранный логотип — пунктирная рамка (с поворотом).
+  // Выбранный логотип — рамка как у картинки на холсте (сплошная синяя).
   if (props.selectedLogo && layout.value.logo) {
     const logo = layout.value.logo;
     const cx = logo.x + logo.width / 2;
@@ -157,8 +166,7 @@ function draw(): void {
     context.save();
     context.translate(cx, cy);
     context.rotate(((logo.rotation ?? 0) * Math.PI) / 180);
-    context.setLineDash([3, 2]);
-    context.lineWidth = 1;
+    context.lineWidth = 1.2;
     context.strokeStyle = '#2f6bff';
     context.strokeRect(-logo.width / 2, -logo.height / 2, logo.width, logo.height);
     context.restore();
@@ -406,6 +414,7 @@ function radiusLimit(lineId: string): number {
 
 function startDrag(event: PointerEvent, state: DragState): void {
   dragState = state;
+  if (state.kind === 'pan') panning.value = true;
   window.addEventListener('pointermove', onWindowMove);
   window.addEventListener('pointerup', onWindowUp, { once: true });
   event.preventDefault();
@@ -534,10 +543,74 @@ function onWindowMove(event: PointerEvent): void {
 
 function onWindowUp(): void {
   dragState = null;
+  panning.value = false;
   window.removeEventListener('pointermove', onWindowMove);
 }
 
 /* ======================== Клики, меню, двойной клик ======================== */
+
+/** Насколько точка «внутри» буквы: чем меньше, тем точнее попадание. */
+function lineInkScore(point: { x: number; y: number }): { lineId: string; score: number } | null {
+  const seal = layout.value.seal;
+  if (!seal) return null;
+  let best: { lineId: string; score: number } | null = null;
+  for (const ringLine of seal.ringLines) {
+    for (const char of ringLine.chars) {
+      const radians = (char.angle * Math.PI) / 180;
+      const cos = Math.cos(radians);
+      const sin = Math.sin(radians);
+      const glyphWidth = char.fontSize * 0.6;
+      const centerX = char.x + cos * (glyphWidth / 2) + sin * (char.fontSize * 0.35);
+      const centerY = char.y + sin * (glyphWidth / 2) - cos * (char.fontSize * 0.35);
+      const reach = Math.max(3, char.fontSize * 0.55);
+      const score = Math.hypot(point.x - centerX, point.y - centerY) - reach;
+      if (score <= 0 && (!best || score < best.score)) best = { lineId: ringLine.lineId, score };
+    }
+  }
+  return best;
+}
+
+/** Насколько точка «внутри» штриха кольца. */
+function ringInkScore(point: { x: number; y: number }): { ringIndex: number; score: number } | null {
+  const rings = layout.value.seal?.ink.rings ?? [];
+  let best: { ringIndex: number; score: number } | null = null;
+  for (let index = 0; index < rings.length; index += 1) {
+    const ring = rings[index];
+    const distance = Math.hypot(point.x - ring.cx, point.y - ring.cy);
+    // Учитываем реальную ширину штриха: попасть можно в любое кольцо,
+    // даже если рядом стоит текст.
+    const score = Math.abs(distance - ring.radius) - Math.max(1.2, ring.width / 2);
+    if (score <= 0 && (!best || score < best.score)) best = { ringIndex: index, score };
+  }
+  return best;
+}
+
+/** Кто из двух ближе к курсору — текст или кольцо. */
+function pickInk(point: { x: number; y: number }): { kind: 'line'; lineId: string } | { kind: 'ring'; ringIndex: number } | null {
+  const line = lineInkScore(point);
+  const ring = ringInkScore(point);
+  if (line && ring) return line.score <= ring.score ? { kind: 'line', lineId: line.lineId } : { kind: 'ring', ringIndex: ring.ringIndex };
+  if (line) return { kind: 'line', lineId: line.lineId };
+  if (ring) return { kind: 'ring', ringIndex: ring.ringIndex };
+  return null;
+}
+
+function onCanvasMove(event: PointerEvent): void {
+  if (props.selectedRingIndex === null) {
+    ringHover.value = '';
+    return;
+  }
+  const point = toSealPoint(event);
+  if (!point || hitRing(point) !== props.selectedRingIndex) {
+    ringHover.value = '';
+    return;
+  }
+  const cx = size.value / 2;
+  const cy = size.value / 2;
+  const dx = Math.abs(point.x - cx);
+  const dy = Math.abs(point.y - cy);
+  ringHover.value = dx >= dy ? 'ew-resize' : 'ns-resize';
+}
 
 function onCanvasDown(event: PointerEvent): void {
   // Средняя кнопка и пробел+ЛКМ — панорамирование, а не выделение.
@@ -564,25 +637,6 @@ function onCanvasDown(event: PointerEvent): void {
     return;
   }
 
-  // Кольца и образец не должны перебивать выбор текста: сначала буквы.
-  const lineId = hitRingLine(point);
-  if (lineId) {
-    emit('select-line', lineId);
-    const templateLine = props.template.seal?.lines.find((item) => item.id === lineId);
-    if (!templateLine) return;
-    startDrag(event, {
-      kind: 'line',
-      lineId,
-      pointerAngle: (Math.atan2(point.y - cy, point.x - cx) * 180) / Math.PI,
-      pointerRadius: Math.hypot(point.x - cx, point.y - cy),
-      startRadiusOffset: templateLine.radiusOffset,
-      startAngleOffset: templateLine.angleOffset,
-      maxRadiusOffset: radiusLimit(lineId),
-      moved: false,
-    });
-    return;
-  }
-
   if (hitLogo(point)) {
     emit('logo-select');
     startLogoMove(event, point);
@@ -604,10 +658,29 @@ function onCanvasDown(event: PointerEvent): void {
     return;
   }
 
-  const ringIndex = hitRing(point);
-  if (ringIndex !== null) {
-    emit('ring-select', ringIndex);
-    if (ringIndex > 0) startDrag(event, { kind: 'ring', ringIndex });
+  // Текст и кольцо сравниваем по точности попадания: можно выбрать и то,
+  // и другое, даже когда буквы стоят вплотную к штриху.
+  const ink = pickInk(point);
+  if (ink?.kind === 'line') {
+    const lineId = ink.lineId;
+    emit('select-line', lineId);
+    const templateLine = props.template.seal?.lines.find((item) => item.id === lineId);
+    if (!templateLine) return;
+    startDrag(event, {
+      kind: 'line',
+      lineId,
+      pointerAngle: (Math.atan2(point.y - cy, point.x - cx) * 180) / Math.PI,
+      pointerRadius: Math.hypot(point.x - cx, point.y - cy),
+      startRadiusOffset: templateLine.radiusOffset,
+      startAngleOffset: templateLine.angleOffset,
+      maxRadiusOffset: radiusLimit(lineId),
+      moved: false,
+    });
+    return;
+  }
+  if (ink?.kind === 'ring') {
+    emit('ring-select', ink.ringIndex);
+    if (ink.ringIndex > 0) startDrag(event, { kind: 'ring', ringIndex: ink.ringIndex });
     return;
   }
 
@@ -777,19 +850,18 @@ function onContextMenu(event: MouseEvent): void {
   if (!point || !element) return;
   const rect = element.getBoundingClientRect();
 
-  const lineId = hitRingLine(point);
-  if (lineId) {
-    emit('select-line', lineId);
-    menu.value = { kind: 'text', lineId, x: event.clientX - rect.left, y: event.clientY - rect.top };
+  const ink = pickInk(point);
+  if (ink?.kind === 'line') {
+    emit('select-line', ink.lineId);
+    menu.value = { kind: 'text', lineId: ink.lineId, x: event.clientX, y: event.clientY };
     return;
   }
-  const ringIndex = hitRing(point);
-  if (ringIndex !== null) {
-    emit('ring-select', ringIndex);
-    menu.value = { kind: 'ring', ringIndex, x: event.clientX - rect.left, y: event.clientY - rect.top };
+  if (ink?.kind === 'ring') {
+    emit('ring-select', ink.ringIndex);
+    menu.value = { kind: 'ring', ringIndex: ink.ringIndex, x: event.clientX, y: event.clientY };
     return;
   }
-  menu.value = { kind: 'empty', x: event.clientX - rect.left, y: event.clientY - rect.top };
+  menu.value = { kind: 'empty', x: event.clientX, y: event.clientY };
 }
 
 function closeMenu(): void {
@@ -840,9 +912,9 @@ function pickAdd(action: 'ring' | 'text' | 'center' | 'reference'): void {
 function onDoubleClick(event: MouseEvent): void {
   const point = toSealPoint(event);
   if (!point) return;
-  const lineId = hitRingLine(point);
-  if (lineId) {
-    emit('text-hit', lineId);
+  const ink = pickInk(point);
+  if (ink?.kind === 'line') {
+    emit('text-hit', ink.lineId);
     return;
   }
   const centerIndex = hitCenterLine(point);
@@ -947,8 +1019,10 @@ onBeforeUnmount(() => {
       <canvas
         ref="canvas"
         data-testid="seal-preview-canvas"
-        class="relative block cursor-default rounded-sm"
+        class="relative block rounded-sm"
+        :style="{ cursor: cursorStyle }"
         @pointerdown="onCanvasDown"
+        @pointermove="onCanvasMove"
         @dblclick="onDoubleClick"
         @contextmenu="onContextMenu"
         @auxclick.prevent
@@ -989,7 +1063,8 @@ onBeforeUnmount(() => {
           :key="`logo-${point.corner}`"
           type="button"
           :data-testid="`seal-logo-handle-${point.corner}`"
-          class="absolute z-10 h-2.5 w-2.5 -translate-x-1/2 -translate-y-1/2 rounded-sm border border-white bg-brand-500 shadow"
+          class="absolute z-10 h-2 w-2 -translate-x-1/2 -translate-y-1/2 rounded-[1px] border-[1.5px] border-[#2f6bff] bg-white shadow-sm"
+          :class="point.corner === 'nw' || point.corner === 'se' ? 'cursor-nwse-resize' : 'cursor-nesw-resize'"
           :style="{ left: `${point.x}px`, top: `${point.y}px` }"
           title="Потяните, чтобы изменить размер (Shift — с сохранением пропорций)"
           @pointerdown="onLogoCornerDown"
@@ -998,7 +1073,7 @@ onBeforeUnmount(() => {
           v-if="logoRotatePoint"
           type="button"
           data-testid="seal-logo-rotate"
-          class="absolute z-10 flex h-[22px] w-[22px] -translate-x-1/2 -translate-y-1/2 items-center justify-center rounded-full border-2 border-white shadow"
+          class="absolute z-10 flex h-[22px] w-[22px] -translate-x-1/2 -translate-y-1/2 cursor-grab items-center justify-center rounded-full border-2 border-white shadow"
           style="background-color: #2f6bff"
           :style="{ left: `${logoRotatePoint.x}px`, top: `${logoRotatePoint.y}px` }"
           title="Повернуть логотип"
@@ -1018,7 +1093,8 @@ onBeforeUnmount(() => {
           :key="`ref-${point.corner}`"
           type="button"
           :data-testid="`seal-ref-handle-${point.corner}`"
-          class="absolute z-10 h-2.5 w-2.5 -translate-x-1/2 -translate-y-1/2 rounded-sm border border-white bg-brand-500 shadow"
+          class="absolute z-10 h-2 w-2 -translate-x-1/2 -translate-y-1/2 rounded-[1px] border-[1.5px] border-[#2f6bff] bg-white shadow-sm"
+          :class="point.corner === 'nw' || point.corner === 'se' ? 'cursor-nwse-resize' : 'cursor-nesw-resize'"
           :style="{ left: `${point.x}px`, top: `${point.y}px` }"
           title="Потяните, чтобы изменить размер (Shift — с сохранением пропорций)"
           @pointerdown="onReferenceCornerDown"
@@ -1027,7 +1103,7 @@ onBeforeUnmount(() => {
           v-if="referenceRotatePoint"
           type="button"
           data-testid="seal-ref-rotate"
-          class="absolute z-10 flex h-[22px] w-[22px] -translate-x-1/2 -translate-y-1/2 items-center justify-center rounded-full border-2 border-white shadow"
+          class="absolute z-10 flex h-[22px] w-[22px] -translate-x-1/2 -translate-y-1/2 cursor-grab items-center justify-center rounded-full border-2 border-white shadow"
           style="background-color: #2f6bff"
           :style="{ left: `${referenceRotatePoint.x}px`, top: `${referenceRotatePoint.y}px` }"
           title="Повернуть образец"
@@ -1041,13 +1117,14 @@ onBeforeUnmount(() => {
       </template>
     </div>
 
-    <!-- Контекстное меню -->
-    <div
-      v-if="menu"
-      data-testid="seal-text-menu"
-      class="absolute z-20 min-w-[190px] animate-fade-in rounded-lg border border-slate-200 bg-white py-1 shadow-floating dark:border-slate-700 dark:bg-slate-900"
-      :style="{ left: `${menu.x}px`, top: `${menu.y}px` }"
-    >
+    <!-- Контекстное меню (телепорт: не обрезается превью и его полосами) -->
+    <Teleport to="body">
+      <div
+        v-if="menu"
+        data-testid="seal-text-menu"
+        class="fixed z-[1000] min-w-[190px] animate-fade-in rounded-lg border border-slate-200 bg-white py-1 shadow-floating dark:border-slate-700 dark:bg-slate-900"
+        :style="{ left: `${menu.x}px`, top: `${menu.y}px` }"
+      >
       <template v-if="menu.kind === 'text'">
         <button
           type="button"
@@ -1110,6 +1187,7 @@ onBeforeUnmount(() => {
           Добавить образец…
         </button>
       </template>
-    </div>
+      </div>
+    </Teleport>
   </div>
 </template>
