@@ -1577,6 +1577,135 @@ try {
       logoMarkers.rotateCursor === 'cursor-grab',
     JSON.stringify(logoMarkers));
 
+  console.log('\n16. Несколько логотипов');
+
+  const multiLogo = await cdp.evaluate(`(async () => {
+    const t = window.__SEAL_DESIGNER__;
+    const make = (color) => {
+      const c = document.createElement('canvas');
+      c.width = 90; c.height = 90;
+      const x = c.getContext('2d');
+      x.fillStyle = color; x.fillRect(0, 0, 90, 90);
+      x.fillStyle = '#fff'; x.font = 'bold 34px Arial'; x.textAlign = 'center';
+      x.fillText('Л', 45, 60);
+      return c.toDataURL('image/png');
+    };
+    t.logos = [
+      { id: 'l1', src: make('#1d4ed8'), width: 26, height: 26, offsetX: -12, offsetY: 0, opacity: 1, rotation: 0 },
+      { id: 'l2', src: make('#b91c1c'), width: 26, height: 26, offsetX: 12, offsetY: 0, opacity: 1, rotation: 0 },
+    ];
+    t.logo = t.logos[0];
+    Array.from(document.querySelectorAll('[data-testid=seal-designer] [role=tab]'))
+      .find((n) => n.textContent.trim() === 'Логотип')?.click();
+    await new Promise((r) => setTimeout(r, 700));
+    const cards = document.querySelectorAll('[data-testid^=seal-logo-card-]').length;
+    const logos = window.__sealLayout().logos.length;
+    const second = window.__sealLayout().logos[1];
+    const canvas = document.querySelector('[data-testid=seal-preview-canvas]');
+    const rect = canvas.getBoundingClientRect();
+    const zoom = rect.width / t.width;
+    const center = {
+      x: rect.left + (second.x + second.width / 2) * zoom,
+      y: rect.top + (second.y + second.height / 2) * zoom,
+    };
+    canvas.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, clientX: center.x, clientY: center.y, button: 0, pointerId: 430 }));
+    canvas.dispatchEvent(new PointerEvent('pointerup', { bubbles: true, pointerId: 430 }));
+    await new Promise((r) => setTimeout(r, 400));
+    const activeCard = document.querySelector('[data-testid=seal-logo-card-1]')?.getAttribute('data-active');
+    window.dispatchEvent(new PointerEvent('pointermove', { bubbles: true, clientX: center.x + 14, clientY: center.y + 8, pointerId: 430 }));
+    const beforeOffsets = t.logos.map((logo) => ({ x: logo.offsetX, y: logo.offsetY }));
+    canvas.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, clientX: center.x, clientY: center.y, button: 0, pointerId: 431 }));
+    window.dispatchEvent(new PointerEvent('pointermove', { bubbles: true, clientX: center.x + 14, clientY: center.y + 8, pointerId: 431 }));
+    window.dispatchEvent(new PointerEvent('pointerup', { bubbles: true, pointerId: 431 }));
+    await new Promise((r) => setTimeout(r, 400));
+    return {
+      cards,
+      logos,
+      activeCard,
+      handles: document.querySelectorAll('[data-testid^=seal-logo-handle-]').length,
+      beforeOffsets,
+      afterOffsets: t.logos.map((logo) => ({ x: logo.offsetX, y: logo.offsetY })),
+    };
+  })()`);
+  check('можно добавить несколько логотипов',
+    multiLogo.cards === 2 && multiLogo.logos === 2, JSON.stringify(multiLogo));
+  check('второй логотип выбирается и двигается отдельно',
+    multiLogo.activeCard === 'true' && multiLogo.handles === 4 &&
+      Math.abs(multiLogo.afterOffsets[1].x - multiLogo.beforeOffsets[1].x) > 0.3 &&
+      Math.abs(multiLogo.afterOffsets[0].x - multiLogo.beforeOffsets[0].x) < 0.01,
+    JSON.stringify(multiLogo));
+
+  const multiLogoRemove = await cdp.evaluate(`(async () => {
+    document.querySelector('[data-testid=seal-logo-remove-1]')?.click();
+    await new Promise((r) => setTimeout(r, 500));
+    const t = window.__SEAL_DESIGNER__;
+    return { logos: t.logos.length, first: Boolean(t.logo), cards: document.querySelectorAll('[data-testid^=seal-logo-card-]').length };
+  })()`);
+  check('логотип удаляется по одному', multiLogoRemove.logos === 1 && multiLogoRemove.cards === 1 && multiLogoRemove.first,
+    JSON.stringify(multiLogoRemove));
+
+  console.log('\n17. Множественное выделение и группа');
+
+  const marquee = await cdp.evaluate(`(async () => {
+    const t = window.__SEAL_DESIGNER__;
+    // Сбрасываем одиночный фокус.
+    const canvas = document.querySelector('[data-testid=seal-preview-canvas]');
+    const rect = canvas.getBoundingClientRect();
+    const start = { x: rect.left + 5, y: rect.top + 5 };
+    const end = { x: rect.right - 5, y: rect.bottom - 5 };
+    canvas.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, clientX: start.x, clientY: start.y, button: 0, pointerId: 501 }));
+    window.dispatchEvent(new PointerEvent('pointermove', { bubbles: true, clientX: end.x, clientY: end.y, pointerId: 501 }));
+    window.dispatchEvent(new PointerEvent('pointerup', { bubbles: true, clientX: end.x, clientY: end.y, pointerId: 501 }));
+    await new Promise((r) => setTimeout(r, 500));
+    const card = document.querySelector('[data-testid=seal-multi-card]');
+    return {
+      card: Boolean(card),
+      text: card?.textContent?.trim() ?? '',
+      lines: window.__sealLayout().seal.ringLines.length,
+    };
+  })()`);
+  check('рамкой выделяются сразу несколько объектов', marquee.card === true, JSON.stringify(marquee));
+
+  const groupMove = await cdp.evaluate(`(async () => {
+    const t = window.__SEAL_DESIGNER__;
+    const before = window.__sealLayout();
+    const first = before.seal.ringLines[0];
+    const glyph = window.__sealGlyph(0);
+    const canvas = document.querySelector('[data-testid=seal-preview-canvas]');
+    canvas.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, clientX: glyph.x, clientY: glyph.y, button: 0, pointerId: 502 }));
+    window.dispatchEvent(new PointerEvent('pointermove', { bubbles: true, clientX: glyph.x + 18, clientY: glyph.y + 10, pointerId: 502 }));
+    window.dispatchEvent(new PointerEvent('pointerup', { bubbles: true, pointerId: 502 }));
+    await new Promise((r) => setTimeout(r, 500));
+    const after = window.__sealLayout();
+    const moved = after.seal.ringLines[0];
+    return {
+      lineAngle: t.seal.lines[0]?.angleOffset,
+      before: { a: first.centerAngle, r: first.radius },
+      after: { a: moved.centerAngle, r: moved.radius },
+      multiStill: Boolean(document.querySelector('[data-testid=seal-multi-card]')),
+    };
+  })()`);
+  check('группу можно двигать мышью',
+    groupMove.multiStill === true &&
+      (Math.abs(groupMove.after.a - groupMove.before.a) > 0.5 ||
+        Math.abs(groupMove.after.r - groupMove.before.r) > 0.3),
+    JSON.stringify(groupMove));
+
+  const groupDelete = await cdp.evaluate(`(async () => {
+    const t = window.__SEAL_DESIGNER__;
+    const before = t.seal.lines.length + t.lines.length;
+    document.querySelector('[data-testid=seal-multi-delete]')?.click();
+    await new Promise((r) => setTimeout(r, 600));
+    return {
+      before,
+      after: t.seal.lines.length + t.lines.length,
+      card: Boolean(document.querySelector('[data-testid=seal-multi-card]')),
+    };
+  })()`);
+  check('группу можно удалить одной кнопкой',
+    groupDelete.after < groupDelete.before && groupDelete.card === false,
+    JSON.stringify(groupDelete));
+
   await cdp.evaluate(`window.__PDF_EDITOR__.ui.closeAllModals(); 'ok'`);
   await sleep(600);
 

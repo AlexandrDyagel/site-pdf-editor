@@ -21,7 +21,7 @@
  *    панорамирует превью.
  */
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue';
-import type { StampTemplate } from '@/types';
+import type { SealMultiSelection, StampTemplate } from '@/types';
 import { computeStampLayout, paintStampLayout } from '@/services/stampRenderService';
 import { sealArcMinSpan } from '@/services/sealRenderService';
 import type { SealReference } from '@/services/sealDraft';
@@ -37,8 +37,10 @@ const props = withDefaults(
     selectedCenterIndex?: number | null;
     selectedRingIndex?: number | null;
     selectedLogo?: boolean;
+    selectedLogoIndex?: number | null;
     selectedReference?: boolean;
     reference?: SealReference | null;
+    selection?: SealMultiSelection | null;
   }>(),
   {
     handles: true,
@@ -46,8 +48,10 @@ const props = withDefaults(
     selectedCenterIndex: null,
     selectedRingIndex: null,
     selectedLogo: false,
+    selectedLogoIndex: null,
     selectedReference: false,
     reference: null,
+    selection: null,
   },
 );
 
@@ -64,10 +68,10 @@ const emit = defineEmits<{
   'ring-select': [ringIndex: number];
   'ring-resize': [ringIndex: number, radius: number];
   'ring-delete': [ringIndex: number];
-  'logo-select': [];
-  'logo-move': [offsetX: number, offsetY: number];
-  'logo-resize': [width: number, height: number];
-  'logo-rotate': [rotation: number];
+  'logo-select': [logoIndex: number];
+  'logo-move': [logoIndex: number, offsetX: number, offsetY: number];
+  'logo-resize': [logoIndex: number, width: number, height: number];
+  'logo-rotate': [logoIndex: number, rotation: number];
   'reference-select': [];
   'reference-move': [x: number, y: number];
   'reference-resize': [width: number, height: number];
@@ -77,13 +81,28 @@ const emit = defineEmits<{
   'add-center-text': [];
   'add-reference': [];
   'zoom-change': [factor: number];
+  'selection-change': [selection: SealMultiSelection | null];
+  'group-move': [dx: number, dy: number];
   'edit-line': [lineId: string];
   'delete-line': [lineId: string];
 }>();
 
 const fonts = useFontsStore();
 const canvas = ref<HTMLCanvasElement | null>(null);
-const logoImage = ref<HTMLImageElement | null>(null);
+const logoImages = ref<(HTMLImageElement | null)[]>([]);
+const logoSources = computed(() =>
+  Array.isArray(props.template.logos) && props.template.logos.length
+    ? props.template.logos
+    : props.template.logo
+      ? [props.template.logo]
+      : [],
+);
+const logos = computed(() => layout.value.logos);
+const selectedLogoGeometry = computed(() => {
+  const index = props.selectedLogoIndex ?? (props.selectedLogo ? 0 : null);
+  if (index === null) return null;
+  return layout.value.logos[index] ?? null;
+});
 
 const size = computed(() => Math.max(24, Math.min(props.template.width, props.template.height)));
 const displaySize = computed(() => Math.round(size.value * props.zoom * 100) / 100);
@@ -95,6 +114,8 @@ const layout = computed(() =>
 const pan = ref({ x: 0, y: 0 });
 const spacePressed = ref(false);
 const panning = ref(false);
+/** Рамка выделения в координатах печати. */
+const marquee = ref<{ x1: number; y1: number; x2: number; y2: number } | null>(null);
 /** Курсор наведения на выбранное кольцо: две стрелки, как у маркеров. */
 const ringHover = ref<'' | 'ew-resize' | 'ns-resize'>('');
 const cursorStyle = computed(() => {
@@ -114,16 +135,26 @@ const menu = ref<MenuState | null>(null);
 /* ======================== Отрисовка ======================== */
 
 async function ensureLogo(): Promise<void> {
-  const src = props.template.logo?.src;
-  if (!src) {
-    logoImage.value = null;
+  const sources = (
+    Array.isArray(props.template.logos) && props.template.logos.length
+      ? props.template.logos
+      : props.template.logo
+        ? [props.template.logo]
+        : []
+  ).filter((item) => Boolean(item.src));
+  if (sources.length === 0) {
+    logoImages.value = [];
     return;
   }
-  try {
-    logoImage.value = await loadImage(src);
-  } catch {
-    logoImage.value = null;
-  }
+  logoImages.value = await Promise.all(
+    sources.map(async (logo) => {
+      try {
+        return await loadImage(logo.src);
+      } catch {
+        return null;
+      }
+    }),
+  );
 }
 
 function draw(): void {
@@ -141,7 +172,7 @@ function draw(): void {
   context.clearRect(0, 0, element.width, element.height);
   const scale = (cssSize / size.value) * ratio;
   context.scale(scale, scale);
-  paintStampLayout(context, layout.value, { logoImage: logoImage.value });
+  paintStampLayout(context, layout.value, { logoImages: logoImages.value });
 
   // Выбранное кольцо — очень мелкий пунктир поверх оттиска.
   if (props.selectedRingIndex !== null && layout.value.seal) {
@@ -159,8 +190,8 @@ function draw(): void {
   }
 
   // Выбранный логотип — рамка как у картинки на холсте (сплошная синяя).
-  if (props.selectedLogo && layout.value.logo) {
-    const logo = layout.value.logo;
+  if (selectedLogoGeometry.value) {
+    const logo = selectedLogoGeometry.value;
     const cx = logo.x + logo.width / 2;
     const cy = logo.y + logo.height / 2;
     context.save();
@@ -184,6 +215,73 @@ function draw(): void {
     context.strokeRect(-reference.width / 2, -reference.height / 2, reference.width, reference.height);
     context.restore();
   }
+
+  // Групповое выделение и рамка маркизы.
+  if (props.selection) {
+    context.save();
+    context.setLineDash([3, 2]);
+    context.lineWidth = 1;
+    context.strokeStyle = '#2f6bff';
+    for (const lineId of props.selection.lines) {
+      const line = layout.value.seal?.ringLines.find((item) => item.lineId === lineId);
+      if (line) {
+        context.beginPath();
+        context.arc(line.cx, line.cy, line.radius, 0, Math.PI * 2);
+        context.stroke();
+      }
+    }
+    for (const index of props.selection.centers) {
+      const line = layout.value.lines[index];
+      if (line) {
+        context.strokeRect(
+          line.x - 1,
+          line.baseline - line.fontSize,
+          line.width + 2,
+          line.fontSize * 1.3,
+        );
+      }
+    }
+    for (const index of props.selection.logos) {
+      const logo = layout.value.logos[index];
+      if (!logo) continue;
+      context.save();
+      context.translate(logo.x + logo.width / 2, logo.y + logo.height / 2);
+      context.rotate(((logo.rotation ?? 0) * Math.PI) / 180);
+      context.strokeRect(-logo.width / 2, -logo.height / 2, logo.width, logo.height);
+      context.restore();
+    }
+    for (const index of props.selection.rings) {
+      const ring = layout.value.seal?.ink.rings[index];
+      if (ring) {
+        context.beginPath();
+        context.arc(ring.cx, ring.cy, ring.radius, 0, Math.PI * 2);
+        context.stroke();
+      }
+    }
+    if (marquee.value) {
+      const rect = marquee.value;
+      context.strokeRect(
+        Math.min(rect.x1, rect.x2),
+        Math.min(rect.y1, rect.y2),
+        Math.abs(rect.x2 - rect.x1),
+        Math.abs(rect.y2 - rect.y1),
+      );
+    }
+    context.restore();
+  } else if (marquee.value) {
+    const rect = marquee.value;
+    context.save();
+    context.setLineDash([3, 2]);
+    context.lineWidth = 1;
+    context.strokeStyle = '#2f6bff';
+    context.strokeRect(
+      Math.min(rect.x1, rect.x2),
+      Math.min(rect.y1, rect.y2),
+      Math.abs(rect.x2 - rect.x1),
+      Math.abs(rect.y2 - rect.y1),
+    );
+    context.restore();
+  }
 }
 
 watch(() => props.template, async () => {
@@ -192,8 +290,11 @@ watch(() => props.template, async () => {
 }, { deep: true });
 watch(() => props.zoom, () => draw());
 watch(() => props.selectedRingIndex, () => draw());
+watch(() => props.selectedLogoIndex, () => draw());
 watch(() => props.selectedLogo, () => draw());
 watch(() => props.selectedReference, () => draw());
+watch(() => props.selection, () => draw(), { deep: true });
+watch(marquee, () => draw(), { deep: true });
 watch(() => props.reference, () => draw(), { deep: true });
 watch(() => fonts.loadedOnce, () => draw());
 
@@ -254,10 +355,24 @@ function hitCenterLine(point: { x: number; y: number }): number | null {
   return null;
 }
 
-function hitLogo(point: { x: number; y: number }): boolean {
-  const logo = layout.value.logo;
-  if (!logo) return false;
-  return pointInRotatedRect(point, logo.x + logo.width / 2, logo.y + logo.height / 2, logo.width, logo.height, logo.rotation ?? 0);
+function hitLogo(point: { x: number; y: number }): number | null {
+  // Верхний (последний добавленный) логотип получает клик первым.
+  for (let index = layout.value.logos.length - 1; index >= 0; index -= 1) {
+    const logo = layout.value.logos[index];
+    if (
+      pointInRotatedRect(
+        point,
+        logo.x + logo.width / 2,
+        logo.y + logo.height / 2,
+        logo.width,
+        logo.height,
+        logo.rotation ?? 0,
+      )
+    ) {
+      return index;
+    }
+  }
+  return null;
 }
 
 function pointInRotatedRect(
@@ -322,13 +437,13 @@ const centerHandlePoints = computed(() => {
 });
 
 const logoHandlePoints = computed(() => {
-  const logo = layout.value.logo;
+  const logo = selectedLogoGeometry.value;
   if (!logo) return [] as { corner: 'nw' | 'ne' | 'se' | 'sw'; x: number; y: number }[];
   return rotatedCorners(logo.x + logo.width / 2, logo.y + logo.height / 2, logo.width, logo.height, logo.rotation ?? 0);
 });
 
 const logoRotatePoint = computed(() => {
-  const logo = layout.value.logo;
+  const logo = selectedLogoGeometry.value;
   if (!logo) return null;
   return rotateHandlePoint(logo.x + logo.width / 2, logo.y + logo.height / 2, logo.width, logo.height, logo.rotation ?? 0);
 });
@@ -393,12 +508,13 @@ type DragState =
   | { kind: 'ring'; ringIndex: number }
   | { kind: 'center-move'; index: number; startX: number; startY: number; startOffsetX: number; startOffsetY: number }
   | { kind: 'center-stretch'; index: number; centerX: number }
-  | { kind: 'logo-move'; startX: number; startY: number; startOffsetX: number; startOffsetY: number }
-  | { kind: 'logo-resize'; centerX: number; centerY: number; startWidth: number; startHeight: number }
-  | { kind: 'logo-rotate'; centerX: number; centerY: number; startPointerAngle: number; startRotation: number }
+  | { kind: 'logo-move'; logoIndex: number; startX: number; startY: number; startOffsetX: number; startOffsetY: number }
+  | { kind: 'logo-resize'; logoIndex: number; centerX: number; centerY: number; startWidth: number; startHeight: number }
+  | { kind: 'logo-rotate'; logoIndex: number; centerX: number; centerY: number; startPointerAngle: number; startRotation: number }
   | { kind: 'reference-move'; startX: number; startY: number; startCenterX: number; startCenterY: number }
   | { kind: 'reference-resize'; centerX: number; centerY: number; startWidth: number; startHeight: number }
   | { kind: 'reference-rotate'; centerX: number; centerY: number; startPointerAngle: number; startRotation: number }
+  | { kind: 'group'; lastX: number; lastY: number }
   | { kind: 'pan'; startX: number; startY: number; startPanX: number; startPanY: number };
 
 let dragState: DragState | null = null;
@@ -434,6 +550,13 @@ function onWindowMove(event: PointerEvent): void {
   if (!point) return;
   const cx = size.value / 2;
   const cy = size.value / 2;
+
+  if (state.kind === 'group') {
+    emit('group-move', point.x - state.lastX, point.y - state.lastY);
+    state.lastX = point.x;
+    state.lastY = point.y;
+    return;
+  }
 
   if (state.kind === 'line') {
     const angle = (Math.atan2(point.y - cy, point.x - cx) * 180) / Math.PI;
@@ -474,6 +597,7 @@ function onWindowMove(event: PointerEvent): void {
   if (state.kind === 'logo-move') {
     emit(
       'logo-move',
+      state.logoIndex,
       Math.round((state.startOffsetX + point.x - state.startX) * 10) / 10,
       Math.round((state.startOffsetY + point.y - state.startY) * 10) / 10,
     );
@@ -481,7 +605,7 @@ function onWindowMove(event: PointerEvent): void {
   }
 
   if (state.kind === 'logo-resize') {
-    const logo = layout.value.logo;
+    const logo = layout.value.logos[state.logoIndex];
     if (!logo) return;
     const radians = (-(logo.rotation ?? 0) * Math.PI) / 180;
     const dx = point.x - state.centerX;
@@ -495,7 +619,7 @@ function onWindowMove(event: PointerEvent): void {
       if (width / height > baseRatio) height = width / baseRatio;
       else width = height * baseRatio;
     }
-    emit('logo-resize', Math.round(width * 10) / 10, Math.round(height * 10) / 10);
+    emit('logo-resize', state.logoIndex, Math.round(width * 10) / 10, Math.round(height * 10) / 10);
     return;
   }
 
@@ -503,7 +627,7 @@ function onWindowMove(event: PointerEvent): void {
     const angle = (Math.atan2(point.y - state.centerY, point.x - state.centerX) * 180) / Math.PI;
     let delta = angle - state.startPointerAngle;
     delta = ((delta % 360) + 540) % 360 - 180;
-    emit('logo-rotate', Math.round(state.startRotation + delta));
+    emit('logo-rotate', state.logoIndex, Math.round(state.startRotation + delta));
     return;
   }
 
@@ -612,6 +736,174 @@ function onCanvasMove(event: PointerEvent): void {
   ringHover.value = dx >= dy ? 'ew-resize' : 'ns-resize';
 }
 
+type Target =
+  | { kind: 'line'; key: string }
+  | { kind: 'center'; key: number }
+  | { kind: 'ring'; key: number }
+  | { kind: 'logo'; key: number };
+
+function emptySelection(): SealMultiSelection {
+  return { lines: [], centers: [], rings: [], logos: [] };
+}
+
+function selectionCount(selection: SealMultiSelection | null): number {
+  if (!selection) return 0;
+  return selection.lines.length + selection.centers.length + selection.rings.length + selection.logos.length;
+}
+
+function selectionIncludes(selection: SealMultiSelection | null, target: Target): boolean {
+  if (!selection) return false;
+  if (target.kind === 'line') return selection.lines.includes(target.key);
+  if (target.kind === 'center') return selection.centers.includes(target.key);
+  if (target.kind === 'ring') return selection.rings.includes(target.key);
+  return selection.logos.includes(target.key);
+}
+
+/** Все объекты под точкой — для Shift-клика и группового перетаскивания. */
+function hitTarget(point: { x: number; y: number }): Target | null {
+  const logoIndex = hitLogo(point);
+  if (logoIndex !== null) return { kind: 'logo', key: logoIndex };
+  const centerIndex = hitCenterLine(point);
+  if (centerIndex !== null) return { kind: 'center', key: centerIndex };
+  const ink = pickInk(point);
+  if (ink?.kind === 'line') return { kind: 'line', key: ink.lineId };
+  const ringIndex = hitRing(point);
+  if (ringIndex !== null) return { kind: 'ring', key: ringIndex };
+  return null;
+}
+
+function withTargetSelection(
+  base: SealMultiSelection | null,
+  target: Target,
+  subtract: boolean,
+): SealMultiSelection | null {
+  const selection = base
+    ? {
+        lines: [...base.lines],
+        centers: [...base.centers],
+        rings: [...base.rings],
+        logos: [...base.logos],
+      }
+    : emptySelection();
+  const toggle = <T extends string | number>(list: T[], key: T): void => {
+    const index = list.findIndex((value) => value === key);
+    if (index >= 0) list.splice(index, 1);
+    else if (!subtract) list.push(key);
+  };
+  if (target.kind === 'line') toggle(selection.lines, target.key);
+  else if (target.kind === 'center') toggle(selection.centers, target.key);
+  else if (target.kind === 'ring') toggle(selection.rings, target.key);
+  else toggle(selection.logos, target.key);
+  return selectionCount(selection) > 0 ? selection : null;
+}
+
+/* --- маркиза --- */
+
+interface MarqueeState {
+  start: { x: number; y: number };
+  additive: boolean;
+}
+let marqueeState: MarqueeState | null = null;
+
+function startMarquee(event: PointerEvent, point: { x: number; y: number }): void {
+  marqueeState = { start: point, additive: event.shiftKey };
+  marquee.value = { x1: point.x, y1: point.y, x2: point.x, y2: point.y };
+  emit('selection-change', null);
+  window.addEventListener('pointermove', onMarqueeMove);
+  window.addEventListener('pointerup', onMarqueeUp, { once: true });
+  event.preventDefault();
+}
+
+function onMarqueeMove(event: PointerEvent): void {
+  if (!marqueeState) return;
+  const point = toSealPoint(event);
+  if (!point) return;
+  marquee.value = {
+    x1: marqueeState.start.x,
+    y1: marqueeState.start.y,
+    x2: point.x,
+    y2: point.y,
+  };
+}
+
+function onMarqueeUp(event: PointerEvent): void {
+  window.removeEventListener('pointermove', onMarqueeMove);
+  const state = marqueeState;
+  marqueeState = null;
+  const rect = marquee.value;
+  marquee.value = null;
+  if (!state || !rect) return;
+  const width = Math.abs(rect.x2 - rect.x1);
+  const height = Math.abs(rect.y2 - rect.y1);
+  if (width < 2 && height < 2) {
+    emit('clear-selection');
+    return;
+  }
+  const x1 = Math.min(rect.x1, rect.x2);
+  const x2 = Math.max(rect.x1, rect.x2);
+  const y1 = Math.min(rect.y1, rect.y2);
+  const y2 = Math.max(rect.y1, rect.y2);
+  const pointInside = (x: number, y: number): boolean => x >= x1 && x <= x2 && y >= y1 && y <= y2;
+
+  const selection = emptySelection();
+  for (const line of layout.value.seal?.ringLines ?? []) {
+    if (line.chars.some((char) => pointInside(char.x, char.y))) selection.lines.push(line.lineId);
+  }
+  layout.value.lines.forEach((line, index) => {
+    const inside =
+      line.x <= x2 &&
+      line.x + line.width >= x1 &&
+      line.baseline - line.fontSize <= y2 &&
+      line.baseline + line.fontSize * 0.3 >= y1;
+    if (inside) selection.centers.push(index);
+  });
+  layout.value.logos.forEach((logo, index) => {
+    const cx = logo.x + logo.width / 2;
+    const cy = logo.y + logo.height / 2;
+    const corners = rotatedCorners(cx, cy, logo.width, logo.height, logo.rotation ?? 0).map((item) => ({
+      x: item.x / props.zoom,
+      y: item.y / props.zoom,
+    }));
+    if (corners.some((corner) => pointInside(corner.x, corner.y)) || pointInside(cx, cy)) {
+      selection.logos.push(index);
+    }
+  });
+  for (const [index, ring] of (layout.value.seal?.ink.rings ?? []).entries()) {
+    let intersects = false;
+    for (let step = 0; step < 32; step += 1) {
+      const angle = (step / 32) * Math.PI * 2;
+      if (pointInside(ring.cx + Math.cos(angle) * ring.radius, ring.cy + Math.sin(angle) * ring.radius)) {
+        intersects = true;
+        break;
+      }
+    }
+    if (intersects) selection.rings.push(index);
+  }
+
+  const merged = state.additive ? mergeSelections(props.selection, selection) : selection;
+  emit('selection-change', selectionCount(merged) > 0 ? merged : null);
+}
+
+function mergeSelections(
+  base: SealMultiSelection | null,
+  extra: SealMultiSelection,
+): SealMultiSelection {
+  const merged = base
+    ? {
+        lines: [...base.lines],
+        centers: [...base.centers],
+        rings: [...base.rings],
+        logos: [...base.logos],
+      }
+    : emptySelection();
+  for (const key of extra.lines) if (!merged.lines.includes(key)) merged.lines.push(key);
+  for (const key of extra.centers) if (!merged.centers.includes(key)) merged.centers.push(key);
+  for (const key of extra.rings) if (!merged.rings.includes(key)) merged.rings.push(key);
+  for (const key of extra.logos) if (!merged.logos.includes(key)) merged.logos.push(key);
+  return merged;
+}
+
+
 function onCanvasDown(event: PointerEvent): void {
   // Средняя кнопка и пробел+ЛКМ — панорамирование, а не выделение.
   if (event.button === 1 || (event.button === 0 && spacePressed.value)) {
@@ -631,15 +923,41 @@ function onCanvasDown(event: PointerEvent): void {
   const cx = size.value / 2;
   const cy = size.value / 2;
 
-  // Выбранный логотип тянется первым — он может лежать поверх текста.
-  if (props.selectedLogo && hitLogo(point)) {
-    startLogoMove(event, point);
+  // Shift+клик — добавить/убрать объект из группы.
+  const target = hitTarget(point);
+  if (event.shiftKey && target) {
+    emit(
+      'selection-change',
+      withTargetSelection(props.selection, target, selectionIncludes(props.selection, target)),
+    );
     return;
   }
 
-  if (hitLogo(point)) {
-    emit('logo-select');
-    startLogoMove(event, point);
+  // Тянем уже выделенную группу.
+  if (target && selectionCount(props.selection) > 1 && selectionIncludes(props.selection, target)) {
+    startDrag(event, { kind: 'group', lastX: point.x, lastY: point.y });
+    return;
+  }
+
+  // Пустое место — рамка выделения. Образец под оттиском остаётся
+  // обычным объектом: клик по нему выбирает его, а не начинает маркизу.
+  if (!target) {
+    const onReference = Boolean(props.reference?.visible && hitReference(point));
+    if (!onReference) {
+      startMarquee(event, point);
+      return;
+    }
+  }
+
+  // Логотипы лежат поверх текста: клик по любому выбирает именно его.
+  const logoHit = hitLogo(point);
+  if (logoHit !== null && logoHit === (props.selectedLogoIndex ?? -1)) {
+    startLogoMove(event, point, logoHit);
+    return;
+  }
+  if (logoHit !== null) {
+    emit('logo-select', logoHit);
+    startLogoMove(event, point, logoHit);
     return;
   }
 
@@ -701,11 +1019,12 @@ function onCanvasDown(event: PointerEvent): void {
   emit('clear-selection');
 }
 
-function startLogoMove(event: PointerEvent, point: { x: number; y: number }): void {
-  const logo = props.template.logo;
+function startLogoMove(event: PointerEvent, point: { x: number; y: number }, logoIndex: number): void {
+  const logo = logoSources.value[logoIndex];
   if (!logo) return;
   startDrag(event, {
     kind: 'logo-move',
+    logoIndex,
     startX: point.x,
     startY: point.y,
     startOffsetX: logo.offsetX,
@@ -784,10 +1103,12 @@ function onCenterHandleDown(event: PointerEvent, index: number): void {
 function onLogoCornerDown(event: PointerEvent): void {
   event.preventDefault();
   event.stopPropagation();
-  const logo = layout.value.logo;
+  const index = props.selectedLogoIndex ?? 0;
+  const logo = layout.value.logos[index];
   if (!logo) return;
   startDrag(event, {
     kind: 'logo-resize',
+    logoIndex: index,
     centerX: logo.x + logo.width / 2,
     centerY: logo.y + logo.height / 2,
     startWidth: logo.width,
@@ -798,13 +1119,15 @@ function onLogoCornerDown(event: PointerEvent): void {
 function onLogoRotateDown(event: PointerEvent): void {
   event.preventDefault();
   event.stopPropagation();
-  const logo = layout.value.logo;
+  const index = props.selectedLogoIndex ?? 0;
+  const logo = layout.value.logos[index];
   const point = toSealPoint(event);
   if (!logo || !point) return;
   const centerX = logo.x + logo.width / 2;
   const centerY = logo.y + logo.height / 2;
   startDrag(event, {
     kind: 'logo-rotate',
+    logoIndex: index,
     centerX,
     centerY,
     startPointerAngle: (Math.atan2(point.y - centerY, point.x - centerX) * 180) / Math.PI,
@@ -981,7 +1304,7 @@ onBeforeUnmount(() => {
   window.removeEventListener('keydown', onEscape);
   window.removeEventListener('keydown', onKeyDown);
   window.removeEventListener('keyup', onKeyUp);
-  logoImage.value = null;
+  logoImages.value = [];
 });
 </script>
 
@@ -1057,7 +1380,7 @@ onBeforeUnmount(() => {
       </template>
 
       <!-- Маркеры логотипа: углы + поворот -->
-      <template v-if="handles && selectedLogo && template.logo">
+      <template v-if="handles && selectedLogoIndex !== null && logos.length > 0">
         <button
           v-for="point in logoHandlePoints"
           :key="`logo-${point.corner}`"

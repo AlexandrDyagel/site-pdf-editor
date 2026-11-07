@@ -1077,6 +1077,22 @@ check(
   sealLayout.chars.length === sealLayout.seal!.ringLines.reduce((sum, item) => sum + item.chars.length, 0),
 );
 
+const twoLogoSeal = createSealTemplate({
+  logos: [
+    { id: 'a', src: 'data:image/png;base64,AA==', width: 20, height: 20, offsetX: -10, offsetY: 0, opacity: 1, rotation: 0 },
+    { id: 'b', src: 'data:image/png;base64,AA==', width: 20, height: 20, offsetX: 10, offsetY: 0, opacity: 0.5, rotation: 15 },
+  ],
+  logo: null,
+});
+const twoLogoParts = computeSealParts(twoLogoSeal, twoLogoSeal.width, twoLogoSeal.height, familyOf);
+check('несколько логотипов попадают в раскладку', twoLogoParts.logos.length === 2 && Boolean(twoLogoParts.logo),
+  String(twoLogoParts.logos.length));
+const twoLogoLayout = computeStampLayout(twoLogoSeal, familyOf);
+check('все логотипы есть в общем layout', twoLogoLayout.logos.length === 2);
+const twoLogoSvg = stampTemplateToSvg(twoLogoSeal, familyOf);
+check('SVG печати содержит оба логотипа', (twoLogoSvg.match(/<image /g) ?? []).length === 2,
+  String((twoLogoSvg.match(/<image /g) ?? []).length));
+
 const doubled = fitStampTemplate(sealTemplate, sealTemplate.width * 2, sealTemplate.height * 2);
 const doubledLayout = computeStampLayout(doubled, familyOf);
 check(

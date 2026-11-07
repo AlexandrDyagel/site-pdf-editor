@@ -38,6 +38,8 @@ export interface StampPdfContext {
   embedFont: (fontId: string, bold: boolean, italic: boolean) => Promise<PDFFont>;
   /** Уже встроенный логотип (PNG/JPEG). */
   logoImage?: PDFImage | null;
+  /** Все логотипы, если их несколько. */
+  logoImages?: (PDFImage | null)[];
   /** Переопределение первой строки текста. */
   textOverride?: string | null;
   /** Переопределение цвета. */
@@ -257,9 +259,11 @@ export async function drawStampToPdfPage(
     });
   }
 
-  // Логотип (может быть повёрнут вокруг своего центра).
-  if (layout.logo && ctx.logoImage) {
-    const logo = layout.logo;
+  // Логотипы (могут быть повёрнуты вокруг своего центра, их может быть несколько).
+  const logoImages = ctx.logoImages ?? (ctx.logoImage ? [ctx.logoImage] : []);
+  for (const [index, logo] of layout.logos.entries()) {
+    const image = logoImages[index] ?? null;
+    if (!image) continue;
     const center = ctx.toPdf(logo.x + logo.width / 2, logo.y + logo.height / 2);
     // Локальный поворот по часовой стрелке → в PDF (Y вверх) это минус угол.
     const rotationRad = ((ctx.rotate - (logo.rotation ?? 0)) * Math.PI) / 180;
@@ -269,7 +273,7 @@ export async function drawStampToPdfPage(
     // так, чтобы после поворота центр картинки попал в center.
     const anchorX = center.x - (cos * (logo.width / 2) - sin * (logo.height / 2));
     const anchorY = center.y - (sin * (logo.width / 2) + cos * (logo.height / 2));
-    page.drawImage(ctx.logoImage, {
+    page.drawImage(image, {
       x: anchorX,
       y: anchorY,
       width: logo.width,

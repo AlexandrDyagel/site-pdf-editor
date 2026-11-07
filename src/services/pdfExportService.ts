@@ -53,7 +53,7 @@ import { canvasToBlob } from '@/utils/download';
 import { dataUrlToImageBlob } from '@/utils/image';
 import { fontService } from '@/services/fontService';
 import { getStrokeOutline, outlineToPath } from '@/services/strokeService';
-import { fitStampTemplate } from '@/services/stampRenderService';
+import { fitStampTemplate, stampLogoSources } from '@/services/stampRenderService';
 import { drawStampToPdfPage } from '@/services/stampPdfRenderer';
 import { computeTextBlockLayout } from '@/services/textRenderService';
 import { getSmartMask, getSmartMaskPixels } from '@/services/smartEraseService';
@@ -642,12 +642,13 @@ async function drawStampObject(
   const template = fitStampTemplate(payload.template, obj.width, obj.height);
   const frame = frameOf(obj, geo);
 
-  let logoImage: PDFImage | null = null;
-  if (template.logo?.src) {
-    logoImage = await embedImage(ctx, template.logo.src, dataUrlMime(template.logo.src));
-    if (!logoImage) {
+  const logoImages: (PDFImage | null)[] = [];
+  for (const logo of stampLogoSources(template)) {
+    const image = logo.src ? await embedImage(ctx, logo.src, dataUrlMime(logo.src)) : null;
+    if (!image && logo.src) {
       ctx.warnings.push('Логотип штампа (SVG) не удалось встроить — штамп выведен без логотипа.');
     }
+    logoImages.push(image);
   }
 
   await drawStampToPdfPage(page, template, {
@@ -658,7 +659,7 @@ async function drawStampObject(
       const { font } = await resolveFont(ctx, fontId, bold, italic, '');
       return font;
     },
-    logoImage,
+    logoImages,
     textOverride: payload.overrides.textOverride ?? null,
     colorOverride: payload.overrides.color ?? null,
     alpha: Math.max(0, Math.min(1, obj.opacity * (payload.overrides.opacity ?? 1))),

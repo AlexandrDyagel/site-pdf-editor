@@ -660,6 +660,8 @@ export interface SealSettings {
 
 /** Логотип/иконка внутри штампа. */
 export interface StampLogo {
+  /** Идентификатор для выбора/удаления конкретного логотипа. */
+  id?: string;
   /** data:URL PNG/SVG/JPEG. */
   src: string;
   width: number;
@@ -669,6 +671,14 @@ export interface StampLogo {
   opacity: number;
   /** Поворот логотипа вокруг центра, градусы. */
   rotation?: number;
+}
+
+/** Множественное выделение объектов на превью печати. */
+export interface SealMultiSelection {
+  lines: string[];
+  centers: number[];
+  rings: number[];
+  logos: number[];
 }
 
 /** Шаблон штампа. */
@@ -700,6 +710,8 @@ export interface StampTemplate {
    */
   seal?: SealSettings | null;
   logo: StampLogo | null;
+  /** Несколько логотипов (если есть — используется вместо `logo`). */
+  logos?: StampLogo[];
   /** Заливка фона (обычно прозрачная). */
   backgroundColor: string | null;
   /** Внутренний разделитель (линия) для прямоугольных штампов. */

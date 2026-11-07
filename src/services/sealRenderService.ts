@@ -29,6 +29,7 @@ import type {
   SealRing,
   SealRingLine,
   SealSettings,
+  StampLogo,
   StampTemplate,
 } from '@/types';
 import type { StampCharLayout, StampLineLayout } from '@/services/stampRenderService';
@@ -669,6 +670,17 @@ export interface SealSlotGeometry {
 }
 
 /** Полная геометрия печати в координатах шаблона. */
+export interface SealLogoGeometry {
+  src: string;
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+  opacity: number;
+  /** Поворот вокруг центра, градусы. */
+  rotation: number;
+}
+
 export interface SealParts {
   width: number;
   height: number;
@@ -678,16 +690,10 @@ export interface SealParts {
   /** Зазоры между кольцами — нужны интерфейсу конструктора. */
   slots: SealSlotGeometry[];
   lines: StampLineLayout[];
-  logo: {
-    src: string;
-    x: number;
-    y: number;
-    width: number;
-    height: number;
-    opacity: number;
-    /** Поворот вокруг центра, градусы. */
-    rotation: number;
-  } | null;
+  /** Все логотипы печати. */
+  logos: SealLogoGeometry[];
+  /** Первый логотип (совместимость со старым кодом). */
+  logo: SealLogoGeometry | null;
 }
 
 /**
@@ -979,22 +985,30 @@ export function computeSealParts(
     return { line, family, fontSize, lineWidth, height: fontSize * 1.32 };
   });
 
-  // Логотип — независимый объект: размер и положение задаёт пользователь,
-  // он не участвует в авто-раскладке строк центра.
-  let logo: SealParts['logo'] = null;
-  if (template.logo?.src) {
-    const width = Math.min(size * 0.9, Math.max(3, template.logo.width * k));
-    const height = Math.min(size * 0.9, Math.max(3, template.logo.height * k));
-    logo = {
-      src: template.logo.src,
-      x: cx - width / 2 + (template.logo.offsetX ?? 0) * k,
-      y: cy - height / 2 + (template.logo.offsetY ?? 0) * k,
-      width,
-      height,
-      opacity: template.logo.opacity,
-      rotation: template.logo.rotation ?? 0,
-    };
-  }
+  // Логотипы — независимые объекты: размер и положение задаёт пользователь,
+  // они не участвуют в авто-раскладке строк центра.
+  const logoSources: StampLogo[] =
+    Array.isArray(template.logos) && template.logos.length
+      ? template.logos
+      : template.logo
+        ? [template.logo]
+        : [];
+  const logos: SealLogoGeometry[] = logoSources
+    .filter((item) => Boolean(item.src))
+    .map((item) => {
+      const width = Math.min(size * 0.9, Math.max(3, item.width * k));
+      const height = Math.min(size * 0.9, Math.max(3, item.height * k));
+      return {
+        src: item.src,
+        x: cx - width / 2 + (item.offsetX ?? 0) * k,
+        y: cy - height / 2 + (item.offsetY ?? 0) * k,
+        width,
+        height,
+        opacity: item.opacity,
+        rotation: item.rotation ?? 0,
+      };
+    });
+  const logo = logos[0] ?? null;
 
   const baseLinesHeight = lineMetrics.reduce((sum, item) => sum + item.height, 0);
   const availableHeight = Math.max(4, centerLimit * 1.7);
@@ -1107,6 +1121,7 @@ export function computeSealParts(
     ringLines,
     slots: slotGeometry,
     lines,
+    logos,
     logo,
   };
 }

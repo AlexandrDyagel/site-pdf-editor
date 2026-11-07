@@ -13,7 +13,7 @@
  *  Y направлен вниз, единицы — PDF points.
  */
 
-import type { SealSettings, StampCircularText, StampTemplate, StampTextLine } from '@/types';
+import type { SealSettings, StampCircularText, StampLogo, StampTemplate, StampTextLine } from '@/types';
 import { createId } from '@/utils/id';
 import { measureTextWidth } from '@/utils/textLayout';
 import {
@@ -99,16 +99,26 @@ export interface StampLayout {
     /** Кольцевые зазоры — нужны перетаскиванию строк в конструкторе. */
     slots: SealSlotGeometry[];
   } | null;
-  logo: {
-    src: string;
-    x: number;
-    y: number;
-    width: number;
-    height: number;
-    opacity: number;
-    /** Поворот вокруг центра, градусы. */
-    rotation?: number;
-  } | null;
+  logo: StampLogoLayout | null;
+  /** Все логотипы (для печати их может быть несколько). */
+  logos: StampLogoLayout[];
+}
+
+export interface StampLogoLayout {
+  src: string;
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+  opacity: number;
+  /** Поворот вокруг центра, градусы. */
+  rotation?: number;
+}
+
+/** Список логотипов шаблона с совместимостью со старым `logo`. */
+export function stampLogoSources(template: StampTemplate): StampLogo[] {
+  if (Array.isArray(template.logos) && template.logos.length) return template.logos;
+  return template.logo ? [template.logo] : [];
 }
 
 /** Значения по умолчанию для круглого текста. */
@@ -169,6 +179,7 @@ export function createStampTemplate(patch: Partial<StampTemplate> = {}): StampTe
     ],
     circularText: createCircularText(),
     logo: null,
+    logos: [],
     backgroundColor: null,
     divider: false,
     createdAt: now,
@@ -388,20 +399,23 @@ export function computeStampLayout(
     }
   }
 
-  // Логотип.
-  let logo: StampLayout['logo'] = null;
-  if (template.logo && template.logo.src) {
-    const logoWidth = Math.max(4, template.logo.width);
-    const logoHeight = Math.max(4, template.logo.height);
-    logo = {
-      src: template.logo.src,
-      x: (width - logoWidth) / 2 + template.logo.offsetX,
-      y: (height - logoHeight) / 2 + template.logo.offsetY,
-      width: logoWidth,
-      height: logoHeight,
-      opacity: template.logo.opacity,
-    };
-  }
+  // Логотипы (их может быть несколько).
+  const logos: StampLogoLayout[] = stampLogoSources(template)
+    .filter((item) => item.src)
+    .map((item) => {
+      const logoWidth = Math.max(4, item.width);
+      const logoHeight = Math.max(4, item.height);
+      return {
+        src: item.src,
+        x: (width - logoWidth) / 2 + item.offsetX,
+        y: (height - logoHeight) / 2 + item.offsetY,
+        width: logoWidth,
+        height: logoHeight,
+        opacity: item.opacity,
+        rotation: item.rotation ?? 0,
+      };
+    });
+  const logo = logos[0] ?? null;
 
   const divider = template.divider && !isRound(template.shape)
     ? {
@@ -468,6 +482,13 @@ export function computeStampLayout(
             height: scalePoint(logo.height),
           }
         : null,
+      logos: logos.map((item) => ({
+        ...item,
+        x: scalePoint(item.x),
+        y: scalePoint(item.y),
+        width: scalePoint(item.width),
+        height: scalePoint(item.height),
+      })),
     };
   }
 
@@ -488,6 +509,7 @@ export function computeStampLayout(
     chars,
     seal: null,
     logo,
+    logos,
   };
 }
 
@@ -539,6 +561,7 @@ function buildSealLayout(
     chars: parts.ringLines.flatMap((item) => item.chars),
     seal: { ink: parts.ink, ringLines: parts.ringLines, slots: parts.slots },
     logo: parts.logo,
+    logos: parts.logos,
   };
 }
 
@@ -643,6 +666,13 @@ function scaleStampLayout(layout: StampLayout, scale: number): StampLayout {
           height: p(layout.logo.height),
         }
       : null,
+    logos: layout.logos.map((item) => ({
+      ...item,
+      x: p(item.x),
+      y: p(item.y),
+      width: p(item.width),
+      height: p(item.height),
+    })),
   };
 }
 
@@ -686,9 +716,14 @@ function paintFrame(
 export function paintStampLayout(
   ctx: CanvasRenderingContext2D,
   layout: StampLayout,
-  options: { logoImage?: CanvasImageSource | null; alpha?: number } = {},
+  options: {
+    logoImage?: CanvasImageSource | null;
+    logoImages?: (CanvasImageSource | null)[];
+    alpha?: number;
+  } = {},
 ): void {
-  const { logoImage = null, alpha = 1 } = options;
+  const { logoImage = null, logoImages, alpha = 1 } = options;
+  const images = logoImages ?? (logoImage ? [logoImage] : []);
   ctx.save();
   // Умножаем прозрачность — сохраняем альфу, заданную Konva-узлом.
   ctx.globalAlpha *= Math.max(0, Math.min(1, layout.opacity * alpha));
@@ -784,23 +819,19 @@ export function paintStampLayout(
     ctx.restore();
   }
 
-  // Логотип.
-  if (layout.logo && logoImage) {
+  // Логотипы (их может быть несколько).
+  layout.logos.forEach((logo, index) => {
+    const image = images[index] ?? null;
+    if (!image) return;
     ctx.save();
-    ctx.globalAlpha *= Math.max(0, Math.min(1, layout.logo.opacity));
-    const centerX = layout.logo.x + layout.logo.width / 2;
-    const centerY = layout.logo.y + layout.logo.height / 2;
+    ctx.globalAlpha *= Math.max(0, Math.min(1, logo.opacity));
+    const centerX = logo.x + logo.width / 2;
+    const centerY = logo.y + logo.height / 2;
     ctx.translate(centerX, centerY);
-    ctx.rotate(((layout.logo.rotation ?? 0) * Math.PI) / 180);
-    ctx.drawImage(
-      logoImage,
-      -layout.logo.width / 2,
-      -layout.logo.height / 2,
-      layout.logo.width,
-      layout.logo.height,
-    );
+    ctx.rotate(((logo.rotation ?? 0) * Math.PI) / 180);
+    ctx.drawImage(image, -logo.width / 2, -logo.height / 2, logo.width, logo.height);
     ctx.restore();
-  }
+  });
 
   ctx.restore();
 }
@@ -812,6 +843,7 @@ export function paintStampTemplate(
   resolveFamily: StampFontResolver,
   options: {
     logoImage?: CanvasImageSource | null;
+    logoImages?: (CanvasImageSource | null)[];
     textOverride?: string | null;
     colorOverride?: string | null;
     scale?: number;
@@ -823,7 +855,11 @@ export function paintStampTemplate(
     colorOverride: options.colorOverride ?? null,
     scale: options.scale ?? 1,
   });
-  paintStampLayout(ctx, layout, { logoImage: options.logoImage, alpha: options.alpha });
+  paintStampLayout(ctx, layout, {
+    logoImage: options.logoImage,
+    logoImages: options.logoImages,
+    alpha: options.alpha,
+  });
   return layout;
 }
 
@@ -909,13 +945,13 @@ export function stampTemplateToSvg(
     );
   }
 
-  if (layout.logo) {
-    const logoCenterX = layout.logo.x + layout.logo.width / 2;
-    const logoCenterY = layout.logo.y + layout.logo.height / 2;
+  for (const logo of layout.logos) {
+    const logoCenterX = logo.x + logo.width / 2;
+    const logoCenterY = logo.y + logo.height / 2;
     parts.push(
-      `<image x="${layout.logo.x}" y="${layout.logo.y}" width="${layout.logo.width}" height="${
-        layout.logo.height
-      }" opacity="${layout.logo.opacity}" transform="rotate(${layout.logo.rotation ?? 0} ${logoCenterX} ${logoCenterY})" href="${layout.logo.src}" />`,
+      `<image x="${logo.x}" y="${logo.y}" width="${logo.width}" height="${
+        logo.height
+      }" opacity="${logo.opacity}" transform="rotate(${logo.rotation ?? 0} ${logoCenterX} ${logoCenterY})" href="${logo.src}" />`,
     );
   }
 

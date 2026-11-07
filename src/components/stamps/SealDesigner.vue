@@ -13,7 +13,7 @@
  * имеют контекстное меню.
  */
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue';
-import type { SealRingLine, StampTemplate, StampTextLine } from '@/types';
+import type { SealMultiSelection, SealRingLine, StampLogo, StampTemplate, StampTextLine } from '@/types';
 import { SEAL_COLORS } from '@/constants';
 import { createId } from '@/utils/id';
 import {
@@ -75,12 +75,29 @@ const selectedCenterIndex = ref<number | null>(null);
 const selectedRingIndex = ref<number | null>(null);
 /** Выбран логотип: показываем рамку, углы и маркер поворота. */
 const selectedLogo = ref(false);
+/** Индекс выбранного логотипа (их может быть несколько). */
+const selectedLogoIndex = ref<number | null>(null);
+/** Список логотипов: массив или совместимость со старым `logo`. */
+const stampLogos = computed<StampLogo[]>(() =>
+  template.value.logos?.length
+    ? template.value.logos
+    : template.value.logo
+      ? [template.value.logo]
+      : [],
+);
 /** Выбран образец печати (картинка под превью). */
 const selectedReference = ref(false);
 /** Картинка-образец под превью — не часть печати, только подсказка. */
 const reference = ref<SealReference | null>(null);
 /** Ссылка на превью — нужна, чтобы сбрасывать панораму. */
 const previewRef = ref<{ resetPan: () => void } | null>(null);
+/** Выделение нескольких объектов на превью (рамка или Shift+клик). */
+const multiSelection = ref<SealMultiSelection | null>(null);
+const multiSelectionCount = computed(() => {
+  const selection = multiSelection.value;
+  if (!selection) return 0;
+  return selection.lines.length + selection.centers.length + selection.rings.length + selection.logos.length;
+});
 
 /** Сколько строк максимум может стоять в одном кольцевом зазоре. */
 const MAX_LINES_PER_SLOT = 2;
@@ -217,6 +234,7 @@ watch(
       selectedCenterIndex.value = null;
       selectedRingIndex.value = null;
       selectedLogo.value = false;
+      selectedLogoIndex.value = null;
       selectedReference.value = false;
       reference.value = draft.reference ?? null;
       restoredDraft.value = true;
@@ -242,6 +260,7 @@ watch(
     selectedCenterIndex.value = null;
     selectedRingIndex.value = null;
     selectedLogo.value = false;
+    selectedLogoIndex.value = null;
     selectedReference.value = false;
     reference.value = null;
     restoredDraft.value = false;
@@ -279,6 +298,7 @@ function resetDraft(): void {
   selectedCenterIndex.value = null;
   selectedRingIndex.value = null;
   selectedLogo.value = false;
+  selectedLogoIndex.value = null;
   selectedReference.value = false;
   reference.value = null;
   zoom.value = fitZoomValue();
@@ -429,8 +449,15 @@ function onDesignerKeydown(event: KeyboardEvent): void {
     redo();
     return;
   }
-  if (!mod && !event.altKey && (event.key === 'Delete' || event.key === 'Backspace')) {
+    if (!mod && !event.altKey && (event.key === 'Delete' || event.key === 'Backspace')) {
     if (typing) return;
+    if (multiSelectionCount.value > 1) {
+      event.preventDefault();
+      event.stopPropagation();
+      event.stopImmediatePropagation();
+      deleteMultiSelection();
+      return;
+    }
     if (selectedLineId.value) {
       event.preventDefault();
       event.stopPropagation();
@@ -449,7 +476,7 @@ function onDesignerKeydown(event: KeyboardEvent): void {
       event.preventDefault();
       event.stopPropagation();
       event.stopImmediatePropagation();
-      removeLogo();
+      removeLogo(selectedLogoIndex.value ?? 0);
       return;
     }
     if (selectedReference.value) {
@@ -527,6 +554,28 @@ onMounted(() => {
         reference.value = value;
       },
       get: () => reference.value,
+    };
+    // Состояние выделения — для браузерных проверок.
+    (
+      window as unknown as {
+        __SEAL_DESIGNER_STATE__?: {
+          get: () => {
+            selectedLineId: string | null;
+            selectedCenterIndex: number | null;
+            selectedRingIndex: number | null;
+            selectedLogoIndex: number | null;
+            multi: SealMultiSelection | null;
+          };
+        };
+      }
+    ).__SEAL_DESIGNER_STATE__ = {
+      get: () => ({
+        selectedLineId: selectedLineId.value,
+        selectedCenterIndex: selectedCenterIndex.value,
+        selectedRingIndex: selectedRingIndex.value,
+        selectedLogoIndex: selectedLogoIndex.value,
+        multi: multiSelection.value,
+      }),
     };
   }
 });
@@ -636,9 +685,11 @@ function lineIndex(lineId: string): number {
 
 /** Выбрать строку (и при желании показать её настройки справа). */
 function selectLine(lineId: string | null, options: { reveal?: boolean } = {}): void {
+  multiSelection.value = null;
   selectedLineId.value = lineId;
   selectedRingIndex.value = null;
   selectedLogo.value = false;
+  selectedLogoIndex.value = null;
   selectedCenterIndex.value = null;
   selectedReference.value = false;
   if (!lineId || options.reveal === false) return;
@@ -654,10 +705,12 @@ function selectLine(lineId: string | null, options: { reveal?: boolean } = {}): 
 
 /** Выбрать кольцо: открыть «Кольца» и показать его карточку. */
 function selectRing(index: number, options: { reveal?: boolean } = {}): void {
+  multiSelection.value = null;
   selectedRingIndex.value = index;
   selectedLineId.value = null;
   selectedCenterIndex.value = null;
   selectedLogo.value = false;
+  selectedLogoIndex.value = null;
   selectedReference.value = false;
   tab.value = 'rings';
   if (options.reveal === false) return;
@@ -670,10 +723,12 @@ function selectRing(index: number, options: { reveal?: boolean } = {}): void {
 
 /** Выбрать строку центра: открыть «Центр» и показать её карточку. */
 function selectCenterLine(index: number, options: { reveal?: boolean } = {}): void {
+  multiSelection.value = null;
   selectedCenterIndex.value = index;
   selectedLineId.value = null;
   selectedRingIndex.value = null;
   selectedLogo.value = false;
+  selectedLogoIndex.value = null;
   selectedReference.value = false;
   tab.value = 'center';
   if (options.reveal === false) return;
@@ -686,16 +741,20 @@ function selectCenterLine(index: number, options: { reveal?: boolean } = {}): vo
 
 /** Снять фокус со всего: строки, кольца, логотип, образец. */
 function clearSelection(): void {
+  multiSelection.value = null;
   selectedLineId.value = null;
   selectedCenterIndex.value = null;
   selectedRingIndex.value = null;
   selectedLogo.value = false;
+  selectedLogoIndex.value = null;
   selectedReference.value = false;
 }
 
 /** Клик по логотипу: выделяем его, чтобы показать углы и поворот. */
-function selectLogo(): void {
+function selectLogo(index = 0): void {
+  multiSelection.value = null;
   selectedLogo.value = true;
+  selectedLogoIndex.value = index;
   selectedLineId.value = null;
   selectedCenterIndex.value = null;
   selectedRingIndex.value = null;
@@ -703,9 +762,115 @@ function selectLogo(): void {
   tab.value = 'logo';
   void nextTick(() => {
     rightColumn.value
-      ?.querySelector('[data-testid=seal-logo-section]')
+      ?.querySelector(`[data-testid=seal-logo-card-${index}]`)
       ?.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
   });
+}
+
+/** Выделение группы: снимаем одиночный фокус, чтобы не путать маркеры. */
+function onSelectionChange(selection: SealMultiSelection | null): void {
+  multiSelection.value = selection;
+  if (!selection) return;
+  selectedLineId.value = null;
+  selectedCenterIndex.value = null;
+  selectedRingIndex.value = null;
+  selectedLogo.value = false;
+  selectedLogoIndex.value = null;
+  selectedReference.value = false;
+}
+
+/** Сдвиг группы: каждая строка пересчитывает свои смещения. */
+function onGroupMove(dx: number, dy: number): void {
+  const selection = multiSelection.value;
+  if (!selection) return;
+  const settings = template.value.seal;
+  if (settings) {
+    if (selection.lines.length > 0) {
+      const layout = computeStampLayout(template.value, (id) => fonts.familyOf(id));
+      const rad = Math.PI / 180;
+      for (const lineId of selection.lines) {
+        const geometry = layout.seal?.ringLines.find((item) => item.lineId === lineId);
+        const line = settings.lines.find((item) => item.id === lineId);
+        if (!geometry || !line) continue;
+        const centerX = sizeCenter();
+        const centerY = sizeCenter();
+        const angle = geometry.centerAngle * rad;
+        const point = {
+          x: centerX + Math.cos(angle) * geometry.radius + dx,
+          y: centerY + Math.sin(angle) * geometry.radius + dy,
+        };
+        const newRadius = Math.hypot(point.x - centerX, point.y - centerY);
+        const newAngle = (Math.atan2(point.y - centerY, point.x - centerX) * 180) / Math.PI;
+        let deltaAngle = newAngle - geometry.centerAngle;
+        deltaAngle = ((deltaAngle % 360) + 540) % 360 - 180;
+        line.radiusOffset = Math.round((line.radiusOffset + newRadius - geometry.radius) * 10) / 10;
+        line.angleOffset = Math.round((((line.angleOffset + deltaAngle + 180) % 360) + 360) % 360 - 180);
+      }
+    }
+    for (const layoutIndex of selection.centers) {
+      const index = templateCenterIndex(layoutIndex);
+      const line = template.value.lines[index];
+      if (!line) continue;
+      template.value.lines = template.value.lines.map((item, position) =>
+        position === index
+          ? {
+              ...item,
+              offsetX: Math.round(((item.offsetX ?? 0) + dx) * 10) / 10,
+              offsetY: Math.round((item.offsetY + dy) * 10) / 10,
+            }
+          : item,
+      );
+    }
+  }
+  for (const index of selection.logos) {
+    const logo = stampLogos.value[index];
+    if (!logo) continue;
+    updateLogo(index, {
+      offsetX: Math.round((logo.offsetX + dx) * 10) / 10,
+      offsetY: Math.round((logo.offsetY + dy) * 10) / 10,
+    });
+  }
+}
+
+function sizeCenter(): number {
+  return Math.max(24, Math.min(template.value.width, template.value.height)) / 2;
+}
+
+/** Удалить все выбранные объекты (Del или кнопка в карточке группы). */
+function deleteMultiSelection(): void {
+  const selection = multiSelection.value;
+  if (!selection) return;
+  const settings = template.value.seal;
+  if (settings && selection.lines.length > 0) {
+    const remove = new Set(selection.lines);
+    settings.lines = settings.lines.filter((line) => !remove.has(line.id));
+  }
+  if (selection.centers.length > 0) {
+    const visible = template.value.lines.filter((line) => line.text.trim().length > 0);
+    const removeIndexes = new Set(
+      selection.centers
+        .map((layoutIndex) => template.value.lines.indexOf(visible[layoutIndex]))
+        .filter((index) => index >= 0),
+    );
+    template.value.lines = template.value.lines.filter((_, index) => !removeIndexes.has(index));
+  }
+  if (selection.logos.length > 0) {
+    const remove = new Set(selection.logos);
+    const list = stampLogos.value.filter((_, index) => !remove.has(index));
+    template.value.logos = list;
+    template.value.logo = list[0] ?? null;
+  }
+  if (settings && selection.rings.length > 0) {
+    const remove = [...selection.rings].sort((a, b) => b - a);
+    for (const index of remove) {
+      if (settings.rings.length > 1) settings.rings.splice(index, 1);
+    }
+    settings.rings[0].gap = 0;
+    for (const line of settings.lines) {
+      line.slot = Math.min(line.slot, settings.rings.length - 1);
+    }
+  }
+  clearSelection();
 }
 
 function addLine(): void {
@@ -928,25 +1093,28 @@ function onCenterMove(layoutIndex: number, offsetX: number, offsetY: number): vo
 
 /* ======================== Логотип ======================== */
 
-function onLogoMove(offsetX: number, offsetY: number): void {
-  const logo = template.value.logo;
-  if (!logo) return;
-  template.value.logo = { ...logo, offsetX, offsetY };
+/** Обновить один логотип и синхронизировать совместимый `logo`. */
+function updateLogo(index: number, patch: Partial<StampLogo>): void {
+  const list = stampLogos.value.map((logo, position) =>
+    position === index ? { ...logo, ...patch } : logo,
+  );
+  template.value.logos = list;
+  template.value.logo = list[0] ?? null;
 }
 
-function onLogoResize(width: number, height: number): void {
-  const logo = template.value.logo;
-  if (!logo) return;
-  template.value.logo = { ...logo, width, height };
+function onLogoMove(index: number, offsetX: number, offsetY: number): void {
+  updateLogo(index, { offsetX, offsetY });
 }
 
-function onLogoRotate(rotation: number): void {
-  const logo = template.value.logo;
-  if (!logo) return;
-  template.value.logo = { ...logo, rotation: ((rotation % 360) + 360) % 360 };
+function onLogoResize(index: number, width: number, height: number): void {
+  updateLogo(index, { width, height });
 }
 
-/** Загрузка логотипа в центр печати. */
+function onLogoRotate(index: number, rotation: number): void {
+  updateLogo(index, { rotation: ((rotation % 360) + 360) % 360 });
+}
+
+/** Загрузка логотипа: он добавляется к уже имеющимся. */
 async function uploadLogo(): Promise<void> {
   const { openFileDialog, readImageFile, ACCEPT } = await import('@/services/fileService');
   const files = await openFileDialog({ accept: ACCEPT.images });
@@ -954,7 +1122,8 @@ async function uploadLogo(): Promise<void> {
   const image = await readImageFile(files[0]);
   const maxSide = Math.min(template.value.width, template.value.height) * 0.5;
   const scale = Math.min(1, maxSide / Math.max(image.naturalWidth, image.naturalHeight));
-  template.value.logo = {
+  const logo: StampLogo = {
+    id: createId('logo'),
     src: image.src,
     width: image.naturalWidth * scale,
     height: image.naturalHeight * scale,
@@ -963,26 +1132,36 @@ async function uploadLogo(): Promise<void> {
     opacity: 1,
     rotation: 0,
   };
+  const list = [...stampLogos.value, logo];
+  template.value.logos = list;
+  template.value.logo = list[0] ?? null;
   selectedLogo.value = true;
+  selectedLogoIndex.value = list.length - 1;
   selectedLineId.value = null;
   selectedCenterIndex.value = null;
   selectedRingIndex.value = null;
+  tab.value = 'logo';
 }
 
-function removeLogo(): void {
-  template.value.logo = null;
+function removeLogo(index = selectedLogoIndex.value ?? 0): void {
+  const list = stampLogos.value.filter((_, position) => position !== index);
+  template.value.logos = list;
+  template.value.logo = list[0] ?? null;
   selectedLogo.value = false;
+  selectedLogoIndex.value = null;
 }
 
 /* ======================== Образец печати под превью ======================== */
 
 /** Выбрать образец: показываем его рамку, углы и маркер поворота. */
 function selectReference(): void {
+  multiSelection.value = null;
   selectedReference.value = true;
   selectedLineId.value = null;
   selectedCenterIndex.value = null;
   selectedRingIndex.value = null;
   selectedLogo.value = false;
+  selectedLogoIndex.value = null;
 }
 
 /** Загрузка картинки-образца из файла. */
@@ -1277,6 +1456,8 @@ function onPickEnd(color: string | null): void {
             :selected-center-index="selectedCenterIndex"
             :selected-ring-index="selectedRingIndex"
             :selected-logo="selectedLogo"
+            :selected-logo-index="selectedLogoIndex"
+            :selection="multiSelection"
             :selected-reference="selectedReference"
             @select-line="selectLine($event)"
             @clear-selection="clearSelection"
@@ -1294,6 +1475,8 @@ function onPickEnd(color: string | null): void {
             @logo-move="onLogoMove"
             @logo-resize="onLogoResize"
             @logo-rotate="onLogoRotate"
+            @selection-change="onSelectionChange"
+            @group-move="onGroupMove"
             @reference-select="selectReference"
             @reference-move="onReferenceMove"
             @reference-resize="onReferenceResize"
@@ -1353,6 +1536,24 @@ function onPickEnd(color: string | null): void {
       >
         <AppInput v-model="template.name" label="Название печати" size="sm" />
         <AppTabs v-model="tab" :items="tabs" />
+
+        <!-- Группа: несколько объектов, выделенных рамкой или Shift+кликом -->
+        <div
+          v-if="multiSelection && multiSelectionCount > 1"
+          class="flex items-center justify-between gap-2 rounded-lg border border-brand-300 bg-brand-50/60 px-2.5 py-2 text-[12px] text-brand-800 dark:border-brand-500/50 dark:bg-brand-500/10 dark:text-brand-200"
+          data-testid="seal-multi-card"
+        >
+          <span>Выбрано объектов: {{ multiSelectionCount }}</span>
+          <AppButton
+            size="xs"
+            variant="ghost"
+            icon="trash"
+            data-testid="seal-multi-delete"
+            @click="deleteMultiSelection"
+          >
+            Удалить
+          </AppButton>
+        </div>
 
         <!-- Кольца -->
         <div v-show="tab === 'rings'" class="space-y-3">
@@ -1607,29 +1808,59 @@ function onPickEnd(color: string | null): void {
         <!-- Логотип или герб -->
         <div v-show="tab === 'logo'" class="space-y-3" data-testid="seal-logo-tab">
           <AppSection title="Логотип или герб" icon="image" data-testid="seal-logo-section">
-            <div v-if="template.logo" class="space-y-2">
-              <div class="flex items-center gap-3">
-                <span
-                  class="checker-bg flex h-16 w-16 items-center justify-center overflow-hidden rounded-lg border border-slate-200 dark:border-slate-700"
-                >
-                  <img :src="template.logo.src" alt="Логотип" class="h-full w-full object-contain" />
-                </span>
-                <div class="flex flex-col gap-1">
-                  <AppButton size="sm" icon="refresh" @click="uploadLogo">Заменить</AppButton>
-                  <AppButton size="sm" icon="trash" variant="ghost" @click="removeLogo">Удалить</AppButton>
+            <div v-if="stampLogos.length" class="space-y-2">
+              <div
+                v-for="(logo, index) in stampLogos"
+                :key="logo.id ?? index"
+                class="space-y-1.5 rounded-lg border p-2 transition-colors"
+                :class="
+                  selectedLogoIndex === index
+                    ? 'border-brand-400 bg-brand-50/40 dark:border-brand-500/60 dark:bg-brand-500/5'
+                    : 'border-slate-200 dark:border-slate-700'
+                "
+                :data-testid="`seal-logo-card-${index}`"
+                :data-active="selectedLogoIndex === index ? 'true' : 'false'"
+                @pointerdown="selectLogo(index)"
+              >
+                <div class="flex items-center gap-3">
+                  <span
+                    class="checker-bg flex h-12 w-12 shrink-0 items-center justify-center overflow-hidden rounded-lg border border-slate-200 dark:border-slate-700"
+                  >
+                    <img :src="logo.src" alt="Логотип" class="h-full w-full object-contain" />
+                  </span>
+                  <div class="min-w-0 flex-1">
+                    <p class="text-[12px] font-medium text-slate-700 dark:text-slate-200">
+                      Логотип {{ index + 1 }}
+                    </p>
+                    <p class="text-[11px] text-slate-400">
+                      Клик — выбрать; тяните, растягивайте, вращайте на превью.
+                    </p>
+                  </div>
+                  <AppButton
+                    size="xs"
+                    variant="ghost"
+                    icon="trash"
+                    title="Удалить логотип"
+                    :data-testid="`seal-logo-remove-${index}`"
+                    @click.stop="removeLogo(index)"
+                  />
                 </div>
+                <AppSlider
+                  :model-value="logo.opacity"
+                  label="Прозрачность"
+                  :min="0.1"
+                  :max="1"
+                  :step="0.05"
+                  :precision="2"
+                  @update:model-value="updateLogo(index, { opacity: Number($event) })"
+                />
               </div>
-              <AppSlider
-                v-model="template.logo.opacity"
-                label="Прозрачность логотипа"
-                :min="0.1"
-                :max="1"
-                :step="0.05"
-                :precision="2"
-              />
+              <AppButton size="sm" icon="upload" block data-testid="seal-logo-add" @click="uploadLogo">
+                Добавить логотип
+              </AppButton>
               <p class="text-[11px] text-slate-400">
-                Логотип — объект: тяните его мышью, растягивайте за углы (Shift — пропорции) и
-                вращайте за круглый маркер. Поддерживаются PNG, JPEG и SVG.
+                Логотипов может быть несколько: у каждого своё положение, размер и поворот.
+                Поддерживаются PNG, JPEG и SVG.
               </p>
             </div>
             <div v-else class="space-y-2">
@@ -1638,7 +1869,7 @@ function onPickEnd(color: string | null): void {
               </AppButton>
               <p class="text-[11px] text-slate-400">
                 PNG, JPEG или SVG. Логотип ставится в центр печати и ведёт себя как объект:
-                его можно двигать, растягивать и вращать.
+                его можно двигать, растягивать и вращать. Можно добавить несколько.
               </p>
             </div>
           </AppSection>

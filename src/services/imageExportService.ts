@@ -39,7 +39,7 @@ import {
   preloadImages,
   resolveFamily,
 } from '@/services/konvaObjectFactory';
-import { computeStampLayout, paintStampLayout } from '@/services/stampRenderService';
+import { computeStampLayout, paintStampLayout, stampLogoSources } from '@/services/stampRenderService';
 import { paintStrokes } from '@/services/strokeService';
 
 /** Запрос на отрисовку страницы. */
@@ -325,17 +325,18 @@ export async function renderStampPreview(
   const canvas = createCanvas(width * pixelRatio, height * pixelRatio);
   const ctx = getContext2d(canvas);
   const layout = computeStampLayout(template, resolveFamily);
-  let logoImage: HTMLImageElement | null = null;
-  if (template.logo?.src) {
-    try {
-      logoImage = await loadImage(template.logo.src);
-    } catch {
-      logoImage = null;
-    }
-  }
+  const logoImages = await Promise.all(
+    stampLogoSources(template).map(async (logo) => {
+      try {
+        return await loadImage(logo.src);
+      } catch {
+        return null;
+      }
+    }),
+  );
   ctx.save();
   ctx.scale(pixelRatio, pixelRatio);
-  paintStampLayout(ctx, layout, { logoImage });
+  paintStampLayout(ctx, layout, { logoImages });
   ctx.restore();
   return canvas.toDataURL('image/png');
 }

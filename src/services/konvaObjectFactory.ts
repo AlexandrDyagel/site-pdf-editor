@@ -30,7 +30,7 @@ import type {
 import { loadImage } from '@/utils/image';
 import { hashString } from '@/utils/id';
 import { normalizeSides, polygonPath } from '@/utils/shapePath';
-import { computeStampLayout, fitStampTemplate, paintStampLayout } from '@/services/stampRenderService';
+import { computeStampLayout, fitStampTemplate, paintStampLayout, stampLogoSources } from '@/services/stampRenderService';
 import { getStrokeOutline, paintStrokes } from '@/services/strokeService';
 import { getSmartMask } from '@/services/smartEraseService';
 import { ensureTextMetrics, hasTextMetrics, paintTextObject } from '@/services/textRenderService';
@@ -542,9 +542,11 @@ function buildChildren(group: Konva.Group, obj: EditorObject, options: ObjectBui
             textOverride: payload.overrides.textOverride ?? null,
             colorOverride: payload.overrides.color ?? null,
           });
-          const logoImage = template.logo?.src ? ensureImage(template.logo.src, options) : null;
+          const logoImages = stampLogoSources(template).map((logo) =>
+            logo.src ? ensureImage(logo.src, options) : null,
+          );
           paintStampLayout(raw, layout, {
-            logoImage,
+            logoImages,
             alpha: payload.overrides.opacity ?? 1,
           });
         },
