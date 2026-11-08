@@ -30,6 +30,8 @@ export interface SealReference {
   rotation: number;
   opacity: number;
   visible: boolean;
+  /** Замок: клики по образцу игнорируются, чтобы случайно его не сдвинуть. */
+  locked?: boolean;
 }
 
 export interface SealDraft {

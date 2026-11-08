@@ -157,6 +157,30 @@ async function ensureLogo(): Promise<void> {
   );
 }
 
+/** «Палочка» от верхней кромки рамки до круглого маркера поворота. */
+function drawRotationStem(
+  context: CanvasRenderingContext2D,
+  cx: number,
+  cy: number,
+  width: number,
+  height: number,
+  rotation: number,
+): void {
+  void width;
+  const radians = (rotation * Math.PI) / 180;
+  const top = height / 2;
+  const markerDistance = height / 2 + 22 / Math.max(0.4, props.zoom);
+  context.save();
+  context.setLineDash([]);
+  context.lineWidth = 1;
+  context.strokeStyle = '#355ef0';
+  context.beginPath();
+  context.moveTo(cx + Math.sin(radians) * top, cy - Math.cos(radians) * top);
+  context.lineTo(cx + Math.sin(radians) * markerDistance, cy - Math.cos(radians) * markerDistance);
+  context.stroke();
+  context.restore();
+}
+
 function draw(): void {
   const element = canvas.value;
   if (!element) return;
@@ -174,14 +198,13 @@ function draw(): void {
   context.scale(scale, scale);
   paintStampLayout(context, layout.value, { logoImages: logoImages.value });
 
-  // Выбранное кольцо — очень мелкий пунктир поверх оттиска.
+  // Выбранное кольцо — тонкая сплошная линия, как у объекта на холсте.
   if (props.selectedRingIndex !== null && layout.value.seal) {
     const ring = layout.value.seal.ink.rings[props.selectedRingIndex];
     if (ring) {
       context.save();
-      context.setLineDash([3, 2]);
-      context.lineWidth = 1.2;
-      context.strokeStyle = '#2f6bff';
+      context.lineWidth = 1;
+      context.strokeStyle = '#355ef0';
       context.beginPath();
       context.arc(ring.cx, ring.cy, ring.radius, 0, Math.PI * 2);
       context.stroke();
@@ -189,46 +212,91 @@ function draw(): void {
     }
   }
 
-  // Выбранный логотип — рамка как у картинки на холсте (сплошная синяя).
+  // Выбранная строка по кольцу — тонкая рамка вокруг её букв.
+  if (selectedGeometry.value && selectedGeometry.value.chars.length > 0) {
+    const line = selectedGeometry.value;
+    let minX = Number.POSITIVE_INFINITY;
+    let minY = Number.POSITIVE_INFINITY;
+    let maxX = Number.NEGATIVE_INFINITY;
+    let maxY = Number.NEGATIVE_INFINITY;
+    for (const char of line.chars) {
+      minX = Math.min(minX, char.x - char.fontSize * 0.6);
+      minY = Math.min(minY, char.y - char.fontSize);
+      maxX = Math.max(maxX, char.x + char.fontSize * 0.9);
+      maxY = Math.max(maxY, char.y + char.fontSize * 0.4);
+    }
+    context.save();
+    context.lineWidth = 1;
+    context.strokeStyle = '#355ef0';
+    context.strokeRect(minX - 1, minY - 1, maxX - minX + 2, maxY - minY + 2);
+    context.restore();
+  }
+
+  // Выбранная строка центра — такая же тонкая рамка.
+  if (props.selectedCenterIndex !== null) {
+    const line = layout.value.lines[props.selectedCenterIndex];
+    if (line) {
+      context.save();
+      context.lineWidth = 1;
+      context.strokeStyle = '#355ef0';
+      context.strokeRect(
+        line.x - 1,
+        line.baseline - line.fontSize,
+        line.width + 2,
+        line.fontSize * 1.3,
+      );
+      context.restore();
+    }
+  }
+
+  // Выбранный логотип — рамка как у картинки на холсте (сплошная синяя)
+  // плюс «палочка» от рамки до маркера поворота.
   if (selectedLogoGeometry.value) {
     const logo = selectedLogoGeometry.value;
     const cx = logo.x + logo.width / 2;
     const cy = logo.y + logo.height / 2;
     context.save();
+    drawRotationStem(context, cx, cy, logo.width, logo.height, logo.rotation ?? 0);
     context.translate(cx, cy);
     context.rotate(((logo.rotation ?? 0) * Math.PI) / 180);
     context.lineWidth = 1.2;
-    context.strokeStyle = '#2f6bff';
+    context.strokeStyle = '#355ef0';
     context.strokeRect(-logo.width / 2, -logo.height / 2, logo.width, logo.height);
     context.restore();
   }
 
-  // Выбранный образец — пунктирная рамка.
-  if (props.selectedReference && props.reference) {
+  // Выбранный образец — такая же рамка, как у объекта на холсте.
+  if (props.selectedReference && props.reference && !props.reference.locked) {
     const reference = props.reference;
     context.save();
+    drawRotationStem(context, reference.x, reference.y, reference.width, reference.height, reference.rotation);
     context.translate(reference.x, reference.y);
     context.rotate((reference.rotation * Math.PI) / 180);
-    context.setLineDash([3, 2]);
-    context.lineWidth = 1;
-    context.strokeStyle = '#2f6bff';
+    context.lineWidth = 1.2;
+    context.strokeStyle = '#355ef0';
     context.strokeRect(-reference.width / 2, -reference.height / 2, reference.width, reference.height);
     context.restore();
   }
 
-  // Групповое выделение и рамка маркизы.
+  // Групповое выделение: тонкая сплошная линия, как у объектов на холсте.
   if (props.selection) {
     context.save();
-    context.setLineDash([3, 2]);
     context.lineWidth = 1;
-    context.strokeStyle = '#2f6bff';
+    context.strokeStyle = '#355ef0';
     for (const lineId of props.selection.lines) {
       const line = layout.value.seal?.ringLines.find((item) => item.lineId === lineId);
-      if (line) {
-        context.beginPath();
-        context.arc(line.cx, line.cy, line.radius, 0, Math.PI * 2);
-        context.stroke();
+      if (!line || line.chars.length === 0) continue;
+      let minX = Number.POSITIVE_INFINITY;
+      let minY = Number.POSITIVE_INFINITY;
+      let maxX = Number.NEGATIVE_INFINITY;
+      let maxY = Number.NEGATIVE_INFINITY;
+      for (const char of line.chars) {
+        minX = Math.min(minX, char.x - char.fontSize * 0.6);
+        minY = Math.min(minY, char.y - char.fontSize);
+        maxX = Math.max(maxX, char.x + char.fontSize * 0.9);
+        maxY = Math.max(maxY, char.y + char.fontSize * 0.4);
       }
+      context.strokeRect(minX - 1, minY - 1, maxX - minX + 2, maxY - minY + 2);
     }
     for (const index of props.selection.centers) {
       const line = layout.value.lines[index];
@@ -260,6 +328,7 @@ function draw(): void {
     }
     if (marquee.value) {
       const rect = marquee.value;
+      context.setLineDash([4, 3]);
       context.strokeRect(
         Math.min(rect.x1, rect.x2),
         Math.min(rect.y1, rect.y2),
@@ -393,7 +462,7 @@ function pointInRotatedRect(
 
 function hitReference(point: { x: number; y: number }): boolean {
   const reference = props.reference;
-  if (!reference || !reference.visible) return false;
+  if (!reference || !reference.visible || reference.locked) return false;
   return pointInRotatedRect(point, reference.x, reference.y, reference.width, reference.height, reference.rotation);
 }
 
@@ -847,7 +916,25 @@ function onMarqueeUp(event: PointerEvent): void {
 
   const selection = emptySelection();
   for (const line of layout.value.seal?.ringLines ?? []) {
-    if (line.chars.some((char) => pointInside(char.x, char.y))) selection.lines.push(line.lineId);
+    let hit = line.chars.some(
+      (char) =>
+        pointInside(char.x, char.y) ||
+        pointInside(char.x - char.fontSize * 0.6, char.y - char.fontSize) ||
+        pointInside(char.x + char.fontSize * 0.6, char.y + char.fontSize * 0.4),
+    );
+    if (!hit) {
+      // Проверяем саму дугу: иначе тонкую строку легко «перепрыгнуть».
+      const from = Math.min(line.startAngle, line.endAngle);
+      const to = Math.max(line.startAngle, line.endAngle);
+      for (let angle = from; angle <= to; angle += 2) {
+        const radians = (angle * Math.PI) / 180;
+        if (pointInside(line.cx + Math.cos(radians) * line.radius, line.cy + Math.sin(radians) * line.radius)) {
+          hit = true;
+          break;
+        }
+      }
+    }
+    if (hit) selection.lines.push(line.lineId);
   }
   layout.value.lines.forEach((line, index) => {
     const inside =
@@ -870,8 +957,9 @@ function onMarqueeUp(event: PointerEvent): void {
   });
   for (const [index, ring] of (layout.value.seal?.ink.rings ?? []).entries()) {
     let intersects = false;
-    for (let step = 0; step < 32; step += 1) {
-      const angle = (step / 32) * Math.PI * 2;
+    // Частая выборка: кольцо тонкое, 32 точки его легко пропускают.
+    for (let step = 0; step < 96; step += 1) {
+      const angle = (step / 96) * Math.PI * 2;
       if (pointInside(ring.cx + Math.cos(angle) * ring.radius, ring.cy + Math.sin(angle) * ring.radius)) {
         intersects = true;
         break;
@@ -904,7 +992,45 @@ function mergeSelections(
 }
 
 
+function blurActive(): void {
+  const active = document.activeElement as HTMLElement | null;
+  if (
+    active &&
+    (active.tagName === 'INPUT' ||
+      active.tagName === 'TEXTAREA' ||
+      active.tagName === 'SELECT' ||
+      active.isContentEditable)
+  ) {
+    active.blur();
+  }
+}
+
+/** Клики/панорама по всей площади превью, а не только по квадрату оттиска. */
+function onRootPointerDown(event: PointerEvent): void {
+  if (event.target === canvas.value) return;
+  blurActive();
+  if (event.button === 1 || (event.button === 0 && spacePressed.value)) {
+    event.preventDefault();
+    startDrag(event, {
+      kind: 'pan',
+      startX: event.clientX,
+      startY: event.clientY,
+      startPanX: pan.value.x,
+      startPanY: pan.value.y,
+    });
+    return;
+  }
+  if (event.button !== 0) return;
+  const target = event.target as HTMLElement | null;
+  if (target?.closest('button') || target?.closest('[data-testid=seal-text-menu]')) return;
+  const point = toSealPoint(event);
+  if (!point) return;
+  // Пустая область вокруг оттиска — тоже начало рамки выделения.
+  startMarquee(event, point);
+}
+
 function onCanvasDown(event: PointerEvent): void {
+  blurActive();
   // Средняя кнопка и пробел+ЛКМ — панорамирование, а не выделение.
   if (event.button === 1 || (event.button === 0 && spacePressed.value)) {
     event.preventDefault();
@@ -1310,17 +1436,23 @@ onBeforeUnmount(() => {
 
 <template>
   <div
-    class="relative overflow-hidden"
-    :style="{ width: `${displaySize}px`, height: `${displaySize}px` }"
+    class="relative h-full w-full overflow-hidden"
+    data-testid="seal-preview"
     :class="spacePressed ? 'cursor-grab' : ''"
     @wheel="onWheel"
+    @pointerdown="onRootPointerDown"
+    @contextmenu="onContextMenu"
   >
     <div
-      class="absolute inset-0"
+      class="absolute left-1/2 top-1/2"
       data-testid="seal-preview-content"
       :data-selected-reference="selectedReference ? 'true' : 'false'"
       :data-reference-visible="reference?.visible ? 'true' : 'false'"
-      :style="{ transform: `translate(${pan.x}px, ${pan.y}px)` }"
+      :style="{
+        width: `${displaySize}px`,
+        height: `${displaySize}px`,
+        transform: `translate(calc(-50% + ${pan.x}px), calc(-50% + ${pan.y}px))`,
+      }"
     >
       <!-- Образец печати: под оттиском, не часть печати. -->
       <img
@@ -1347,7 +1479,6 @@ onBeforeUnmount(() => {
         @pointerdown="onCanvasDown"
         @pointermove="onCanvasMove"
         @dblclick="onDoubleClick"
-        @contextmenu="onContextMenu"
         @auxclick.prevent
       />
 
@@ -1358,7 +1489,7 @@ onBeforeUnmount(() => {
           :key="`ring-handle-${index}`"
           type="button"
           :data-testid="`seal-handle-${index}`"
-          class="absolute z-10 h-3.5 w-3.5 -translate-x-1/2 -translate-y-1/2 cursor-ew-resize rounded-full border-2 border-white bg-brand-500 shadow ring-1 ring-brand-700/40 transition-transform hover:scale-125"
+          class="absolute z-10 h-2 w-2 -translate-x-1/2 -translate-y-1/2 cursor-ew-resize rounded-[1px] border-[1.5px] border-[#355ef0] bg-white shadow-sm"
           :style="{ left: `${point.x}px`, top: `${point.y}px` }"
           title="Потяните, чтобы растянуть или сжать строку"
           @pointerdown="onRingHandleDown"
@@ -1372,7 +1503,7 @@ onBeforeUnmount(() => {
           :key="`center-handle-${index}`"
           type="button"
           :data-testid="`seal-center-handle-${index}`"
-          class="absolute z-10 h-3.5 w-3.5 -translate-x-1/2 -translate-y-1/2 cursor-ew-resize rounded-full border-2 border-white bg-brand-500 shadow ring-1 ring-brand-700/40 transition-transform hover:scale-125"
+          class="absolute z-10 h-2 w-2 -translate-x-1/2 -translate-y-1/2 cursor-ew-resize rounded-[1px] border-[1.5px] border-[#355ef0] bg-white shadow-sm"
           :style="{ left: `${point.x}px`, top: `${point.y}px` }"
           title="Потяните, чтобы растянуть или сжать строку центра"
           @pointerdown="onCenterHandleDown($event, selectedCenterIndex)"
@@ -1386,7 +1517,7 @@ onBeforeUnmount(() => {
           :key="`logo-${point.corner}`"
           type="button"
           :data-testid="`seal-logo-handle-${point.corner}`"
-          class="absolute z-10 h-2 w-2 -translate-x-1/2 -translate-y-1/2 rounded-[1px] border-[1.5px] border-[#2f6bff] bg-white shadow-sm"
+          class="absolute z-10 h-2 w-2 -translate-x-1/2 -translate-y-1/2 rounded-[1px] border-[1.5px] border-[#355ef0] bg-white shadow-sm"
           :class="point.corner === 'nw' || point.corner === 'se' ? 'cursor-nwse-resize' : 'cursor-nesw-resize'"
           :style="{ left: `${point.x}px`, top: `${point.y}px` }"
           title="Потяните, чтобы изменить размер (Shift — с сохранением пропорций)"
@@ -1397,7 +1528,7 @@ onBeforeUnmount(() => {
           type="button"
           data-testid="seal-logo-rotate"
           class="absolute z-10 flex h-[22px] w-[22px] -translate-x-1/2 -translate-y-1/2 cursor-grab items-center justify-center rounded-full border-2 border-white shadow"
-          style="background-color: #2f6bff"
+          style="background-color: #355ef0"
           :style="{ left: `${logoRotatePoint.x}px`, top: `${logoRotatePoint.y}px` }"
           title="Повернуть логотип"
           @pointerdown="onLogoRotateDown"
@@ -1410,13 +1541,13 @@ onBeforeUnmount(() => {
       </template>
 
       <!-- Маркеры образца: углы + поворот -->
-      <template v-if="handles && selectedReference && reference">
+      <template v-if="handles && selectedReference && reference && !reference.locked">
         <button
           v-for="point in referenceHandlePoints"
           :key="`ref-${point.corner}`"
           type="button"
           :data-testid="`seal-ref-handle-${point.corner}`"
-          class="absolute z-10 h-2 w-2 -translate-x-1/2 -translate-y-1/2 rounded-[1px] border-[1.5px] border-[#2f6bff] bg-white shadow-sm"
+          class="absolute z-10 h-2 w-2 -translate-x-1/2 -translate-y-1/2 rounded-[1px] border-[1.5px] border-[#355ef0] bg-white shadow-sm"
           :class="point.corner === 'nw' || point.corner === 'se' ? 'cursor-nwse-resize' : 'cursor-nesw-resize'"
           :style="{ left: `${point.x}px`, top: `${point.y}px` }"
           title="Потяните, чтобы изменить размер (Shift — с сохранением пропорций)"
@@ -1427,7 +1558,7 @@ onBeforeUnmount(() => {
           type="button"
           data-testid="seal-ref-rotate"
           class="absolute z-10 flex h-[22px] w-[22px] -translate-x-1/2 -translate-y-1/2 cursor-grab items-center justify-center rounded-full border-2 border-white shadow"
-          style="background-color: #2f6bff"
+          style="background-color: #355ef0"
           :style="{ left: `${referenceRotatePoint.x}px`, top: `${referenceRotatePoint.y}px` }"
           title="Повернуть образец"
           @pointerdown="onReferenceRotateDown"

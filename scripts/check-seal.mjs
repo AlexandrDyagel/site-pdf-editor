@@ -1706,6 +1706,137 @@ try {
     groupDelete.after < groupDelete.before && groupDelete.card === false,
     JSON.stringify(groupDelete));
 
+  console.log('\n18. Фокус, вся площадь превью и замок образца');
+
+  const focusBlurState = await cdp.evaluate(`(async () => {
+    Array.from(document.querySelectorAll('[data-testid=seal-designer] [role=tab]'))
+      .find((n) => n.textContent.trim() === 'Текст')?.click();
+    await new Promise((r) => setTimeout(r, 300));
+    document.querySelector('[data-testid=seal-add-ring-line]')?.click();
+    await new Promise((r) => setTimeout(r, 500));
+    const stamp = await import('/src/services/stampRenderService.ts');
+    const layout = () => stamp.computeStampLayout(window.__SEAL_DESIGNER__, (id) => window.__PDF_EDITOR__.fonts.familyOf(id));
+    const line = layout().seal.ringLines[0];
+    if (!line) return { error: 'нет строки' };
+    const ch = line.chars[Math.floor(line.chars.length / 2)];
+    const canvas = document.querySelector('[data-testid=seal-preview-canvas]');
+    const rect = canvas.getBoundingClientRect();
+    const zoom = rect.width / window.__SEAL_DESIGNER__.width;
+    const radians = (ch.angle * Math.PI) / 180;
+    const glyphWidth = ch.fontSize * 0.6;
+    const x = rect.left + (ch.x + Math.cos(radians) * glyphWidth / 2 + Math.sin(radians) * ch.fontSize * 0.35) * zoom;
+    const y = rect.top + (ch.y + Math.sin(radians) * glyphWidth / 2 - Math.cos(radians) * ch.fontSize * 0.35) * zoom;
+    canvas.dispatchEvent(new MouseEvent('dblclick', { bubbles: true, clientX: x, clientY: y }));
+    await new Promise((r) => setTimeout(r, 400));
+    const before = document.activeElement?.tagName;
+    canvas.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, clientX: rect.left + 4, clientY: rect.top + 4, button: 0, pointerId: 701 }));
+    canvas.dispatchEvent(new PointerEvent('pointerup', { bubbles: true, pointerId: 701 }));
+    await new Promise((r) => setTimeout(r, 300));
+    const after = document.activeElement?.tagName;
+    return { before, after, inputFocusedBefore: before === 'INPUT', inputFocusedAfter: after === 'INPUT' };
+  })()`);
+  check('клик по пустому месту снимает фокус с поля текста',
+    focusBlurState.inputFocusedBefore === true && focusBlurState.inputFocusedAfter === false,
+    JSON.stringify(focusBlurState));
+
+  const fullArea = await cdp.evaluate(`(async () => {
+    const box = document.querySelector('[data-testid=seal-preview-box]').getBoundingClientRect();
+    const canvas = document.querySelector('[data-testid=seal-preview-canvas]').getBoundingClientRect();
+    const root = document.querySelector('[data-testid=seal-preview]');
+    const content = document.querySelector('[data-testid=seal-preview-content]');
+    const rootRect = root.getBoundingClientRect();
+    root.dispatchEvent(new MouseEvent('contextmenu', {
+      bubbles: true, clientX: rootRect.right - 6, clientY: rootRect.bottom - 6, button: 2,
+    }));
+    await new Promise((r) => setTimeout(r, 300));
+    const menu = Boolean(document.querySelector('[data-testid=seal-text-menu]'));
+    document.body.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true }));
+    const before = content.style.transform;
+    root.dispatchEvent(new WheelEvent('wheel', { bubbles: true, cancelable: true, deltaY: 90 }));
+    await new Promise((r) => setTimeout(r, 200));
+    return {
+      menu,
+      wider: box.width > canvas.width + 20 && box.height > canvas.height + 20,
+      before,
+      after: content.style.transform,
+    };
+  })()`);
+  check('превью работает по всей площади, а не только по квадрату оттиска',
+    fullArea.wider === true && fullArea.menu === true, JSON.stringify(fullArea));
+  check('панорама двигает содержимое превью', fullArea.after !== fullArea.before,
+    JSON.stringify({ before: fullArea.before, after: fullArea.after }));
+
+  const lock = await cdp.evaluate(`(async () => {
+    const t = window.__SEAL_DESIGNER__;
+    t.lines = [];
+    t.seal.lines = [];
+    t.logos = [];
+    t.logo = null;
+    const c = document.createElement('canvas');
+    c.width = 120; c.height = 120;
+    const x = c.getContext('2d');
+    x.fillStyle = '#f59e0b'; x.fillRect(0, 0, 120, 120);
+    window.__SEAL_REFERENCE__.set({
+      src: c.toDataURL('image/png'),
+      x: t.width / 2, y: t.height / 2,
+      width: t.width * 0.7, height: t.height * 0.7,
+      rotation: 0, opacity: 0.7, visible: true, locked: false,
+    });
+    await new Promise((r) => setTimeout(r, 600));
+    const canvas = document.querySelector('[data-testid=seal-preview-canvas]');
+    const rect = canvas.getBoundingClientRect();
+    const center = { x: rect.left + rect.width / 2, y: rect.top + rect.height / 2 };
+    canvas.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, clientX: center.x, clientY: center.y, button: 0, pointerId: 710 }));
+    canvas.dispatchEvent(new PointerEvent('pointerup', { bubbles: true, pointerId: 710 }));
+    await new Promise((r) => setTimeout(r, 400));
+    const tab = Array.from(document.querySelectorAll('[data-testid=seal-designer] [role=tab]'))
+      .find((n) => n.getAttribute('aria-selected') === 'true')?.textContent.trim();
+    const handlesBefore = document.querySelectorAll('[data-testid^=seal-ref-handle-]').length;
+    document.querySelector('[data-testid=seal-reference-lock] button')?.click();
+    await new Promise((r) => setTimeout(r, 300));
+    const locked = window.__SEAL_REFERENCE__.get()?.locked;
+    canvas.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, clientX: center.x, clientY: center.y, button: 0, pointerId: 711 }));
+    canvas.dispatchEvent(new PointerEvent('pointerup', { bubbles: true, pointerId: 711 }));
+    await new Promise((r) => setTimeout(r, 300));
+    const handlesLocked = document.querySelectorAll('[data-testid^=seal-ref-handle-]').length;
+    document.querySelector('[data-testid=seal-reference-lock] button')?.click();
+    await new Promise((r) => setTimeout(r, 300));
+    canvas.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, clientX: center.x, clientY: center.y, button: 0, pointerId: 712 }));
+    canvas.dispatchEvent(new PointerEvent('pointerup', { bubbles: true, pointerId: 712 }));
+    await new Promise((r) => setTimeout(r, 300));
+    const handlesUnlocked = document.querySelectorAll('[data-testid^=seal-ref-handle-]').length;
+    return { tab, handlesBefore, locked, handlesLocked, handlesUnlocked };
+  })()`);
+  check('выбор образца открывает вкладку «Образец»', lock.tab === 'Образец' && lock.handlesBefore === 4,
+    JSON.stringify(lock));
+  check('замок образца отключает клики по нему',
+    lock.locked === true && lock.handlesLocked === 0 && lock.handlesUnlocked === 4, JSON.stringify(lock));
+
+  const marginMarquee = await cdp.evaluate(`(async () => {
+    document.body.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true }));
+    const t = window.__SEAL_DESIGNER__;
+    const { createSealRingLine } = await import('/src/services/sealRenderService.ts');
+    if (t.seal.lines.length < 2) {
+      t.seal.lines.push(createSealRingLine({ text: 'ВЕРХНЯЯ', slot: 0, side: 'top', fontSize: 5 }));
+      t.seal.lines.push(createSealRingLine({ text: 'НИЖНЯЯ', slot: 0, side: 'bottom', fontSize: 5 }));
+    }
+    await new Promise((r) => setTimeout(r, 500));
+    const root = document.querySelector('[data-testid=seal-preview]');
+    const rect = root.getBoundingClientRect();
+    const start = { x: rect.left + 4, y: rect.top + 4 };
+    const end = { x: rect.right - 4, y: rect.bottom - 4 };
+    root.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, clientX: start.x, clientY: start.y, button: 0, pointerId: 720 }));
+    window.dispatchEvent(new PointerEvent('pointermove', { bubbles: true, clientX: end.x, clientY: end.y, pointerId: 720 }));
+    window.dispatchEvent(new PointerEvent('pointerup', { bubbles: true, pointerId: 720 }));
+    await new Promise((r) => setTimeout(r, 500));
+    return {
+      card: Boolean(document.querySelector('[data-testid=seal-multi-card]')),
+      text: document.querySelector('[data-testid=seal-multi-card]')?.textContent?.trim() ?? '',
+    };
+  })()`);
+  check('рамкой можно выделять объекты по всей площади превью', marginMarquee.card === true,
+    JSON.stringify(marginMarquee));
+
   await cdp.evaluate(`window.__PDF_EDITOR__.ui.closeAllModals(); 'ok'`);
   await sleep(600);
 

@@ -1162,6 +1162,12 @@ function selectReference(): void {
   selectedRingIndex.value = null;
   selectedLogo.value = false;
   selectedLogoIndex.value = null;
+  tab.value = 'sample';
+  void nextTick(() => {
+    rightColumn.value
+      ?.querySelector('[data-testid=seal-reference-controls]')
+      ?.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+  });
 }
 
 /** Загрузка картинки-образца из файла. */
@@ -1209,6 +1215,18 @@ function toggleReference(): void {
 function setReferenceOpacity(value: number): void {
   if (!reference.value) return;
   reference.value = { ...reference.value, opacity: Math.min(1, Math.max(0.05, value)) };
+}
+
+/** Замок образца: клики по нему больше не выбирают и не двигают его. */
+function toggleReferenceLock(): void {
+  if (!reference.value) return;
+  const locked = !reference.value.locked;
+  reference.value = { ...reference.value, locked };
+  if (locked) selectedReference.value = false;
+  ui.notify.info(
+    locked ? 'Образец заблокирован' : 'Образец разблокирован',
+    locked ? 'Клики по нему игнорируются — случайно не сдвинете' : 'Образец снова можно двигать и поворачивать',
+  );
 }
 
 function removeReference(): void {
@@ -1442,7 +1460,7 @@ function onPickEnd(color: string | null): void {
 
         <!-- Большое превью -->
         <div
-          class="relative flex h-[430px] items-center justify-center overflow-hidden rounded-xl border border-slate-200 p-4 transition-colors dark:border-slate-700"
+          class="relative flex h-[430px] items-center justify-center overflow-hidden rounded-xl border border-slate-200 p-0 transition-colors dark:border-slate-700"
           :class="previewBg ? '' : 'checker-bg'"
           :style="previewBg ? { backgroundColor: previewBg } : undefined"
           data-testid="seal-preview-box"
@@ -1877,6 +1895,19 @@ function onPickEnd(color: string | null): void {
 
         <!-- Образец: готовые шаблоны и картинка-подложка -->
         <div v-show="tab === 'sample'" class="space-y-3" data-testid="seal-sample-tab">
+          <div
+            v-if="reference"
+            class="rounded-lg border border-slate-200 px-2.5 py-2 dark:border-slate-700"
+            data-testid="seal-reference-lock"
+          >
+            <AppToggle
+              :model-value="reference.locked === true"
+              label="Замок образца"
+              hint="Клики по образцу игнорируются: его нельзя случайно сдвинуть, растянуть или повернуть. Снимите замок, чтобы снова редактировать."
+              @update:model-value="toggleReferenceLock"
+            />
+          </div>
+
           <AppSection title="Образцы печати" icon="layers">
             <div class="flex flex-wrap gap-1.5">
               <AppButton
