@@ -63,6 +63,7 @@ import {
   computeStampLayout,
   createCircularText,
   createSealTemplate,
+  createStampLine,
   createStampTemplate,
   fitStampTemplate,
   stampTemplateToSvg,
@@ -796,9 +797,28 @@ check(
 /* --- строки по кольцам --------------------------------------------------- */
 
 const defaultSeal = createSealSettings();
+check('по умолчанию диаметр 38 мм', defaultSeal.diameterMm === 38, String(defaultSeal.diameterMm));
 check('по умолчанию две строки по кольцам', defaultSeal.lines.length === 2, String(defaultSeal.lines.length));
 check('по умолчанию «эффект живой печати» выключен', defaultSeal.ink.enabled === false);
 check('по умолчанию угол строки 1°', defaultSeal.lines.every((line) => line.spanAngle === 1));
+
+const thinRing = normalizeSealSettings({
+  ...defaultSeal,
+  rings: [{ width: 0.2, gap: 0 }, { width: 0.2, gap: 4 }],
+});
+check('толщина кольца 0.2 pt сохраняется', thinRing.rings[0].width === 0.2, String(thinRing.rings[0].width));
+
+// Кегль центральной строки не должен зависеть от трекинга и межсловных
+// интервалов — меняется только ширина.
+const spacingTemplate = createSealTemplate({
+  lines: [createStampLine('ОЧЕНЬ ДЛИННАЯ СТРОКА', { fontSize: 10, letterSpacing: 24, wordSpacing: 20 })],
+});
+const spacingLayout = computeStampLayout(spacingTemplate, () => 'PT Sans');
+check(
+  'кегль строки центра не сжимается от трекинга и интервалов',
+  Math.abs(spacingLayout.lines[0].fontSize - 10) < 0.01,
+  String(spacingLayout.lines[0].fontSize),
+);
 
 const normalizedLines = normalizeSealSettings({
   ...defaultSeal,

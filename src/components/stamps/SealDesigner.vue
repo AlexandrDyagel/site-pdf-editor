@@ -226,7 +226,7 @@ watch(
     const rememberedBackground = readSealBackground(draftKey.value);
     if (draft) {
       template.value = withSealSettings(draft.template);
-      zoom.value = Math.min(6, Math.max(0.5, draft.zoom || fitZoomValue()));
+      zoom.value = Math.min(12, Math.max(0.5, draft.zoom || fitZoomValue()));
       tab.value = draft.tab || 'rings';
       // Фон запоминается отдельно: он переживает и вставку, и закрытие окна.
       previewBg.value = rememberedBackground ?? draft.background;
@@ -317,7 +317,7 @@ function fitZoom(): void {
 }
 
 function setZoom(value: number): void {
-  zoom.value = Math.min(6, Math.max(0.5, Math.round(value * 100) / 100));
+  zoom.value = Math.min(12, Math.max(0.5, Math.round(value * 100) / 100));
 }
 
 /** Ctrl+колесо на превью: плавный зум с сохранением панорамы. */
@@ -1443,7 +1443,7 @@ function onPickEnd(color: string | null): void {
               data-testid="seal-zoom"
               type="range"
               min="0.5"
-              max="6"
+              max="12"
               step="0.25"
               class="h-1.5 w-28 cursor-pointer appearance-none rounded-full bg-slate-200 accent-brand-600 dark:bg-slate-700"
             />
@@ -1642,7 +1642,7 @@ function onPickEnd(color: string | null): void {
                 :model-value="ring.width"
                 label="Толщина"
                 unit="pt"
-                :min="0.4"
+                :min="0.2"
                 :max="8"
                 :step="0.1"
                 :precision="1"

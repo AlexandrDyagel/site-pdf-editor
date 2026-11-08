@@ -110,7 +110,7 @@ try {
   check('окно конструктора открылось', initial.open === true);
   check('превью нарисовано', initial.painted > 2000, `пикселей: ${initial.painted}`);
   check('по умолчанию две строки текста', initial.lines === 2, String(initial.lines));
-  check('по умолчанию печать 40 мм = 113 px', initial.mm === 40 && Math.abs(initial.width - 113.39) < 0.5);
+  check('по умолчанию печать 38 мм = 108 px', initial.mm === 38 && Math.abs(initial.width - 107.72) < 0.6);
   check('угол дуги по умолчанию — 1°', initial.span === 1, String(initial.span));
   check('«эффект живой печати» по умолчанию выключен', initial.ink === false);
   check('кнопка полной очистки превью есть', initial.clear === true);
@@ -1836,6 +1836,163 @@ try {
   })()`);
   check('рамкой можно выделять объекты по всей площади превью', marginMarquee.card === true,
     JSON.stringify(marginMarquee));
+
+  console.log('\n19. Зум, кегль, оси центрирования и размеры колец');
+
+  const zoomMax = await cdp.evaluate(`(async () => {
+    const slider = document.querySelector('[data-testid=seal-zoom]');
+    slider.value = '12';
+    slider.dispatchEvent(new Event('input', { bubbles: true }));
+    await new Promise((r) => setTimeout(r, 300));
+    const text = slider.parentElement?.textContent?.replace(/\\s+/g, ' ').trim() ?? '';
+    const ok = text.includes('1200%');
+    slider.value = '3';
+    slider.dispatchEvent(new Event('input', { bubbles: true }));
+    await new Promise((r) => setTimeout(r, 200));
+    return { max: slider.max, text, ok };
+  })()`);
+  check('зум превью доходит до 1200%', zoomMax.max === '12' && zoomMax.ok === true, JSON.stringify(zoomMax));
+
+  const geometry = await cdp.evaluate(`(async () => {
+    const stamp = await import('/src/services/stampRenderService.ts');
+    const t = window.__SEAL_DESIGNER__;
+    const layout = () => stamp.computeStampLayout(t, (id) => window.__PDF_EDITOR__.fonts.familyOf(id));
+    // Кольцо: минимальная толщина.
+    while (t.seal.rings.length < 1) {
+      document.querySelector('[data-testid=seal-add-ring]')?.click();
+      await new Promise((r) => setTimeout(r, 300));
+    }
+    Array.from(document.querySelectorAll('[data-testid=seal-designer] [role=tab]'))
+      .find((n) => n.textContent.trim() === 'Кольца')?.click();
+    await new Promise((r) => setTimeout(r, 300));
+    const widthInput = document.querySelector('[data-testid=seal-ring-0] input');
+    if (widthInput) {
+      widthInput.value = '0.2';
+      widthInput.dispatchEvent(new Event('input', { bubbles: true }));
+      await new Promise((r) => setTimeout(r, 300));
+    }
+    const ringWidth = t.seal.rings[0]?.width;
+    const layoutWidth = layout().seal.ink.rings[0]?.width;
+
+    // Кегль центра не должен уменьшаться от трекинга и межсловного интервала.
+    Array.from(document.querySelectorAll('[data-testid=seal-designer] [role=tab]'))
+      .find((n) => n.textContent.trim() === 'Центр')?.click();
+    await new Promise((r) => setTimeout(r, 250));
+    if (t.lines.length === 0) {
+      const { createStampLine } = await import('/src/services/stampRenderService.ts');
+      t.lines.push(createStampLine('ЦЕНТР', { fontSize: 10 }));
+      await new Promise((r) => setTimeout(r, 400));
+    }
+    t.lines[0].fontSize = 10;
+    t.lines[0].letterSpacing = 0;
+    t.lines[0].wordSpacing = 0;
+    await new Promise((r) => setTimeout(r, 400));
+    const fontBefore = layout().lines[0]?.fontSize;
+    t.lines[0].letterSpacing = 18;
+    t.lines[0].wordSpacing = 14;
+    await new Promise((r) => setTimeout(r, 400));
+    const fontAfter = layout().lines[0]?.fontSize;
+    return { ringWidth, layoutWidth, fontBefore, fontAfter };
+  })()`);
+  check('минимальная толщина кольца — 0.2 pt',
+    Math.abs(geometry.ringWidth - 0.2) < 0.01 && Math.abs((geometry.layoutWidth ?? 0) - 0.2) < 0.05,
+    JSON.stringify(geometry));
+  check('кегль не меняется от растяжения и интервалов',
+    Math.abs(geometry.fontAfter - geometry.fontBefore) < 0.01,
+    JSON.stringify(geometry));
+
+  const guides = await cdp.evaluate(`(async () => {
+    const stamp = await import('/src/services/stampRenderService.ts');
+    const t = window.__SEAL_DESIGNER__;
+    const line = stamp.computeStampLayout(t, (id) => window.__PDF_EDITOR__.fonts.familyOf(id)).lines[0];
+    const canvas = document.querySelector('[data-testid=seal-preview-canvas]');
+    const rect = canvas.getBoundingClientRect();
+    const zoom = rect.width / t.width;
+    const point = { x: rect.left + (line.x + line.width / 2) * zoom, y: rect.top + (line.baseline - line.fontSize * 0.4) * zoom };
+    canvas.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, clientX: point.x, clientY: point.y, button: 0, pointerId: 801 }));
+    canvas.dispatchEvent(new PointerEvent('pointerup', { bubbles: true, pointerId: 801 }));
+    await new Promise((r) => setTimeout(r, 500));
+    const overlay = document.querySelector('[data-testid=seal-designer] [data-testid=seal-overlay]');
+    const ctx = overlay.getContext('2d');
+    let lit = 0;
+    for (let attempt = 0; attempt < 10 && lit === 0; attempt += 1) {
+      await new Promise((r) => setTimeout(r, 120));
+      const data = ctx.getImageData(0, 0, overlay.width, overlay.height).data;
+      lit = 0;
+      for (let i = 3; i < data.length; i += 4) if (data[i] > 0) lit += 1;
+    }
+    return {
+      selected: window.__SEAL_DESIGNER_STATE__.get().selectedCenterIndex,
+      lit,
+      guides: document.querySelector('[data-testid=seal-preview]').getAttribute('data-guides'),
+      overlay: { w: overlay.width, h: overlay.height },
+    };
+  })()`);
+  check('при выборе текста центра видны оси центрирования',
+    guides.selected !== null && guides.lit > 10, JSON.stringify(guides));
+
+  const marqueeOverlay = await cdp.evaluate(`(async () => {
+    const root = document.querySelector('[data-testid=seal-preview]');
+    const overlay = document.querySelector('[data-testid=seal-overlay]');
+    const rect = root.getBoundingClientRect();
+    root.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, clientX: rect.left + 6, clientY: rect.top + 6, button: 0, pointerId: 802 }));
+    window.dispatchEvent(new PointerEvent('pointermove', { bubbles: true, clientX: rect.right - 6, clientY: rect.bottom - 6, pointerId: 802 }));
+    await new Promise((r) => setTimeout(r, 250));
+    const during = root.getAttribute('data-marquee');
+    const ctx = overlay.getContext('2d');
+    const data = ctx.getImageData(0, 0, overlay.width, overlay.height).data;
+    let lit = 0;
+    for (let i = 3; i < data.length; i += 4) if (data[i] > 0) lit += 1;
+    window.dispatchEvent(new PointerEvent('pointerup', { bubbles: true, pointerId: 802 }));
+    await new Promise((r) => setTimeout(r, 200));
+    return {
+      during,
+      after: root.getAttribute('data-marquee'),
+      lit,
+      overlayWider: overlay.getBoundingClientRect().width > document.querySelector('[data-testid=seal-preview-canvas]').getBoundingClientRect().width + 20,
+    };
+  })()`);
+  check('рамка выделения видна по всей площади превью',
+    marqueeOverlay.during === 'true' && marqueeOverlay.after === 'false' &&
+      marqueeOverlay.lit > 100 && marqueeOverlay.overlayWider === true,
+    JSON.stringify(marqueeOverlay));
+
+  const ringDimension = await cdp.evaluate(`(async () => {
+    const t = window.__SEAL_DESIGNER__;
+    while (t.seal.rings.length < 2) {
+      document.querySelector('[data-testid=seal-add-ring]')?.click();
+      await new Promise((r) => setTimeout(r, 300));
+    }
+    Array.from(document.querySelectorAll('[data-testid=seal-designer] [role=tab]'))
+      .find((n) => n.textContent.trim() === 'Кольца')?.click();
+    await new Promise((r) => setTimeout(r, 300));
+    const stamp = await import('/src/services/stampRenderService.ts');
+    const ring = stamp.computeStampLayout(t, (id) => window.__PDF_EDITOR__.fonts.familyOf(id)).seal.ink.rings[1];
+    const canvas = document.querySelector('[data-testid=seal-preview-canvas]');
+    const rect = canvas.getBoundingClientRect();
+    const zoom = rect.width / t.width;
+    const angle = Math.PI / 4;
+    const point = {
+      x: rect.left + (ring.cx + Math.cos(angle) * ring.radius) * zoom,
+      y: rect.top + (ring.cy + Math.sin(angle) * ring.radius) * zoom,
+    };
+    canvas.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, clientX: point.x, clientY: point.y, button: 0, pointerId: 803 }));
+    window.dispatchEvent(new PointerEvent('pointermove', { bubbles: true, clientX: point.x + 14, clientY: point.y + 10, pointerId: 803 }));
+    await new Promise((r) => setTimeout(r, 300));
+    const before = {
+      annotation: document.querySelector('[data-testid=seal-preview]').getAttribute('data-ring-annotation'),
+      gap: t.seal.rings[1].gap,
+    };
+    window.dispatchEvent(new PointerEvent('pointerup', { bubbles: true, pointerId: 803 }));
+    await new Promise((r) => setTimeout(r, 250));
+    return {
+      before,
+      after: document.querySelector('[data-testid=seal-preview]').getAttribute('data-ring-annotation'),
+    };
+  })()`);
+  check('при перетаскивании кольца видна размерная линия между кольцами',
+    ringDimension.before.annotation === 'true' && ringDimension.after === 'false',
+    JSON.stringify(ringDimension));
 
   await cdp.evaluate(`window.__PDF_EDITOR__.ui.closeAllModals(); 'ok'`);
   await sleep(600);

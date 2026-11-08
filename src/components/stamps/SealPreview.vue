@@ -116,8 +116,15 @@ const spacePressed = ref(false);
 const panning = ref(false);
 /** Рамка выделения в координатах печати. */
 const marquee = ref<{ x1: number; y1: number; x2: number; y2: number } | null>(null);
+/** Живая размерная линия между кольцами при перетаскивании. */
+const ringAnnotation = ref<{ ringIndex: number; radius: number; angle: number } | null>(null);
+const overlay = ref<HTMLCanvasElement | null>(null);
 /** Курсор наведения на выбранное кольцо: две стрелки, как у маркеров. */
 const ringHover = ref<'' | 'ew-resize' | 'ns-resize'>('');
+/** Оси центрирования нужны для выбранной строки центра или группы строк. */
+const guidesVisible = computed(
+  () => props.selectedCenterIndex !== null || (props.selection?.centers.length ?? 0) > 0,
+);
 const cursorStyle = computed(() => {
   if (panning.value) return 'grabbing';
   if (spacePressed.value) return 'grab';
@@ -198,53 +205,17 @@ function draw(): void {
   context.scale(scale, scale);
   paintStampLayout(context, layout.value, { logoImages: logoImages.value });
 
-  // Выбранное кольцо — тонкая сплошная линия, как у объекта на холсте.
+  // Выбранное кольцо — очень мелкий штрих, не сплошная линия.
   if (props.selectedRingIndex !== null && layout.value.seal) {
     const ring = layout.value.seal.ink.rings[props.selectedRingIndex];
     if (ring) {
       context.save();
-      context.lineWidth = 1;
-      context.strokeStyle = '#355ef0';
+      context.setLineDash([2, 2]);
+      context.lineWidth = 0.8;
+      context.strokeStyle = '#2f6bff';
       context.beginPath();
       context.arc(ring.cx, ring.cy, ring.radius, 0, Math.PI * 2);
       context.stroke();
-      context.restore();
-    }
-  }
-
-  // Выбранная строка по кольцу — тонкая рамка вокруг её букв.
-  if (selectedGeometry.value && selectedGeometry.value.chars.length > 0) {
-    const line = selectedGeometry.value;
-    let minX = Number.POSITIVE_INFINITY;
-    let minY = Number.POSITIVE_INFINITY;
-    let maxX = Number.NEGATIVE_INFINITY;
-    let maxY = Number.NEGATIVE_INFINITY;
-    for (const char of line.chars) {
-      minX = Math.min(minX, char.x - char.fontSize * 0.6);
-      minY = Math.min(minY, char.y - char.fontSize);
-      maxX = Math.max(maxX, char.x + char.fontSize * 0.9);
-      maxY = Math.max(maxY, char.y + char.fontSize * 0.4);
-    }
-    context.save();
-    context.lineWidth = 1;
-    context.strokeStyle = '#355ef0';
-    context.strokeRect(minX - 1, minY - 1, maxX - minX + 2, maxY - minY + 2);
-    context.restore();
-  }
-
-  // Выбранная строка центра — такая же тонкая рамка.
-  if (props.selectedCenterIndex !== null) {
-    const line = layout.value.lines[props.selectedCenterIndex];
-    if (line) {
-      context.save();
-      context.lineWidth = 1;
-      context.strokeStyle = '#355ef0';
-      context.strokeRect(
-        line.x - 1,
-        line.baseline - line.fontSize,
-        line.width + 2,
-        line.fontSize * 1.3,
-      );
       context.restore();
     }
   }
@@ -326,29 +297,136 @@ function draw(): void {
         context.stroke();
       }
     }
-    if (marquee.value) {
-      const rect = marquee.value;
-      context.setLineDash([4, 3]);
-      context.strokeRect(
-        Math.min(rect.x1, rect.x2),
-        Math.min(rect.y1, rect.y2),
-        Math.abs(rect.x2 - rect.x1),
-        Math.abs(rect.y2 - rect.y1),
-      );
-    }
     context.restore();
-  } else if (marquee.value) {
-    const rect = marquee.value;
+  }
+}
+
+/** Полноразмерный слой поверх превью: маркиза, оси центрирования, размеры. */
+function drawOverlay(): void {
+  const element = overlay.value;
+  if (!element) return;
+  const root = element.parentElement;
+  const stampCanvas = canvas.value;
+  if (!root || !stampCanvas) return;
+  const rootRect = root.getBoundingClientRect();
+  const ratio = Math.min(3, Math.max(1, window.devicePixelRatio || 1));
+  element.width = Math.max(1, Math.round(rootRect.width * ratio));
+  element.height = Math.max(1, Math.round(rootRect.height * ratio));
+  const context = element.getContext('2d');
+  if (!context) return;
+  context.setTransform(ratio, 0, 0, ratio, 0, 0);
+  context.clearRect(0, 0, rootRect.width, rootRect.height);
+
+  const canvasRect = stampCanvas.getBoundingClientRect();
+  const zoom = canvasRect.width / size.value;
+  const offsetX = canvasRect.left - rootRect.left;
+  const offsetY = canvasRect.top - rootRect.top;
+  const toScreen = (x: number, y: number): { x: number; y: number } => ({
+    x: offsetX + x * zoom,
+    y: offsetY + y * zoom,
+  });
+
+  // Оси центрирования для строк центра (одиночной или группы).
+  if (guidesVisible.value) {
+    const center = toScreen(size.value / 2, size.value / 2);
     context.save();
-    context.setLineDash([3, 2]);
+    context.setLineDash([4, 4]);
     context.lineWidth = 1;
-    context.strokeStyle = '#2f6bff';
-    context.strokeRect(
-      Math.min(rect.x1, rect.x2),
-      Math.min(rect.y1, rect.y2),
-      Math.abs(rect.x2 - rect.x1),
-      Math.abs(rect.y2 - rect.y1),
-    );
+    context.strokeStyle = 'rgba(53, 94, 240, 0.65)';
+    context.beginPath();
+    context.moveTo(0, center.y);
+    context.lineTo(rootRect.width, center.y);
+    context.moveTo(center.x, 0);
+    context.lineTo(center.x, rootRect.height);
+    context.stroke();
+    context.setLineDash([]);
+    context.fillStyle = '#355ef0';
+    context.beginPath();
+    context.arc(center.x, center.y, 2, 0, Math.PI * 2);
+    context.fill();
+    context.restore();
+  }
+
+  // Рамка выделения — тонкая, как на холсте.
+  if (marquee.value) {
+    const rect = marquee.value;
+    const p1 = toScreen(Math.min(rect.x1, rect.x2), Math.min(rect.y1, rect.y2));
+    const p2 = toScreen(Math.max(rect.x1, rect.x2), Math.max(rect.y1, rect.y2));
+    context.save();
+    context.setLineDash([3, 3]);
+    context.lineWidth = 1;
+    context.strokeStyle = '#355ef0';
+    context.strokeRect(p1.x, p1.y, Math.max(1, p2.x - p1.x), Math.max(1, p2.y - p1.y));
+    context.restore();
+  }
+
+  // Живая размерная линия между кольцами при перетаскивании.
+  const annotation = ringAnnotation.value;
+  const rings = layout.value.seal?.ink.rings ?? [];
+  if (annotation && rings[annotation.ringIndex] && rings[annotation.ringIndex - 1]) {
+    const previous = rings[annotation.ringIndex - 1];
+    const current = rings[annotation.ringIndex];
+    const fromRadius = previous.radius - previous.width / 2;
+    const toRadius = annotation.radius + current.width / 2;
+    const direction = { x: Math.cos(annotation.angle), y: Math.sin(annotation.angle) };
+    const center = toScreen(size.value / 2, size.value / 2);
+    const p1 = {
+      x: center.x + direction.x * fromRadius * zoom,
+      y: center.y + direction.y * fromRadius * zoom,
+    };
+    const p2 = {
+      x: center.x + direction.x * toRadius * zoom,
+      y: center.y + direction.y * toRadius * zoom,
+    };
+    const distance = Math.abs(fromRadius - toRadius);
+    context.save();
+    context.lineWidth = 1;
+    context.strokeStyle = '#355ef0';
+    context.beginPath();
+    context.moveTo(p1.x, p1.y);
+    context.lineTo(p2.x, p2.y);
+    context.stroke();
+    // Стрелки на концах.
+    const angle = annotation.angle;
+    const arrow = 5;
+    for (const point of [p1, p2]) {
+      context.beginPath();
+      context.moveTo(
+        point.x + Math.cos(angle + 2.6) * arrow,
+        point.y + Math.sin(angle + 2.6) * arrow,
+      );
+      context.lineTo(point.x, point.y);
+      context.lineTo(
+        point.x + Math.cos(angle - 2.6) * arrow,
+        point.y + Math.sin(angle - 2.6) * arrow,
+      );
+      context.stroke();
+    }
+    const middle = { x: (p1.x + p2.x) / 2, y: (p1.y + p2.y) / 2 };
+    const text = `${distance.toFixed(1)} pt`;
+    context.font = '600 11px Ui Sans, system-ui, sans-serif';
+    const textWidth = context.measureText(text).width;
+    const perp = { x: -Math.sin(angle), y: Math.cos(angle) };
+    // У мелких зазоров линия короткая — выносим подпись наружу по радиусу,
+    // чтобы число всегда читалось.
+    const labelX = middle.x + direction.x * 30 + perp.x * 10;
+    const labelY = middle.y + direction.y * 30 + perp.y * 10;
+    context.beginPath();
+    context.moveTo(middle.x, middle.y);
+    context.lineTo(labelX, labelY);
+    context.stroke();
+    context.fillStyle = 'rgba(255, 255, 255, 0.92)';
+    context.strokeStyle = '#c7d2fe';
+    const boxX = labelX - textWidth / 2 - 4;
+    const boxY = labelY - 8;
+    context.beginPath();
+    context.roundRect(boxX, boxY, textWidth + 8, 16, 4);
+    context.fill();
+    context.stroke();
+    context.fillStyle = '#1d3fb5';
+    context.textAlign = 'center';
+    context.textBaseline = 'middle';
+    context.fillText(text, labelX, labelY + 0.5);
     context.restore();
   }
 }
@@ -356,16 +434,23 @@ function draw(): void {
 watch(() => props.template, async () => {
   await ensureLogo();
   draw();
+  drawOverlay();
 }, { deep: true });
-watch(() => props.zoom, () => draw());
-watch(() => props.selectedRingIndex, () => draw());
-watch(() => props.selectedLogoIndex, () => draw());
-watch(() => props.selectedLogo, () => draw());
-watch(() => props.selectedReference, () => draw());
-watch(() => props.selection, () => draw(), { deep: true });
-watch(marquee, () => draw(), { deep: true });
-watch(() => props.reference, () => draw(), { deep: true });
-watch(() => fonts.loadedOnce, () => draw());
+watch(() => props.zoom, () => {
+  draw();
+  drawOverlay();
+});
+watch(pan, () => drawOverlay(), { deep: true });
+watch(() => props.selectedRingIndex, () => { draw(); drawOverlay(); });
+watch(() => props.selectedCenterIndex, () => { draw(); drawOverlay(); });
+watch(() => props.selectedLogoIndex, () => { draw(); drawOverlay(); });
+watch(() => props.selectedLogo, () => { draw(); drawOverlay(); });
+watch(() => props.selectedReference, () => { draw(); drawOverlay(); });
+watch(() => props.selection, () => { draw(); drawOverlay(); }, { deep: true });
+watch(marquee, () => drawOverlay(), { deep: true });
+watch(ringAnnotation, () => drawOverlay(), { deep: true });
+watch(() => props.reference, () => { draw(); drawOverlay(); }, { deep: true });
+watch(() => fonts.loadedOnce, () => { draw(); drawOverlay(); });
 
 /* ======================== Геометрия и попадания ======================== */
 
@@ -644,7 +729,13 @@ function onWindowMove(event: PointerEvent): void {
   }
 
   if (state.kind === 'ring') {
-    emit('ring-resize', state.ringIndex, Math.round(Math.hypot(point.x - cx, point.y - cy) * 10) / 10);
+    const radius = Math.hypot(point.x - cx, point.y - cy);
+    ringAnnotation.value = {
+      ringIndex: state.ringIndex,
+      radius,
+      angle: Math.atan2(point.y - cy, point.x - cx),
+    };
+    emit('ring-resize', state.ringIndex, Math.round(radius * 10) / 10);
     return;
   }
 
@@ -737,6 +828,7 @@ function onWindowMove(event: PointerEvent): void {
 function onWindowUp(): void {
   dragState = null;
   panning.value = false;
+  ringAnnotation.value = null;
   window.removeEventListener('pointermove', onWindowMove);
 }
 
@@ -1415,6 +1507,7 @@ defineExpose({ resetPan });
 onMounted(async () => {
   await ensureLogo();
   draw();
+  drawOverlay();
   window.addEventListener('pointerdown', onWindowDown, true);
   window.addEventListener('keydown', onEscape);
   window.addEventListener('keydown', onKeyDown);
@@ -1438,6 +1531,9 @@ onBeforeUnmount(() => {
   <div
     class="relative h-full w-full overflow-hidden"
     data-testid="seal-preview"
+    :data-ring-annotation="ringAnnotation ? 'true' : 'false'"
+    :data-marquee="marquee ? 'true' : 'false'"
+    :data-guides="guidesVisible ? 'true' : 'false'"
     :class="spacePressed ? 'cursor-grab' : ''"
     @wheel="onWheel"
     @pointerdown="onRootPointerDown"
@@ -1570,6 +1666,12 @@ onBeforeUnmount(() => {
         </button>
       </template>
     </div>
+
+    <canvas
+      ref="overlay"
+      data-testid="seal-overlay"
+      class="pointer-events-none absolute inset-0 z-[5] h-full w-full"
+    />
 
     <!-- Контекстное меню (телепорт: не обрезается превью и его полосами) -->
     <Teleport to="body">

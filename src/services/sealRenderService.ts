@@ -48,7 +48,7 @@ export const SEAL_MIN_MM = 30;
 export const SEAL_MAX_MM = 60;
 
 /** Диаметр новой печати, мм. */
-export const SEAL_DEFAULT_MM = 40;
+export const SEAL_DEFAULT_MM = 38;
 
 /** Максимум колец: наружное + два внутренних. */
 export const SEAL_MAX_RINGS = 4;
@@ -277,7 +277,7 @@ export function normalizeSealSettings(seal: SealSettings): SealSettings {
   const rings = (seal.rings?.length ? seal.rings : [createSealRing()])
     .slice(0, SEAL_MAX_RINGS)
     .map((ring, index) => ({
-      width: clamp(ring.width, 0.4, 12),
+      width: clamp(ring.width, 0.2, 12),
       gap: index === 0 ? 0 : clamp(ring.gap, 0.5, 100),
     }));
 
@@ -960,8 +960,6 @@ export function computeSealParts(
     centerLimit = Math.min(centerLimit, inner - 2);
   }
   centerLimit = Math.max(size * 0.1, centerLimit);
-  // Оставляем поле до разделительной окружности: текст не должен её касаться.
-  const maxLineWidth = Math.max(6, centerLimit * 1.45);
 
   const visibleLines = template.lines.filter((line) => line.text.trim().length > 0);
   const lineMetrics = visibleLines.map((line) => {
@@ -975,13 +973,8 @@ export function computeSealParts(
       wordSpacing: line.wordSpacing ?? 0,
       lineHeight: 1.25,
     });
-    let fontSize = Math.max(3, line.fontSize);
-    let lineWidth = measureTextWidth(line.text, style(fontSize));
-    // Длинная строка в центре — уменьшаем кегль, чтобы не вылезти за дуги.
-    if (lineWidth > maxLineWidth) {
-      fontSize = Math.max(3, fontSize * (maxLineWidth / lineWidth));
-      lineWidth = measureTextWidth(line.text, style(fontSize));
-    }
+    const fontSize = Math.max(3, line.fontSize);
+    const lineWidth = measureTextWidth(line.text, style(fontSize));
     return { line, family, fontSize, lineWidth, height: fontSize * 1.32 };
   });
 
