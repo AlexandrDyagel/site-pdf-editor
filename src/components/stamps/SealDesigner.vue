@@ -821,6 +821,36 @@ function onGroupMove(dx: number, dy: number): void {
           : item,
       );
     }
+    // Группа текста притягивается к осям своим общим центром.
+    if (selection.centers.length > 0) {
+      const layout = computeStampLayout(template.value, (id) => fonts.familyOf(id));
+      const boxes = selection.centers
+        .map((layoutIndex) => layout.lines[layoutIndex])
+        .filter((item) => Boolean(item));
+      if (boxes.length > 0) {
+        const left = Math.min(...boxes.map((item) => item.x));
+        const right = Math.max(...boxes.map((item) => item.x + item.width));
+        const top = Math.min(...boxes.map((item) => item.baseline - item.fontSize));
+        const bottom = Math.max(...boxes.map((item) => item.baseline));
+        const groupX = (left + right) / 2;
+        const groupY = (top + bottom) / 2;
+        const center = sizeCenter();
+        const snapX = Math.abs(groupX - center) < 2 ? center - groupX : 0;
+        const snapY = Math.abs(groupY - center) < 2 ? center - groupY : 0;
+        if (snapX !== 0 || snapY !== 0) {
+          for (const layoutIndex of selection.centers) {
+            const index = templateCenterIndex(layoutIndex);
+            const line = template.value.lines[index];
+            if (!line) continue;
+            template.value.lines[index] = {
+              ...line,
+              offsetX: Math.round(((line.offsetX ?? 0) + snapX) * 10) / 10,
+              offsetY: Math.round((line.offsetY + snapY) * 10) / 10,
+            };
+          }
+        }
+      }
+    }
   }
   for (const index of selection.logos) {
     const logo = stampLogos.value[index];
@@ -934,7 +964,27 @@ function deleteLine(lineId: string): void {
 }
 
 function onSpanChange(lineId: string, angle: number): void {
-  updateLine(lineId, { spanAngle: Math.min(400, Math.max(1, Math.round(angle * 10) / 10)) });
+  const settings = template.value.seal;
+  if (!settings) return;
+  const line = settings.lines.find((item) => item.id === lineId);
+  if (!line) return;
+  const target = Math.min(400, Math.max(1, angle));
+  const layout = computeStampLayout(template.value, (id) => fonts.familyOf(id));
+  const geometry = layout.seal?.ringLines.find((item) => item.lineId === lineId);
+  const count = Array.from(line.text).length;
+  if (!geometry || count === 0) {
+    updateLine(lineId, { spanAngle: target });
+    return;
+  }
+  // Тянем за маркер — меняем именно трекинг, чтобы ползунок «Между буквами»
+  // показывал реальное значение. Угол при этом остаётся естественным.
+  const actual = Math.abs(geometry.endAngle - geometry.startAngle);
+  const delta = ((target - actual) * Math.PI * geometry.radius) / (180 * count);
+  const letterSpacing = Math.round(((line.letterSpacing ?? 0) + delta) * 10) / 10;
+  updateLine(lineId, {
+    spanAngle: 1,
+    letterSpacing: Math.min(60, Math.max(-4, letterSpacing)),
+  });
 }
 
 function onLineMove(lineId: string, radiusOffset: number, angleOffset: number): void {
@@ -1785,6 +1835,17 @@ function onPickEnd(color: string | null): void {
                     @click="updateCenterLine(index, { italic: !line.italic })"
                   >
                     К
+                  </AppButton>
+                  <AppButton
+                    size="sm"
+                    variant="subtle"
+                    icon="alignCenter"
+                    block
+                    title="Центрировать по вертикальной оси печати"
+                    data-testid="seal-center-align"
+                    @click="updateCenterLine(index, { offsetX: 0 })"
+                  >
+                    Ц
                   </AppButton>
                 </div>
               </div>

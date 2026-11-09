@@ -129,16 +129,13 @@ try {
       const line = layout.seal.ringLines[index];
       if (!line) return null;
       const ch = line.chars[Math.floor(line.chars.length / 2)];
-      const canvas = document.querySelector('[data-testid=seal-preview-canvas]');
-      const rect = canvas.getBoundingClientRect();
-      const zoom = rect.width / t.width;
       const rad = (ch.angle * Math.PI) / 180;
       const w = ch.fontSize * 0.6;
-      return {
-        x: rect.left + (ch.x + Math.cos(rad) * w / 2 + Math.sin(rad) * ch.fontSize * 0.35) * zoom,
-        y: rect.top + (ch.y + Math.sin(rad) * w / 2 - Math.cos(rad) * ch.fontSize * 0.35) * zoom,
-        lineId: line.lineId,
-      };
+      const point = window.__SEAL_PREVIEW__.client(
+        ch.x + Math.cos(rad) * w / 2 + Math.sin(rad) * ch.fontSize * 0.35,
+        ch.y + Math.sin(rad) * w / 2 - Math.cos(rad) * ch.fontSize * 0.35,
+      );
+      return { ...point, lineId: line.lineId };
     };
     window.__sealLineInfo = (lineId) => {
       const app = window.__PDF_EDITOR__;
@@ -354,7 +351,10 @@ try {
   check('трекинг растягивает фактический угол', tracking.spanAfter > tracking.spanBefore,
     `${tracking.spanBefore.toFixed(1)}° → ${tracking.spanAfter.toFixed(1)}°`);
 
-  const spanStart = await cdp.evaluate(`window.__SEAL_DESIGNER__.seal.lines[0].spanAngle`);
+  const spanStart = await cdp.evaluate(`(() => {
+    const line = window.__SEAL_DESIGNER__.seal.lines[0];
+    return { span: window.__sealLineInfo(line.id).span, tracking: line.letterSpacing };
+  })()`);
   const handleGrow = await cdp.evaluate(`(() => {
     const node = document.querySelector('[data-testid=seal-handle-0]').getBoundingClientRect();
     const canvas = document.querySelector('[data-testid=seal-preview-canvas]').getBoundingClientRect();
@@ -374,9 +374,11 @@ try {
   await sleep(500);
   const spanGrown = await cdp.evaluate(`(() => {
     const line = window.__SEAL_DESIGNER__.seal.lines[0];
-    return { target: line.spanAngle, actual: window.__sealLineInfo(line.id).span };
+    return { target: line.spanAngle, tracking: line.letterSpacing, actual: window.__sealLineInfo(line.id).span };
   })()`);
-  check('маркер растягивает строку', spanGrown.target > Math.max(1, spanStart), JSON.stringify(spanGrown));
+  check('маркер растягивает строку',
+    spanGrown.target === 1 && spanGrown.tracking > spanStart.tracking && spanGrown.actual > spanStart.span,
+    JSON.stringify({ spanStart, spanGrown }));
 
   const handleShrink = await cdp.evaluate(`(() => {
     const node = document.querySelector('[data-testid=seal-handle-1]').getBoundingClientRect();
@@ -390,11 +392,15 @@ try {
   await sleep(500);
   const spanShrunk = await cdp.evaluate(`(() => {
     const line = window.__SEAL_DESIGNER__.seal.lines[0];
-    return { target: line.spanAngle, actual: window.__sealLineInfo(line.id).span };
+    return { target: line.spanAngle, tracking: line.letterSpacing, actual: window.__sealLineInfo(line.id).span };
   })()`);
-  check('маркер сжимает строку', spanShrunk.target < spanGrown.target, JSON.stringify({ spanGrown, spanShrunk }));
-  check('сжатие не обещает больше, чем может', Math.abs(spanShrunk.actual - spanShrunk.target) < 2,
-    `${spanShrunk.target}° / факт ${spanShrunk.actual.toFixed(1)}°`);
+  check('маркер сжимает строку',
+    spanShrunk.target === 1 && spanShrunk.tracking < spanGrown.tracking && spanShrunk.actual < spanGrown.actual,
+    JSON.stringify({ spanGrown, spanShrunk }));
+  check('маркер двигает ползунок «Между буквами»',
+    Math.abs(spanGrown.tracking - spanStart.tracking) > 0.2 &&
+      Math.abs(spanShrunk.tracking - spanGrown.tracking) > 0.2,
+    JSON.stringify({ start: spanStart.tracking, grown: spanGrown.tracking, shrunk: spanShrunk.tracking }));
 
   console.log('\n5. Перетаскивание строки мышью');
   const beforeDrag = await cdp.evaluate(`window.__sealLineInfo(window.__SEAL_DESIGNER__.seal.lines[0].id)`);
@@ -457,10 +463,9 @@ try {
     const line = layout.lines[0];
     if (!line) return { error: 'нет строк центра' };
     const canvas = document.querySelector('[data-testid=seal-preview-canvas]');
-    const rect = canvas.getBoundingClientRect();
-    const zoom = rect.width / t.width;
-    const x = rect.left + (line.x + line.width / 2) * zoom;
-    const y = rect.top + (line.baseline - line.fontSize * 0.4) * zoom;
+    const point = window.__SEAL_PREVIEW__.client(line.x + line.width / 2, line.baseline - line.fontSize * 0.4);
+    const x = point.x;
+    const y = point.y;
     const options = { bubbles: true, clientX: x, clientY: y, button: 0, pointerId: 1 };
     canvas.dispatchEvent(new PointerEvent('pointerdown', options));
     canvas.dispatchEvent(new PointerEvent('pointerup', options));
@@ -770,15 +775,12 @@ try {
     const line = layout.seal.ringLines.find((item) => item.lineId === ${JSON.stringify(menuDelete.lineId)});
     if (!line) return null;
     const ch = line.chars[Math.floor(line.chars.length / 2)];
-    const canvas = document.querySelector('[data-testid=seal-preview-canvas]');
-    const rect = canvas.getBoundingClientRect();
-    const zoom = rect.width / t.width;
     const rad = (ch.angle * Math.PI) / 180;
     const w = ch.fontSize * 0.6;
-    return {
-      x: rect.left + (ch.x + Math.cos(rad) * w / 2 + Math.sin(rad) * ch.fontSize * 0.35) * zoom,
-      y: rect.top + (ch.y + Math.sin(rad) * w / 2 - Math.cos(rad) * ch.fontSize * 0.35) * zoom,
-    };
+    return window.__SEAL_PREVIEW__.client(
+      ch.x + Math.cos(rad) * w / 2 + Math.sin(rad) * ch.fontSize * 0.35,
+      ch.y + Math.sin(rad) * w / 2 - Math.cos(rad) * ch.fontSize * 0.35,
+    );
   })()`);
 
   if (tempPoint) {
@@ -817,24 +819,13 @@ try {
     const stamp = await import('/src/services/stampRenderService.ts');
     window.__sealLayout = () => stamp.computeStampLayout(window.__SEAL_DESIGNER__, (id) => window.__PDF_EDITOR__.fonts.familyOf(id));
     window.__ringPoint = (index = 0) => {
-      const t = window.__SEAL_DESIGNER__;
       const ring = window.__sealLayout().seal.ink.rings[index];
-      const canvas = document.querySelector('[data-testid=seal-preview-canvas]');
-      const rect = canvas.getBoundingClientRect();
-      const zoom = rect.width / t.width;
-      return { x: rect.left + (ring.cx - ring.radius) * zoom, y: rect.top + ring.cy * zoom };
+      return window.__SEAL_PREVIEW__.client(ring.cx - ring.radius, ring.cy);
     };
     window.__centerPoint = (index = 0) => {
-      const t = window.__SEAL_DESIGNER__;
       const line = window.__sealLayout().lines[index];
       if (!line) return null;
-      const canvas = document.querySelector('[data-testid=seal-preview-canvas]');
-      const rect = canvas.getBoundingClientRect();
-      const zoom = rect.width / t.width;
-      return {
-        x: rect.left + (line.x + line.width / 2) * zoom,
-        y: rect.top + (line.baseline - line.fontSize * 0.4) * zoom,
-      };
+      return window.__SEAL_PREVIEW__.client(line.x + line.width / 2, line.baseline - line.fontSize * 0.4);
     };
     window.__clickTab = (label) => Array.from(document.querySelectorAll('[role=tab]')).find((n) => n.textContent.trim() === label)?.click();
     return 'ok';
@@ -858,8 +849,6 @@ try {
     const t = window.__SEAL_DESIGNER__;
     const ring = window.__sealLayout().seal.ink.rings[1];
     const canvas = document.querySelector('[data-testid=seal-preview-canvas]');
-    const rect = canvas.getBoundingClientRect();
-    const zoom = rect.width / t.width;
     const p = window.__ringPoint(1);
     const options = { bubbles: true, clientX: p.x, clientY: p.y, button: 0, pointerId: 21 };
     const beforeGap = t.seal.rings[1].gap;
@@ -1018,11 +1007,7 @@ try {
   await sleep(700);
   const logoPoint = await cdp.evaluate(`(() => {
     const logo = window.__sealLayout().logo;
-    const t = window.__SEAL_DESIGNER__;
-    const canvas = document.querySelector('[data-testid=seal-preview-canvas]');
-    const rect = canvas.getBoundingClientRect();
-    const zoom = rect.width / t.width;
-    return { x: rect.left + (logo.x + logo.width / 2) * zoom, y: rect.top + (logo.y + logo.height / 2) * zoom };
+    return window.__SEAL_PREVIEW__.client(logo.x + logo.width / 2, logo.y + logo.height / 2);
   })()`);
   await cdp.click(logoPoint.x, logoPoint.y);
   await sleep(500);
@@ -1038,9 +1023,7 @@ try {
     const canvas = document.querySelector('[data-testid=seal-preview-canvas]');
     const before = { w: t.logo.width, h: t.logo.height };
     const logo = window.__sealLayout().logo;
-    const rect = canvas.getBoundingClientRect();
-    const zoom = rect.width / t.width;
-    let p = { x: rect.left + (logo.x + logo.width / 2) * zoom, y: rect.top + (logo.y + logo.height / 2) * zoom };
+    const p = window.__SEAL_PREVIEW__.client(logo.x + logo.width / 2, logo.y + logo.height / 2);
     canvas.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, clientX: p.x, clientY: p.y, button: 0, pointerId: 41 }));
     window.dispatchEvent(new PointerEvent('pointermove', { bubbles: true, clientX: p.x + 10, clientY: p.y + 6, pointerId: 41 }));
     window.dispatchEvent(new PointerEvent('pointerup', { bubbles: true, pointerId: 41 }));
@@ -1215,20 +1198,25 @@ try {
 
   const panState = await cdp.evaluate(`(async () => {
     const canvas = document.querySelector('[data-testid=seal-preview-canvas]');
-    const content = document.querySelector('[data-testid=seal-preview-content]');
-    const before = content.style.transform;
+    const before = window.__SEAL_PREVIEW__.pan();
     canvas.dispatchEvent(new WheelEvent('wheel', { bubbles: true, cancelable: true, deltaY: 120 }));
     await new Promise((r) => setTimeout(r, 200));
-    const afterWheel = content.style.transform;
+    const afterWheel = window.__SEAL_PREVIEW__.pan();
     const rect = canvas.getBoundingClientRect();
     canvas.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, clientX: rect.left + 20, clientY: rect.top + 20, button: 1, pointerId: 131 }));
     window.dispatchEvent(new PointerEvent('pointermove', { bubbles: true, clientX: rect.left + 50, clientY: rect.top + 45, pointerId: 131 }));
     window.dispatchEvent(new PointerEvent('pointerup', { bubbles: true, pointerId: 131 }));
     await new Promise((r) => setTimeout(r, 200));
-    return { before, afterWheel, afterDrag: content.style.transform };
+    const afterDrag = window.__SEAL_PREVIEW__.pan();
+    // Сбрасываем панораму, чтобы следующие проверки считали координаты оттиска.
+    Array.from(document.querySelectorAll('button')).find((b) => b.textContent.trim() === 'Вписать')?.click();
+    await new Promise((r) => setTimeout(r, 300));
+    return { before, afterWheel, afterDrag, reset: window.__SEAL_PREVIEW__.pan() };
   })()`);
   check('превью панорамируется колесом и средней кнопкой',
-    panState.afterWheel !== panState.before && panState.afterDrag !== panState.afterWheel,
+    (panState.afterWheel.x !== panState.before.x || panState.afterWheel.y !== panState.before.y) &&
+      (panState.afterDrag.x !== panState.afterWheel.x || panState.afterDrag.y !== panState.afterWheel.y) &&
+      panState.reset.x === 0 && panState.reset.y === 0,
     JSON.stringify(panState));
 
   const outside = await cdp.evaluate(`(async () => {
@@ -1293,9 +1281,7 @@ try {
     await new Promise((r) => setTimeout(r, 500));
     const logo = window.__sealLayout().logo;
     const canvas = document.querySelector('[data-testid=seal-preview-canvas]');
-    const rect = canvas.getBoundingClientRect();
-    const zoom = rect.width / t.width;
-    const c = { x: rect.left + (logo.x + logo.width / 2) * zoom, y: rect.top + (logo.y + logo.height / 2) * zoom };
+    const c = window.__SEAL_PREVIEW__.client(logo.x + logo.width / 2, logo.y + logo.height / 2);
     canvas.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, clientX: c.x, clientY: c.y, button: 0, pointerId: 140 }));
     canvas.dispatchEvent(new PointerEvent('pointerup', { bubbles: true, pointerId: 140 }));
     await new Promise((r) => setTimeout(r, 400));
@@ -1500,9 +1486,7 @@ try {
     const t = window.__SEAL_DESIGNER__;
     const ring = window.__sealLayout().seal.ink.rings[0];
     const canvas = document.querySelector('[data-testid=seal-preview-canvas]');
-    const rect = canvas.getBoundingClientRect();
-    const zoom = rect.width / t.width;
-    const ringPoint = { x: rect.left + (ring.cx - ring.radius) * zoom, y: rect.top + ring.cy * zoom };
+    const ringPoint = window.__SEAL_PREVIEW__.client(ring.cx - ring.radius, ring.cy);
     canvas.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, clientX: ringPoint.x, clientY: ringPoint.y, button: 0, pointerId: 401 }));
     canvas.dispatchEvent(new PointerEvent('pointerup', { bubbles: true, pointerId: 401 }));
     await new Promise((r) => setTimeout(r, 300));
@@ -1521,9 +1505,7 @@ try {
     const t = window.__SEAL_DESIGNER__;
     const ring = window.__sealLayout().seal.ink.rings[0];
     const canvas = document.querySelector('[data-testid=seal-preview-canvas]');
-    const rect = canvas.getBoundingClientRect();
-    const zoom = rect.width / t.width;
-    const point = { x: rect.left + (ring.cx - ring.radius) * zoom, y: rect.top + ring.cy * zoom };
+    const point = window.__SEAL_PREVIEW__.client(ring.cx - ring.radius, ring.cy);
     canvas.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, clientX: point.x, clientY: point.y, button: 0, pointerId: 403 }));
     canvas.dispatchEvent(new PointerEvent('pointerup', { bubbles: true, pointerId: 403 }));
     await new Promise((r) => setTimeout(r, 250));
@@ -1558,9 +1540,7 @@ try {
     await new Promise((r) => setTimeout(r, 600));
     const logo = window.__sealLayout().logo;
     const canvas = document.querySelector('[data-testid=seal-preview-canvas]');
-    const rect = canvas.getBoundingClientRect();
-    const zoom = rect.width / t.width;
-    const point = { x: rect.left + (logo.x + logo.width / 2) * zoom, y: rect.top + (logo.y + logo.height / 2) * zoom };
+    const point = window.__SEAL_PREVIEW__.client(logo.x + logo.width / 2, logo.y + logo.height / 2);
     canvas.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, clientX: point.x, clientY: point.y, button: 0, pointerId: 405 }));
     canvas.dispatchEvent(new PointerEvent('pointerup', { bubbles: true, pointerId: 405 }));
     await new Promise((r) => setTimeout(r, 400));
@@ -1602,12 +1582,7 @@ try {
     const logos = window.__sealLayout().logos.length;
     const second = window.__sealLayout().logos[1];
     const canvas = document.querySelector('[data-testid=seal-preview-canvas]');
-    const rect = canvas.getBoundingClientRect();
-    const zoom = rect.width / t.width;
-    const center = {
-      x: rect.left + (second.x + second.width / 2) * zoom,
-      y: rect.top + (second.y + second.height / 2) * zoom,
-    };
+    const center = window.__SEAL_PREVIEW__.client(second.x + second.width / 2, second.y + second.height / 2);
     canvas.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, clientX: center.x, clientY: center.y, button: 0, pointerId: 430 }));
     canvas.dispatchEvent(new PointerEvent('pointerup', { bubbles: true, pointerId: 430 }));
     await new Promise((r) => setTimeout(r, 400));
@@ -1721,11 +1696,14 @@ try {
     const ch = line.chars[Math.floor(line.chars.length / 2)];
     const canvas = document.querySelector('[data-testid=seal-preview-canvas]');
     const rect = canvas.getBoundingClientRect();
-    const zoom = rect.width / window.__SEAL_DESIGNER__.width;
     const radians = (ch.angle * Math.PI) / 180;
     const glyphWidth = ch.fontSize * 0.6;
-    const x = rect.left + (ch.x + Math.cos(radians) * glyphWidth / 2 + Math.sin(radians) * ch.fontSize * 0.35) * zoom;
-    const y = rect.top + (ch.y + Math.sin(radians) * glyphWidth / 2 - Math.cos(radians) * ch.fontSize * 0.35) * zoom;
+    const glyph = window.__SEAL_PREVIEW__.client(
+      ch.x + Math.cos(radians) * glyphWidth / 2 + Math.sin(radians) * ch.fontSize * 0.35,
+      ch.y + Math.sin(radians) * glyphWidth / 2 - Math.cos(radians) * ch.fontSize * 0.35,
+    );
+    const x = glyph.x;
+    const y = glyph.y;
     canvas.dispatchEvent(new MouseEvent('dblclick', { bubbles: true, clientX: x, clientY: y }));
     await new Promise((r) => setTimeout(r, 400));
     const before = document.activeElement?.tagName;
@@ -1743,27 +1721,33 @@ try {
     const box = document.querySelector('[data-testid=seal-preview-box]').getBoundingClientRect();
     const canvas = document.querySelector('[data-testid=seal-preview-canvas]').getBoundingClientRect();
     const root = document.querySelector('[data-testid=seal-preview]');
-    const content = document.querySelector('[data-testid=seal-preview-content]');
     const rootRect = root.getBoundingClientRect();
+    const stamp = window.__SEAL_DESIGNER__;
+    const viewport = window.__SEAL_PREVIEW__.viewport();
     root.dispatchEvent(new MouseEvent('contextmenu', {
       bubbles: true, clientX: rootRect.right - 6, clientY: rootRect.bottom - 6, button: 2,
     }));
     await new Promise((r) => setTimeout(r, 300));
     const menu = Boolean(document.querySelector('[data-testid=seal-text-menu]'));
     document.body.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true }));
-    const before = content.style.transform;
+    const before = window.__SEAL_PREVIEW__.pan();
     root.dispatchEvent(new WheelEvent('wheel', { bubbles: true, cancelable: true, deltaY: 90 }));
-    await new Promise((r) => setTimeout(r, 200));
+    await new Promise((r) => setTimeout(r, 250));
+    const after = window.__SEAL_PREVIEW__.pan();
     return {
       menu,
-      wider: box.width > canvas.width + 20 && box.height > canvas.height + 20,
+      wider:
+        canvas.width >= box.width - 2 &&
+        canvas.height >= box.height - 2 &&
+        viewport.w > stamp.width * 1.5,
       before,
-      after: content.style.transform,
+      after,
     };
   })()`);
   check('превью работает по всей площади, а не только по квадрату оттиска',
     fullArea.wider === true && fullArea.menu === true, JSON.stringify(fullArea));
-  check('панорама двигает содержимое превью', fullArea.after !== fullArea.before,
+  check('панорама двигает содержимое превью',
+    fullArea.after.x !== fullArea.before.x || fullArea.after.y !== fullArea.before.y,
     JSON.stringify({ before: fullArea.before, after: fullArea.after }));
 
   const lock = await cdp.evaluate(`(async () => {
@@ -1784,8 +1768,7 @@ try {
     });
     await new Promise((r) => setTimeout(r, 600));
     const canvas = document.querySelector('[data-testid=seal-preview-canvas]');
-    const rect = canvas.getBoundingClientRect();
-    const center = { x: rect.left + rect.width / 2, y: rect.top + rect.height / 2 };
+    const center = window.__SEAL_PREVIEW__.client(window.__SEAL_DESIGNER__.width / 2, window.__SEAL_DESIGNER__.height / 2);
     canvas.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, clientX: center.x, clientY: center.y, button: 0, pointerId: 710 }));
     canvas.dispatchEvent(new PointerEvent('pointerup', { bubbles: true, pointerId: 710 }));
     await new Promise((r) => setTimeout(r, 400));
@@ -1906,11 +1889,9 @@ try {
     const t = window.__SEAL_DESIGNER__;
     const line = stamp.computeStampLayout(t, (id) => window.__PDF_EDITOR__.fonts.familyOf(id)).lines[0];
     const canvas = document.querySelector('[data-testid=seal-preview-canvas]');
-    const rect = canvas.getBoundingClientRect();
-    const zoom = rect.width / t.width;
-    const point = { x: rect.left + (line.x + line.width / 2) * zoom, y: rect.top + (line.baseline - line.fontSize * 0.4) * zoom };
+    const point = window.__SEAL_PREVIEW__.client(line.x + line.width / 2, line.baseline - line.fontSize * 0.4);
     canvas.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, clientX: point.x, clientY: point.y, button: 0, pointerId: 801 }));
-    canvas.dispatchEvent(new PointerEvent('pointerup', { bubbles: true, pointerId: 801 }));
+    window.dispatchEvent(new PointerEvent('pointermove', { bubbles: true, clientX: point.x + 5, clientY: point.y + 4, pointerId: 801 }));
     await new Promise((r) => setTimeout(r, 500));
     const overlay = document.querySelector('[data-testid=seal-designer] [data-testid=seal-overlay]');
     const ctx = overlay.getContext('2d');
@@ -1921,15 +1902,20 @@ try {
       lit = 0;
       for (let i = 3; i < data.length; i += 4) if (data[i] > 0) lit += 1;
     }
+    const during = document.querySelector('[data-testid=seal-preview]').getAttribute('data-guides');
+    window.dispatchEvent(new PointerEvent('pointerup', { bubbles: true, pointerId: 801 }));
+    await new Promise((r) => setTimeout(r, 250));
     return {
       selected: window.__SEAL_DESIGNER_STATE__.get().selectedCenterIndex,
       lit,
-      guides: document.querySelector('[data-testid=seal-preview]').getAttribute('data-guides'),
+      guides: during,
+      after: document.querySelector('[data-testid=seal-preview]').getAttribute('data-guides'),
       overlay: { w: overlay.width, h: overlay.height },
     };
   })()`);
-  check('при выборе текста центра видны оси центрирования',
-    guides.selected !== null && guides.lit > 10, JSON.stringify(guides));
+  check('при перемещении текста центра видны оси центрирования',
+    guides.selected !== null && guides.guides === 'true' && guides.lit > 10 && guides.after === 'false',
+    JSON.stringify(guides));
 
   const marqueeOverlay = await cdp.evaluate(`(async () => {
     const root = document.querySelector('[data-testid=seal-preview]');
@@ -1949,7 +1935,7 @@ try {
       during,
       after: root.getAttribute('data-marquee'),
       lit,
-      overlayWider: overlay.getBoundingClientRect().width > document.querySelector('[data-testid=seal-preview-canvas]').getBoundingClientRect().width + 20,
+      overlayWider: overlay.getBoundingClientRect().width >= root.getBoundingClientRect().width - 2,
     };
   })()`);
   check('рамка выделения видна по всей площади превью',
@@ -1969,13 +1955,11 @@ try {
     const stamp = await import('/src/services/stampRenderService.ts');
     const ring = stamp.computeStampLayout(t, (id) => window.__PDF_EDITOR__.fonts.familyOf(id)).seal.ink.rings[1];
     const canvas = document.querySelector('[data-testid=seal-preview-canvas]');
-    const rect = canvas.getBoundingClientRect();
-    const zoom = rect.width / t.width;
     const angle = Math.PI / 4;
-    const point = {
-      x: rect.left + (ring.cx + Math.cos(angle) * ring.radius) * zoom,
-      y: rect.top + (ring.cy + Math.sin(angle) * ring.radius) * zoom,
-    };
+    const point = window.__SEAL_PREVIEW__.client(
+      ring.cx + Math.cos(angle) * ring.radius,
+      ring.cy + Math.sin(angle) * ring.radius,
+    );
     canvas.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, clientX: point.x, clientY: point.y, button: 0, pointerId: 803 }));
     window.dispatchEvent(new PointerEvent('pointermove', { bubbles: true, clientX: point.x + 14, clientY: point.y + 10, pointerId: 803 }));
     await new Promise((r) => setTimeout(r, 300));
@@ -1993,6 +1977,128 @@ try {
   check('при перетаскивании кольца видна размерная линия между кольцами',
     ringDimension.before.annotation === 'true' && ringDimension.after === 'false',
     JSON.stringify(ringDimension));
+
+  console.log('\n20. Центрирование, предел кольца и кнопки выравнивания');
+
+  const align = await cdp.evaluate(`(async () => {
+    const t = window.__SEAL_DESIGNER__;
+    Array.from(document.querySelectorAll('[data-testid=seal-designer] [role=tab]'))
+      .find((n) => n.textContent.trim() === 'Текст')?.click();
+    await new Promise((r) => setTimeout(r, 300));
+    t.seal.lines[0].radiusOffset = 7;
+    await new Promise((r) => setTimeout(r, 300));
+    document.querySelector('[data-testid=seal-line-align-gap]')?.click();
+    await new Promise((r) => setTimeout(r, 300));
+    const arcOffset = t.seal.lines[0].radiusOffset;
+    Array.from(document.querySelectorAll('[data-testid=seal-designer] [role=tab]'))
+      .find((n) => n.textContent.trim() === 'Центр')?.click();
+    await new Promise((r) => setTimeout(r, 300));
+    t.lines[0].offsetX = 9;
+    await new Promise((r) => setTimeout(r, 300));
+    document.querySelector('[data-testid=seal-center-align]')?.click();
+    await new Promise((r) => setTimeout(r, 300));
+    return { arcOffset, centerOffset: t.lines[0].offsetX };
+  })()`);
+  check('кнопка центрирует строку по кольцевому зазору', Math.abs(align.arcOffset) < 0.01, JSON.stringify(align));
+  check('кнопка центрирует текст по вертикальной оси печати',
+    Math.abs(align.centerOffset) < 0.01, JSON.stringify(align));
+
+  const ringLimit = await cdp.evaluate(`(async () => {
+    const t = window.__SEAL_DESIGNER__;
+    while (t.seal.rings.length < 2) {
+      document.querySelector('[data-testid=seal-add-ring]')?.click();
+      await new Promise((r) => setTimeout(r, 300));
+    }
+    Array.from(document.querySelectorAll('[data-testid=seal-designer] [role=tab]'))
+      .find((n) => n.textContent.trim() === 'Кольца')?.click();
+    t.seal.rings[1].gap = 8;
+    await new Promise((r) => setTimeout(r, 500));
+    const stamp = await import('/src/services/stampRenderService.ts');
+    const ring = stamp.computeStampLayout(t, (id) => window.__PDF_EDITOR__.fonts.familyOf(id)).seal.ink.rings[1];
+    const canvas = document.querySelector('[data-testid=seal-preview-canvas]');
+    const angle = Math.PI / 4;
+    const point = window.__SEAL_PREVIEW__.client(
+      ring.cx + Math.cos(angle) * ring.radius,
+      ring.cy + Math.sin(angle) * ring.radius,
+    );
+    canvas.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, clientX: point.x, clientY: point.y, button: 0, pointerId: 901 }));
+    window.dispatchEvent(new PointerEvent('pointermove', { bubbles: true, clientX: point.x + 120, clientY: point.y + 120, pointerId: 901 }));
+    await new Promise((r) => setTimeout(r, 300));
+    const first = { gap: t.seal.rings[1].gap, shown: window.__SEAL_PREVIEW__.ringGap(), annotation: document.querySelector('[data-testid=seal-preview]').getAttribute('data-ring-annotation') };
+    window.dispatchEvent(new PointerEvent('pointermove', { bubbles: true, clientX: point.x + 260, clientY: point.y + 260, pointerId: 901 }));
+    await new Promise((r) => setTimeout(r, 300));
+    const second = { gap: t.seal.rings[1].gap, shown: window.__SEAL_PREVIEW__.ringGap() };
+    window.dispatchEvent(new PointerEvent('pointerup', { bubbles: true, pointerId: 901 }));
+    await new Promise((r) => setTimeout(r, 200));
+    return { first, second, after: document.querySelector('[data-testid=seal-preview]').getAttribute('data-ring-annotation') };
+  })()`);
+  check('на пределе зазора размер останавливается и не «считается» дальше',
+    Math.abs(ringLimit.first.gap - 0.5) < 0.01 &&
+      Math.abs(ringLimit.second.gap - 0.5) < 0.01 &&
+      Math.abs((ringLimit.first.shown ?? 0) - (ringLimit.second.shown ?? 0)) < 0.01 &&
+      ringLimit.first.annotation === 'true',
+    JSON.stringify(ringLimit));
+
+  const groupGuides = await cdp.evaluate(`(async () => {
+    const t = window.__SEAL_DESIGNER__;
+    const stamp = await import('/src/services/stampRenderService.ts');
+    for (let attempt = 0; attempt < 6 && t.lines.length < 2; attempt += 1) {
+      Array.from(document.querySelectorAll('[data-testid=seal-designer] [role=tab]'))
+        .find((n) => n.textContent.trim() === 'Центр')?.click();
+      document.querySelector('[data-testid=seal-add-line]')?.click();
+      await new Promise((r) => setTimeout(r, 300));
+    }
+    t.lines.forEach((line, index) => {
+      if (!line.text.trim()) line.text = index === 0 ? 'ЦЕНТР' : 'ВТОРАЯ';
+      line.offsetX = 0;
+      line.offsetY = 0;
+    });
+    await new Promise((r) => setTimeout(r, 500));
+    const layout = stamp.computeStampLayout(t, (id) => window.__PDF_EDITOR__.fonts.familyOf(id));
+    const points = layout.lines.map((line) => window.__SEAL_PREVIEW__.client(line.x + line.width / 2, line.baseline - line.fontSize * 0.35));
+    const canvas = document.querySelector('[data-testid=seal-preview-canvas]');
+    // Рамкой вокруг центра — группа строк.
+    const root = document.querySelector('[data-testid=seal-preview]');
+    const rootRect = root.getBoundingClientRect();
+    root.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, clientX: rootRect.left + 12, clientY: rootRect.top + 12, button: 0, pointerId: 915 }));
+    window.dispatchEvent(new PointerEvent('pointermove', { bubbles: true, clientX: rootRect.right - 12, clientY: rootRect.bottom - 12, pointerId: 915 }));
+    window.dispatchEvent(new PointerEvent('pointerup', { bubbles: true, pointerId: 915 }));
+    await new Promise((r) => setTimeout(r, 500));
+    const multi = window.__SEAL_DESIGNER_STATE__.get().multi;
+    // Тянем группу — оси должны появиться только на время движения.
+    canvas.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, clientX: points[0].x, clientY: points[0].y, button: 0, pointerId: 930 }));
+    window.dispatchEvent(new PointerEvent('pointermove', { bubbles: true, clientX: points[0].x + 2, clientY: points[0].y + 2, pointerId: 930 }));
+    await new Promise((r) => setTimeout(r, 400));
+    const during = document.querySelector('[data-testid=seal-preview]').getAttribute('data-guides');
+    const overlay = document.querySelector('[data-testid=seal-designer] [data-testid=seal-overlay]');
+    const ctx = overlay.getContext('2d');
+    const data = ctx.getImageData(0, 0, overlay.width, overlay.height).data;
+    let lit = 0;
+    for (let i = 3; i < data.length; i += 4) if (data[i] > 0) lit += 1;
+    window.dispatchEvent(new PointerEvent('pointerup', { bubbles: true, pointerId: 930 }));
+    await new Promise((r) => setTimeout(r, 300));
+    const after = document.querySelector('[data-testid=seal-preview]').getAttribute('data-guides');
+    const boxes = multi.centers.map((index) => stamp.computeStampLayout(t, (id) => window.__PDF_EDITOR__.fonts.familyOf(id)).lines[index]).filter(Boolean);
+    const left = Math.min(...boxes.map((item) => item.x));
+    const right = Math.max(...boxes.map((item) => item.x + item.width));
+    const top = Math.min(...boxes.map((item) => item.baseline - item.fontSize));
+    const bottom = Math.max(...boxes.map((item) => item.baseline));
+    return {
+      centers: multi.centers.length,
+      during,
+      after,
+      lit,
+      groupX: (left + right) / 2,
+      groupY: (top + bottom) / 2,
+      center: t.width / 2,
+    };
+  })()`);
+  check('при движении группы текста оси идут по центру группы',
+    groupGuides.centers >= 2 && groupGuides.during === 'true' && groupGuides.after === 'false' &&
+      groupGuides.lit > 10 &&
+      Math.abs(groupGuides.groupX - groupGuides.center) < 3 &&
+      Math.abs(groupGuides.groupY - groupGuides.center) < 3,
+    JSON.stringify(groupGuides));
 
   await cdp.evaluate(`window.__PDF_EDITOR__.ui.closeAllModals(); 'ok'`);
   await sleep(600);

@@ -820,6 +820,24 @@ check(
   String(spacingLayout.lines[0].fontSize),
 );
 
+const wordSpacingTemplate = createSealTemplate({
+  lines: [createStampLine('РАЗ ДВА ТРИ', { fontSize: 10, wordSpacing: 20 })],
+});
+const wordSpacingLayout = computeStampLayout(wordSpacingTemplate, () => 'PT Sans');
+const plainWordTemplate = createSealTemplate({
+  lines: [createStampLine('РАЗ ДВА ТРИ', { fontSize: 10, wordSpacing: 0 })],
+});
+const plainWordLayout = computeStampLayout(plainWordTemplate, () => 'PT Sans');
+check(
+  'межсловный интервал расширяет строку, но не сжимает буквы',
+  wordSpacingLayout.lines[0].width > plainWordLayout.lines[0].width + 10 &&
+    Math.abs(wordSpacingLayout.lines[0].fontSize - plainWordLayout.lines[0].fontSize) < 0.01,
+  JSON.stringify({
+    width: [plainWordLayout.lines[0].width, wordSpacingLayout.lines[0].width],
+    font: [plainWordLayout.lines[0].fontSize, wordSpacingLayout.lines[0].fontSize],
+  }),
+);
+
 const normalizedLines = normalizeSealSettings({
   ...defaultSeal,
   lines: [

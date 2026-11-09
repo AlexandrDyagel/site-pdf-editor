@@ -28,6 +28,8 @@ import type { SealReference } from '@/services/sealDraft';
 import { useFontsStore } from '@/stores/fonts';
 import { loadImage } from '@/utils/image';
 
+const nativeCanvasRect = HTMLCanvasElement.prototype.getBoundingClientRect;
+
 const props = withDefaults(
   defineProps<{
     template: StampTemplate;
@@ -119,11 +121,18 @@ const marquee = ref<{ x1: number; y1: number; x2: number; y2: number } | null>(n
 /** Живая размерная линия между кольцами при перетаскивании. */
 const ringAnnotation = ref<{ ringIndex: number; radius: number; angle: number } | null>(null);
 const overlay = ref<HTMLCanvasElement | null>(null);
+/** Размер рабочей области превью в CSS-пикселях. */
+const viewport = ref({ w: 0, h: 0 });
+let resizeObserver: ResizeObserver | null = null;
 /** Курсор наведения на выбранное кольцо: две стрелки, как у маркеров. */
 const ringHover = ref<'' | 'ew-resize' | 'ns-resize'>('');
-/** Оси центрирования нужны для выбранной строки центра или группы строк. */
+/** Оси центрирования показываются только во время перемещения текста. */
+const textMoving = ref(false);
+/** Оси центрирования нужны для перемещаемой строки центра или группы строк. */
 const guidesVisible = computed(
-  () => props.selectedCenterIndex !== null || (props.selection?.centers.length ?? 0) > 0,
+  () =>
+    textMoving.value &&
+    (props.selectedCenterIndex !== null || (props.selection?.centers.length ?? 0) > 0),
 );
 const cursorStyle = computed(() => {
   if (panning.value) return 'grabbing';
@@ -179,7 +188,7 @@ function drawRotationStem(
   const markerDistance = height / 2 + 22 / Math.max(0.4, props.zoom);
   context.save();
   context.setLineDash([]);
-  context.lineWidth = 1;
+  context.lineWidth = 1 / props.zoom;
   context.strokeStyle = '#355ef0';
   context.beginPath();
   context.moveTo(cx + Math.sin(radians) * top, cy - Math.cos(radians) * top);
@@ -191,18 +200,23 @@ function drawRotationStem(
 function draw(): void {
   const element = canvas.value;
   if (!element) return;
+  const parent = element.parentElement;
+  if (!parent) return;
   const ratio = Math.min(3, Math.max(1, window.devicePixelRatio || 1));
-  const cssSize = displaySize.value;
-  element.width = Math.max(1, Math.round(cssSize * ratio));
-  element.height = Math.max(1, Math.round(cssSize * ratio));
-  element.style.width = `${cssSize}px`;
-  element.style.height = `${cssSize}px`;
+  const width = Math.max(1, parent.clientWidth);
+  const height = Math.max(1, parent.clientHeight);
+  viewport.value = { w: width, h: height };
+  element.width = Math.max(1, Math.round(width * ratio));
+  element.height = Math.max(1, Math.round(height * ratio));
   const context = element.getContext('2d');
   if (!context) return;
   context.setTransform(1, 0, 0, 1, 0, 0);
   context.clearRect(0, 0, element.width, element.height);
-  const scale = (cssSize / size.value) * ratio;
-  context.scale(scale, scale);
+  context.scale(ratio, ratio);
+  // Печать рисуется в центре рабочей области; панорама смещает её.
+  context.translate(width / 2 + pan.value.x, height / 2 + pan.value.y);
+  context.scale(props.zoom, props.zoom);
+  context.translate(-size.value / 2, -size.value / 2);
   paintStampLayout(context, layout.value, { logoImages: logoImages.value });
 
   // Выбранное кольцо — очень мелкий штрих, не сплошная линия.
@@ -210,8 +224,8 @@ function draw(): void {
     const ring = layout.value.seal.ink.rings[props.selectedRingIndex];
     if (ring) {
       context.save();
-      context.setLineDash([2, 2]);
-      context.lineWidth = 0.8;
+      context.setLineDash([2 / props.zoom, 2 / props.zoom]);
+      context.lineWidth = 0.8 / props.zoom;
       context.strokeStyle = '#2f6bff';
       context.beginPath();
       context.arc(ring.cx, ring.cy, ring.radius, 0, Math.PI * 2);
@@ -230,7 +244,7 @@ function draw(): void {
     drawRotationStem(context, cx, cy, logo.width, logo.height, logo.rotation ?? 0);
     context.translate(cx, cy);
     context.rotate(((logo.rotation ?? 0) * Math.PI) / 180);
-    context.lineWidth = 1.2;
+    context.lineWidth = 1.2 / props.zoom;
     context.strokeStyle = '#355ef0';
     context.strokeRect(-logo.width / 2, -logo.height / 2, logo.width, logo.height);
     context.restore();
@@ -243,7 +257,7 @@ function draw(): void {
     drawRotationStem(context, reference.x, reference.y, reference.width, reference.height, reference.rotation);
     context.translate(reference.x, reference.y);
     context.rotate((reference.rotation * Math.PI) / 180);
-    context.lineWidth = 1.2;
+    context.lineWidth = 1.2 / props.zoom;
     context.strokeStyle = '#355ef0';
     context.strokeRect(-reference.width / 2, -reference.height / 2, reference.width, reference.height);
     context.restore();
@@ -252,7 +266,7 @@ function draw(): void {
   // Групповое выделение: тонкая сплошная линия, как у объектов на холсте.
   if (props.selection) {
     context.save();
-    context.lineWidth = 1;
+    context.lineWidth = 1 / props.zoom;
     context.strokeStyle = '#355ef0';
     for (const lineId of props.selection.lines) {
       const line = layout.value.seal?.ringLines.find((item) => item.lineId === lineId);
@@ -306,8 +320,7 @@ function drawOverlay(): void {
   const element = overlay.value;
   if (!element) return;
   const root = element.parentElement;
-  const stampCanvas = canvas.value;
-  if (!root || !stampCanvas) return;
+  if (!root) return;
   const rootRect = root.getBoundingClientRect();
   const ratio = Math.min(3, Math.max(1, window.devicePixelRatio || 1));
   element.width = Math.max(1, Math.round(rootRect.width * ratio));
@@ -317,13 +330,14 @@ function drawOverlay(): void {
   context.setTransform(ratio, 0, 0, ratio, 0, 0);
   context.clearRect(0, 0, rootRect.width, rootRect.height);
 
-  const canvasRect = stampCanvas.getBoundingClientRect();
-  const zoom = canvasRect.width / size.value;
-  const offsetX = canvasRect.left - rootRect.left;
-  const offsetY = canvasRect.top - rootRect.top;
+  const zoom = props.zoom;
+  const center = {
+    x: rootRect.width / 2 + pan.value.x,
+    y: rootRect.height / 2 + pan.value.y,
+  };
   const toScreen = (x: number, y: number): { x: number; y: number } => ({
-    x: offsetX + x * zoom,
-    y: offsetY + y * zoom,
+    x: center.x + (x - size.value / 2) * zoom,
+    y: center.y + (y - size.value / 2) * zoom,
   });
 
   // Оси центрирования для строк центра (одиночной или группы).
@@ -344,6 +358,27 @@ function drawOverlay(): void {
     context.beginPath();
     context.arc(center.x, center.y, 2, 0, Math.PI * 2);
     context.fill();
+    // Центр группы строк: по нему и идёт притягивание к осям.
+    const selectedCenters = props.selection?.centers ?? [];
+    if (selectedCenters.length > 0) {
+      const boxes = selectedCenters
+        .map((index) => layout.value.lines[index])
+        .filter((item) => Boolean(item));
+      if (boxes.length > 0) {
+        const left = Math.min(...boxes.map((item) => item.x));
+        const right = Math.max(...boxes.map((item) => item.x + item.width));
+        const top = Math.min(...boxes.map((item) => item.baseline - item.fontSize));
+        const bottom = Math.max(...boxes.map((item) => item.baseline));
+        const group = toScreen((left + right) / 2, (top + bottom) / 2);
+        context.fillStyle = '#ffffff';
+        context.strokeStyle = '#355ef0';
+        context.lineWidth = 1;
+        context.beginPath();
+        context.arc(group.x, group.y, 3.5, 0, Math.PI * 2);
+        context.fill();
+        context.stroke();
+      }
+    }
     context.restore();
   }
 
@@ -354,7 +389,7 @@ function drawOverlay(): void {
     const p2 = toScreen(Math.max(rect.x1, rect.x2), Math.max(rect.y1, rect.y2));
     context.save();
     context.setLineDash([3, 3]);
-    context.lineWidth = 1;
+    context.lineWidth = 1 / props.zoom;
     context.strokeStyle = '#355ef0';
     context.strokeRect(p1.x, p1.y, Math.max(1, p2.x - p1.x), Math.max(1, p2.y - p1.y));
     context.restore();
@@ -380,7 +415,7 @@ function drawOverlay(): void {
     };
     const distance = Math.abs(fromRadius - toRadius);
     context.save();
-    context.lineWidth = 1;
+    context.lineWidth = 1 / props.zoom;
     context.strokeStyle = '#355ef0';
     context.beginPath();
     context.moveTo(p1.x, p1.y);
@@ -440,13 +475,14 @@ watch(() => props.zoom, () => {
   draw();
   drawOverlay();
 });
-watch(pan, () => drawOverlay(), { deep: true });
+watch(pan, () => { draw(); drawOverlay(); }, { deep: true });
 watch(() => props.selectedRingIndex, () => { draw(); drawOverlay(); });
 watch(() => props.selectedCenterIndex, () => { draw(); drawOverlay(); });
 watch(() => props.selectedLogoIndex, () => { draw(); drawOverlay(); });
 watch(() => props.selectedLogo, () => { draw(); drawOverlay(); });
 watch(() => props.selectedReference, () => { draw(); drawOverlay(); });
 watch(() => props.selection, () => { draw(); drawOverlay(); }, { deep: true });
+watch(textMoving, () => drawOverlay());
 watch(marquee, () => drawOverlay(), { deep: true });
 watch(ringAnnotation, () => drawOverlay(), { deep: true });
 watch(() => props.reference, () => { draw(); drawOverlay(); }, { deep: true });
@@ -459,8 +495,8 @@ function toSealPoint(event: MouseEvent): { x: number; y: number } | null {
   if (!element) return null;
   const rect = element.getBoundingClientRect();
   return {
-    x: (event.clientX - rect.left) / props.zoom,
-    y: (event.clientY - rect.top) / props.zoom,
+    x: (event.clientX - (rect.left + rect.width / 2) - pan.value.x) / props.zoom + size.value / 2,
+    y: (event.clientY - (rect.top + rect.height / 2) - pan.value.y) / props.zoom + size.value / 2,
   };
 }
 
@@ -560,6 +596,57 @@ function isOutsideSeal(point: { x: number; y: number }): boolean {
 
 /* ======================== Маркеры ======================== */
 
+/** Координаты печати → пиксели рабочей области с учётом панорамы. */
+function screenPoint(x: number, y: number): { x: number; y: number } {
+  const { w, h } = viewport.value;
+  return {
+    x: w / 2 + pan.value.x + (x - size.value / 2) * props.zoom,
+    y: h / 2 + pan.value.y + (y - size.value / 2) * props.zoom,
+  };
+}
+
+/** Для тестов и отладки: координаты печати → координаты окна. */
+function exposePreviewDebug(): void {
+  if (!import.meta.env.DEV) return;
+  (window as unknown as Record<string, unknown>).__SEAL_PREVIEW__ = {
+    client: (x: number, y: number) => {
+      const element = canvas.value;
+      if (!element) return { x: 0, y: 0 };
+      // Настоящий rect: тесты могут подменять его для пересчёта координат.
+      const rect = nativeCanvasRect.call(element);
+      const point = screenPoint(x, y);
+      return { x: rect.left + point.x, y: rect.top + point.y };
+    },
+    zoom: () => props.zoom,
+    size: () => size.value,
+    pan: () => ({ ...pan.value }),
+    viewport: () => ({ ...viewport.value }),
+    ringGap: () => {
+      const info = ringAnnotation.value;
+      const rings = layout.value.seal?.ink.rings ?? [];
+      const current = info ? rings[info.ringIndex] : null;
+      const previous = info ? rings[info.ringIndex - 1] : null;
+      if (!info || !current || !previous) return null;
+      const gap =
+        previous.radius - previous.width / 2 - (info.radius + current.width / 2);
+      return Math.round(gap * 10) / 10;
+    },
+  };
+}
+
+/** Положение картинки-образца на экране (с панорамой и зумом). */
+function referenceStyle(reference: SealReference): Record<string, string> {
+  const center = screenPoint(reference.x, reference.y);
+  return {
+    left: `${center.x - (reference.width * props.zoom) / 2}px`,
+    top: `${center.y - (reference.height * props.zoom) / 2}px`,
+    width: `${reference.width * props.zoom}px`,
+    height: `${reference.height * props.zoom}px`,
+    transform: `rotate(${reference.rotation}deg)`,
+    opacity: String(reference.opacity),
+  };
+}
+
 const selectedGeometry = computed(() => {
   if (!props.selectedLineId) return null;
   return layout.value.seal?.ringLines.find((item) => item.lineId === props.selectedLineId) ?? null;
@@ -572,8 +659,10 @@ const handlePoints = computed(() => {
     const radians = (angle * Math.PI) / 180;
     return {
       angle,
-      x: (ringLine.cx + Math.cos(radians) * ringLine.radius) * props.zoom,
-      y: (ringLine.cy + Math.sin(radians) * ringLine.radius) * props.zoom,
+      ...screenPoint(
+        ringLine.cx + Math.cos(radians) * ringLine.radius,
+        ringLine.cy + Math.sin(radians) * ringLine.radius,
+      ),
     };
   });
 });
@@ -583,10 +672,10 @@ const centerHandlePoints = computed(() => {
   if (index === null) return [] as { side: 'left' | 'right'; x: number; y: number }[];
   const line = layout.value.lines[index];
   if (!line) return [];
-  const y = (line.baseline - line.fontSize * 0.35) * props.zoom;
+  const y = line.baseline - line.fontSize * 0.35;
   return [
-    { side: 'left' as const, x: line.x * props.zoom, y },
-    { side: 'right' as const, x: (line.x + line.width) * props.zoom, y },
+    { side: 'left' as const, ...screenPoint(line.x, y) },
+    { side: 'right' as const, ...screenPoint(line.x + line.width, y) },
   ];
 });
 
@@ -624,10 +713,8 @@ function rotatedCorners(
   const radians = (rotation * Math.PI) / 180;
   const cos = Math.cos(radians);
   const sin = Math.sin(radians);
-  const corner = (dx: number, dy: number) => ({
-    x: (cx + dx * cos - dy * sin) * props.zoom,
-    y: (cy + dx * sin + dy * cos) * props.zoom,
-  });
+  const corner = (dx: number, dy: number) =>
+    screenPoint(cx + dx * cos - dy * sin, cy + dx * sin + dy * cos);
   const hw = width / 2;
   const hh = height / 2;
   return [
@@ -649,10 +736,10 @@ function rotateHandlePoint(
   void width;
   const radians = (rotation * Math.PI) / 180;
   const distance = height / 2 + 22 / Math.max(0.4, props.zoom);
-  return {
-    x: (cx + Math.sin(radians) * distance) * props.zoom,
-    y: (cy - Math.cos(radians) * distance) * props.zoom,
-  };
+  return screenPoint(
+    cx + Math.sin(radians) * distance,
+    cy - Math.cos(radians) * distance,
+  );
 }
 
 /* ======================== Перетаскивания ======================== */
@@ -684,6 +771,9 @@ function radiusLimit(lineId: string): number {
 
 function startDrag(event: PointerEvent, state: DragState): void {
   dragState = state;
+  textMoving.value =
+    state.kind === 'center-move' ||
+    (state.kind === 'group' && (props.selection?.centers.length ?? 0) > 0);
   if (state.kind === 'pan') panning.value = true;
   window.addEventListener('pointermove', onWindowMove);
   window.addEventListener('pointerup', onWindowUp, { once: true });
@@ -729,7 +819,26 @@ function onWindowMove(event: PointerEvent): void {
   }
 
   if (state.kind === 'ring') {
-    const radius = Math.hypot(point.x - cx, point.y - cy);
+    const rings = layout.value.seal?.ink.rings ?? [];
+    const currentRing = rings[state.ringIndex];
+    const previousRing = rings[state.ringIndex - 1];
+    let radius = Math.hypot(point.x - cx, point.y - cy);
+    if (currentRing && previousRing) {
+      // Те же пределы, что и у зазора в настройках: 0.5…100 pt.
+      const innerEdge = previousRing.radius - previousRing.width / 2;
+      const minRadius = Math.max(2, innerEdge - currentRing.width / 2 - 100);
+      const maxRadius = Math.max(minRadius, innerEdge - currentRing.width / 2 - 0.5);
+      radius = Math.min(maxRadius, Math.max(minRadius, radius));
+    }
+    const shown = ringAnnotation.value;
+    if (
+      shown &&
+      shown.ringIndex === state.ringIndex &&
+      Math.abs(shown.radius - radius) < 0.01
+    ) {
+      // Кольцо упёрлось в предел: размер и подпись больше не пересчитываются.
+      return;
+    }
     ringAnnotation.value = {
       ringIndex: state.ringIndex,
       radius,
@@ -740,11 +849,27 @@ function onWindowMove(event: PointerEvent): void {
   }
 
   if (state.kind === 'center-move') {
+    let offsetX = state.startOffsetX + point.x - state.startX;
+    let offsetY = state.startOffsetY + point.y - state.startY;
+    // Прилипание центра текста к осям печати (по 2 pt).
+    const line = layout.value.lines[state.index];
+    if (line) {
+      const dx = offsetX - state.startOffsetX;
+      const dy = offsetY - state.startOffsetY;
+      const centerX = line.x + line.width / 2 + dx;
+      const centerY = line.baseline - line.fontSize * 0.35 + dy;
+      if (Math.abs(centerX - size.value / 2) < 2) {
+        offsetX = state.startOffsetX + (size.value / 2 - (line.x + line.width / 2));
+      }
+      if (Math.abs(centerY - size.value / 2) < 2) {
+        offsetY = state.startOffsetY + (size.value / 2 - (line.baseline - line.fontSize * 0.35));
+      }
+    }
     emit(
       'center-move',
       state.index,
-      Math.round((state.startOffsetX + point.x - state.startX) * 10) / 10,
-      Math.round((state.startOffsetY + point.y - state.startY) * 10) / 10,
+      Math.round(offsetX * 10) / 10,
+      Math.round(offsetY * 10) / 10,
     );
     return;
   }
@@ -828,6 +953,7 @@ function onWindowMove(event: PointerEvent): void {
 function onWindowUp(): void {
   dragState = null;
   panning.value = false;
+  textMoving.value = false;
   ringAnnotation.value = null;
   window.removeEventListener('pointermove', onWindowMove);
 }
@@ -1508,6 +1634,14 @@ onMounted(async () => {
   await ensureLogo();
   draw();
   drawOverlay();
+  exposePreviewDebug();
+  if (canvas.value?.parentElement) {
+    resizeObserver = new ResizeObserver(() => {
+      draw();
+      drawOverlay();
+    });
+    resizeObserver.observe(canvas.value.parentElement);
+  }
   window.addEventListener('pointerdown', onWindowDown, true);
   window.addEventListener('keydown', onEscape);
   window.addEventListener('keydown', onKeyDown);
@@ -1515,6 +1649,8 @@ onMounted(async () => {
 });
 
 onBeforeUnmount(() => {
+  resizeObserver?.disconnect();
+  resizeObserver = null;
   window.removeEventListener('pointermove', onWindowMove);
   window.removeEventListener('pointermove', onRingHandleMove);
   window.removeEventListener('pointerup', onWindowUp);
@@ -1540,15 +1676,10 @@ onBeforeUnmount(() => {
     @contextmenu="onContextMenu"
   >
     <div
-      class="absolute left-1/2 top-1/2"
+      class="absolute inset-0"
       data-testid="seal-preview-content"
       :data-selected-reference="selectedReference ? 'true' : 'false'"
       :data-reference-visible="reference?.visible ? 'true' : 'false'"
-      :style="{
-        width: `${displaySize}px`,
-        height: `${displaySize}px`,
-        transform: `translate(calc(-50% + ${pan.x}px), calc(-50% + ${pan.y}px))`,
-      }"
     >
       <!-- Образец печати: под оттиском, не часть печати. -->
       <img
@@ -1557,20 +1688,13 @@ onBeforeUnmount(() => {
         alt="Образец печати"
         data-testid="seal-reference-image"
         class="pointer-events-none absolute select-none"
-        :style="{
-          left: `${(reference.x - reference.width / 2) * zoom}px`,
-          top: `${(reference.y - reference.height / 2) * zoom}px`,
-          width: `${reference.width * zoom}px`,
-          height: `${reference.height * zoom}px`,
-          transform: `rotate(${reference.rotation}deg)`,
-          opacity: reference.opacity,
-        }"
+        :style="referenceStyle(reference)"
       />
 
       <canvas
         ref="canvas"
         data-testid="seal-preview-canvas"
-        class="relative block rounded-sm"
+        class="absolute inset-0 block h-full w-full"
         :style="{ cursor: cursorStyle }"
         @pointerdown="onCanvasDown"
         @pointermove="onCanvasMove"

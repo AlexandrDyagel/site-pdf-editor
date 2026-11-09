@@ -150,6 +150,17 @@ const spanHint = computed(() => {
         >
           К
         </AppButton>
+        <AppButton
+          size="sm"
+          variant="subtle"
+          icon="alignCenter"
+          block
+          title="Центрировать между кольцами"
+          data-testid="seal-line-align-gap"
+          @click.stop="props.line.radiusOffset = 0"
+        >
+          Ц
+        </AppButton>
       </div>
     </div>
 
