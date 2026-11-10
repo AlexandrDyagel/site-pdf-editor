@@ -128,11 +128,12 @@ let resizeObserver: ResizeObserver | null = null;
 const ringHover = ref<'' | 'ew-resize' | 'ns-resize'>('');
 /** Оси центрирования показываются только во время перемещения текста. */
 const textMoving = ref(false);
-/** Оси центрирования нужны для перемещаемой строки центра или группы строк. */
+/** Прилипание к осям: показываются только те оси, к которым текст прилип. */
+const snapAxes = ref({ vertical: false, horizontal: false, circular: false });
+const snapCircleRadius = ref<number | null>(null);
+/** Оси видны, только пока есть прилипание под зажатой мышью. */
 const guidesVisible = computed(
-  () =>
-    textMoving.value &&
-    (props.selectedCenterIndex !== null || (props.selection?.centers.length ?? 0) > 0),
+  () => snapAxes.value.vertical || snapAxes.value.horizontal || snapAxes.value.circular,
 );
 const cursorStyle = computed(() => {
   if (panning.value) return 'grabbing';
@@ -171,6 +172,21 @@ async function ensureLogo(): Promise<void> {
       }
     }),
   );
+}
+
+/** Цвет штриха выбранного кольца: контрастный цвету печати. */
+function ringSelectionColor(): string {
+  const value = layout.value.color.replace('#', '');
+  const hex = value.length === 3 ? value.split('').map((char) => char + char).join('') : value;
+  const red = parseInt(hex.slice(0, 2), 16) || 0;
+  const green = parseInt(hex.slice(2, 4), 16) || 0;
+  const blue = parseInt(hex.slice(4, 6), 16) || 0;
+  // Синяя/фиолетовая печать — оранжевый штрих, красная — голубой,
+  // зелёная — малиновый; для остальных — красный.
+  if (blue > red * 1.15 && blue >= green) return '#ff7a00';
+  if (red > blue * 1.25 && red >= green) return '#00b7ff';
+  if (green > red * 1.1 && green > blue * 1.1) return '#ff2d78';
+  return '#e11d48';
 }
 
 /** «Палочка» от верхней кромки рамки до круглого маркера поворота. */
@@ -226,7 +242,7 @@ function draw(): void {
       context.save();
       context.setLineDash([2 / props.zoom, 2 / props.zoom]);
       context.lineWidth = 0.8 / props.zoom;
-      context.strokeStyle = '#2f6bff';
+      context.strokeStyle = ringSelectionColor();
       context.beginPath();
       context.arc(ring.cx, ring.cy, ring.radius, 0, Math.PI * 2);
       context.stroke();
@@ -306,6 +322,7 @@ function draw(): void {
     for (const index of props.selection.rings) {
       const ring = layout.value.seal?.ink.rings[index];
       if (ring) {
+        context.strokeStyle = ringSelectionColor();
         context.beginPath();
         context.arc(ring.cx, ring.cy, ring.radius, 0, Math.PI * 2);
         context.stroke();
@@ -340,45 +357,67 @@ function drawOverlay(): void {
     y: center.y + (y - size.value / 2) * zoom,
   });
 
-  // Оси центрирования для строк центра (одиночной или группы).
-  if (guidesVisible.value) {
-    const center = toScreen(size.value / 2, size.value / 2);
+  // Оси центрирования: только те, к которым текст прилип, и только пока
+  // кнопка мыши зажата. Цвет — красный, чтобы не сливаться с печатью.
+  const axisColor = '#e11d48';
+  const axes = snapAxes.value;
+  if (axes.vertical || axes.horizontal) {
     context.save();
-    context.setLineDash([4, 4]);
+    context.setLineDash([5, 4]);
     context.lineWidth = 1;
-    context.strokeStyle = 'rgba(53, 94, 240, 0.65)';
+    context.strokeStyle = axisColor;
     context.beginPath();
-    context.moveTo(0, center.y);
-    context.lineTo(rootRect.width, center.y);
-    context.moveTo(center.x, 0);
-    context.lineTo(center.x, rootRect.height);
+    if (axes.horizontal) {
+      context.moveTo(0, center.y);
+      context.lineTo(rootRect.width, center.y);
+    }
+    if (axes.vertical) {
+      context.moveTo(center.x, 0);
+      context.lineTo(center.x, rootRect.height);
+    }
     context.stroke();
     context.setLineDash([]);
-    context.fillStyle = '#355ef0';
+    context.fillStyle = axisColor;
     context.beginPath();
     context.arc(center.x, center.y, 2, 0, Math.PI * 2);
     context.fill();
-    // Центр группы строк: по нему и идёт притягивание к осям.
-    const selectedCenters = props.selection?.centers ?? [];
-    if (selectedCenters.length > 0) {
-      const boxes = selectedCenters
-        .map((index) => layout.value.lines[index])
-        .filter((item) => Boolean(item));
-      if (boxes.length > 0) {
-        const left = Math.min(...boxes.map((item) => item.x));
-        const right = Math.max(...boxes.map((item) => item.x + item.width));
-        const top = Math.min(...boxes.map((item) => item.baseline - item.fontSize));
-        const bottom = Math.max(...boxes.map((item) => item.baseline));
-        const group = toScreen((left + right) / 2, (top + bottom) / 2);
-        context.fillStyle = '#ffffff';
-        context.strokeStyle = '#355ef0';
-        context.lineWidth = 1;
-        context.beginPath();
-        context.arc(group.x, group.y, 3.5, 0, Math.PI * 2);
-        context.fill();
-        context.stroke();
-      }
-    }
+    context.restore();
+  }
+
+  // Круговая ось: строка прилипла к середине кольцевого зазора.
+  if (axes.circular && snapCircleRadius.value !== null) {
+    context.save();
+    context.setLineDash([5, 4]);
+    context.lineWidth = 1;
+    context.strokeStyle = axisColor;
+    context.beginPath();
+    context.arc(center.x, center.y, snapCircleRadius.value * zoom, 0, Math.PI * 2);
+    context.stroke();
+    context.restore();
+  }
+
+  // Маркер центра строки — такой же, как у группы строк.
+  const selectedCenters = props.selection?.centers ?? [];
+  const markerLines =
+    selectedCenters.length > 0
+      ? selectedCenters.map((index) => layout.value.lines[index]).filter((item) => Boolean(item))
+      : props.selectedCenterIndex !== null && layout.value.lines[props.selectedCenterIndex]
+        ? [layout.value.lines[props.selectedCenterIndex]]
+        : [];
+  if (markerLines.length > 0) {
+    const left = Math.min(...markerLines.map((item) => item.x));
+    const right = Math.max(...markerLines.map((item) => item.x + item.width));
+    const top = Math.min(...markerLines.map((item) => item.baseline - item.fontSize));
+    const bottom = Math.max(...markerLines.map((item) => item.baseline));
+    const marker = toScreen((left + right) / 2, (top + bottom) / 2);
+    context.save();
+    context.fillStyle = '#ffffff';
+    context.strokeStyle = axisColor;
+    context.lineWidth = 1.5;
+    context.beginPath();
+    context.arc(marker.x, marker.y, 3.5, 0, Math.PI * 2);
+    context.fill();
+    context.stroke();
     context.restore();
   }
 
@@ -388,8 +427,10 @@ function drawOverlay(): void {
     const p1 = toScreen(Math.min(rect.x1, rect.x2), Math.min(rect.y1, rect.y2));
     const p2 = toScreen(Math.max(rect.x1, rect.x2), Math.max(rect.y1, rect.y2));
     context.save();
+    context.fillStyle = 'rgba(53, 94, 240, 0.12)';
+    context.fillRect(p1.x, p1.y, Math.max(1, p2.x - p1.x), Math.max(1, p2.y - p1.y));
     context.setLineDash([3, 3]);
-    context.lineWidth = 1 / props.zoom;
+    context.lineWidth = 1;
     context.strokeStyle = '#355ef0';
     context.strokeRect(p1.x, p1.y, Math.max(1, p2.x - p1.x), Math.max(1, p2.y - p1.y));
     context.restore();
@@ -415,8 +456,8 @@ function drawOverlay(): void {
     };
     const distance = Math.abs(fromRadius - toRadius);
     context.save();
-    context.lineWidth = 1 / props.zoom;
-    context.strokeStyle = '#355ef0';
+    context.lineWidth = 1;
+    context.strokeStyle = '#e11d48';
     context.beginPath();
     context.moveTo(p1.x, p1.y);
     context.lineTo(p2.x, p2.y);
@@ -450,15 +491,15 @@ function drawOverlay(): void {
     context.moveTo(middle.x, middle.y);
     context.lineTo(labelX, labelY);
     context.stroke();
-    context.fillStyle = 'rgba(255, 255, 255, 0.92)';
-    context.strokeStyle = '#c7d2fe';
+    context.fillStyle = 'rgba(255, 255, 255, 0.94)';
+    context.strokeStyle = '#fda4af';
     const boxX = labelX - textWidth / 2 - 4;
     const boxY = labelY - 8;
     context.beginPath();
     context.roundRect(boxX, boxY, textWidth + 8, 16, 4);
     context.fill();
     context.stroke();
-    context.fillStyle = '#1d3fb5';
+    context.fillStyle = '#be123c';
     context.textAlign = 'center';
     context.textBaseline = 'middle';
     context.fillText(text, labelX, labelY + 0.5);
@@ -483,6 +524,8 @@ watch(() => props.selectedLogo, () => { draw(); drawOverlay(); });
 watch(() => props.selectedReference, () => { draw(); drawOverlay(); });
 watch(() => props.selection, () => { draw(); drawOverlay(); }, { deep: true });
 watch(textMoving, () => drawOverlay());
+watch(snapAxes, () => drawOverlay(), { deep: true });
+watch(snapCircleRadius, () => drawOverlay());
 watch(marquee, () => drawOverlay(), { deep: true });
 watch(ringAnnotation, () => drawOverlay(), { deep: true });
 watch(() => props.reference, () => { draw(); drawOverlay(); }, { deep: true });
@@ -631,6 +674,8 @@ function exposePreviewDebug(): void {
         previous.radius - previous.width / 2 - (info.radius + current.width / 2);
       return Math.round(gap * 10) / 10;
     },
+    axes: () => ({ ...snapAxes.value }),
+    ringStroke: () => ringSelectionColor(),
   };
 }
 
@@ -774,6 +819,8 @@ function startDrag(event: PointerEvent, state: DragState): void {
   textMoving.value =
     state.kind === 'center-move' ||
     (state.kind === 'group' && (props.selection?.centers.length ?? 0) > 0);
+  snapAxes.value = { vertical: false, horizontal: false, circular: false };
+  snapCircleRadius.value = null;
   if (state.kind === 'pan') panning.value = true;
   window.addEventListener('pointermove', onWindowMove);
   window.addEventListener('pointerup', onWindowUp, { once: true });
@@ -796,7 +843,28 @@ function onWindowMove(event: PointerEvent): void {
   const cy = size.value / 2;
 
   if (state.kind === 'group') {
-    emit('group-move', point.x - state.lastX, point.y - state.lastY);
+    const dx = point.x - state.lastX;
+    const dy = point.y - state.lastY;
+    const centers = props.selection?.centers ?? [];
+    if (centers.length > 0) {
+      const boxes = centers
+        .map((index) => layout.value.lines[index])
+        .filter((item) => Boolean(item));
+      if (boxes.length > 0) {
+        const left = Math.min(...boxes.map((item) => item.x));
+        const right = Math.max(...boxes.map((item) => item.x + item.width));
+        const top = Math.min(...boxes.map((item) => item.baseline - item.fontSize));
+        const bottom = Math.max(...boxes.map((item) => item.baseline));
+        const groupX = (left + right) / 2 + dx;
+        const groupY = (top + bottom) / 2 + dy;
+        snapAxes.value = {
+          vertical: Math.abs(groupX - cx) < 1.2,
+          horizontal: Math.abs(groupY - cy) < 1.2,
+          circular: false,
+        };
+      }
+    }
+    emit('group-move', dx, dy);
     state.lastX = point.x;
     state.lastY = point.y;
     return;
@@ -810,9 +878,16 @@ function onWindowMove(event: PointerEvent): void {
     const deltaRadius = radius - state.pointerRadius;
     if (!state.moved && Math.abs(deltaAngle) < 1 && Math.abs(deltaRadius) < 0.5) return;
     state.moved = true;
-    const radiusOffset = Math.round(
+    let radiusOffset = Math.round(
       Math.min(state.maxRadiusOffset, Math.max(-state.maxRadiusOffset, state.startRadiusOffset + deltaRadius)) * 10,
     ) / 10;
+    // Лёгкое прилипание строки к середине кольцевого зазора.
+    const circularSnap = Math.abs(radiusOffset) < 0.9;
+    if (circularSnap) radiusOffset = 0;
+    const geometry = layout.value.seal?.ringLines.find((item) => item.lineId === state.lineId);
+    const slot = geometry ? layout.value.seal?.slots[geometry.slot] : null;
+    snapAxes.value = { vertical: false, horizontal: false, circular: circularSnap && Boolean(slot) };
+    snapCircleRadius.value = circularSnap && slot ? slot.center : null;
     const angleOffset = Math.round((state.startAngleOffset + deltaAngle) * 10) / 10;
     emit('line-move', state.lineId, radiusOffset, angleOffset);
     return;
@@ -851,20 +926,25 @@ function onWindowMove(event: PointerEvent): void {
   if (state.kind === 'center-move') {
     let offsetX = state.startOffsetX + point.x - state.startX;
     let offsetY = state.startOffsetY + point.y - state.startY;
-    // Прилипание центра текста к осям печати (по 2 pt).
+    // Лёгкое прилипание центра текста к осям печати.
+    const snapped = { vertical: false, horizontal: false, circular: false };
     const line = layout.value.lines[state.index];
     if (line) {
       const dx = offsetX - state.startOffsetX;
       const dy = offsetY - state.startOffsetY;
       const centerX = line.x + line.width / 2 + dx;
       const centerY = line.baseline - line.fontSize * 0.35 + dy;
-      if (Math.abs(centerX - size.value / 2) < 2) {
+      if (Math.abs(centerX - size.value / 2) < 1.2) {
         offsetX = state.startOffsetX + (size.value / 2 - (line.x + line.width / 2));
+        snapped.vertical = true;
       }
-      if (Math.abs(centerY - size.value / 2) < 2) {
+      if (Math.abs(centerY - size.value / 2) < 1.2) {
         offsetY = state.startOffsetY + (size.value / 2 - (line.baseline - line.fontSize * 0.35));
+        snapped.horizontal = true;
       }
     }
+    snapAxes.value = snapped;
+    snapCircleRadius.value = null;
     emit(
       'center-move',
       state.index,
@@ -954,6 +1034,8 @@ function onWindowUp(): void {
   dragState = null;
   panning.value = false;
   textMoving.value = false;
+  snapAxes.value = { vertical: false, horizontal: false, circular: false };
+  snapCircleRadius.value = null;
   ringAnnotation.value = null;
   window.removeEventListener('pointermove', onWindowMove);
 }
@@ -1709,7 +1791,7 @@ onBeforeUnmount(() => {
           :key="`ring-handle-${index}`"
           type="button"
           :data-testid="`seal-handle-${index}`"
-          class="absolute z-10 h-2 w-2 -translate-x-1/2 -translate-y-1/2 cursor-ew-resize rounded-[1px] border-[1.5px] border-[#355ef0] bg-white shadow-sm"
+          class="absolute z-10 h-2 w-2 -translate-x-1/2 -translate-y-1/2 cursor-ew-resize rounded-[1px] border-[1.5px] border-[#e11d48] bg-white shadow-sm"
           :style="{ left: `${point.x}px`, top: `${point.y}px` }"
           title="Потяните, чтобы растянуть или сжать строку"
           @pointerdown="onRingHandleDown"
@@ -1723,7 +1805,7 @@ onBeforeUnmount(() => {
           :key="`center-handle-${index}`"
           type="button"
           :data-testid="`seal-center-handle-${index}`"
-          class="absolute z-10 h-2 w-2 -translate-x-1/2 -translate-y-1/2 cursor-ew-resize rounded-[1px] border-[1.5px] border-[#355ef0] bg-white shadow-sm"
+          class="absolute z-10 h-2 w-2 -translate-x-1/2 -translate-y-1/2 cursor-ew-resize rounded-[1px] border-[1.5px] border-[#e11d48] bg-white shadow-sm"
           :style="{ left: `${point.x}px`, top: `${point.y}px` }"
           title="Потяните, чтобы растянуть или сжать строку центра"
           @pointerdown="onCenterHandleDown($event, selectedCenterIndex)"

@@ -238,6 +238,17 @@ export async function drawStampToPdfPage(
         xSkew: degrees(skew),
       });
     }
+    if (line.underline) {
+      const start = ctx.toPdf(line.x, line.baseline + line.fontSize * 0.12);
+      const end = ctx.toPdf(line.x + line.width, line.baseline + line.fontSize * 0.12);
+      page.drawLine({
+        start,
+        end,
+        thickness: Math.max(0.4, line.fontSize * 0.06),
+        color: rgb(r, g, b),
+        opacity: alpha,
+      });
+    }
   }
 
   // Текст по кругу.
@@ -257,6 +268,26 @@ export async function drawStampToPdfPage(
       opacity: alpha * glyphAlpha,
       rotate: degrees(ctx.rotate - char.angle),
     });
+    if (char.underline && char.char.trim()) {
+      const width = font.widthOfTextAtSize(char.char, char.fontSize);
+      const radians = (char.angle * Math.PI) / 180;
+      const offset = char.fontSize * 0.12;
+      const start = {
+        x: char.x - Math.sin(radians) * offset,
+        y: char.y + Math.cos(radians) * offset,
+      };
+      const end = {
+        x: start.x + Math.cos(radians) * width,
+        y: start.y + Math.sin(radians) * width,
+      };
+      page.drawLine({
+        start: ctx.toPdf(start.x, start.y),
+        end: ctx.toPdf(end.x, end.y),
+        thickness: Math.max(0.4, char.fontSize * 0.06),
+        color: rgb(r, g, b),
+        opacity: alpha * glyphAlpha,
+      });
+    }
   }
 
   // Логотипы (могут быть повёрнуты вокруг своего центра, их может быть несколько).

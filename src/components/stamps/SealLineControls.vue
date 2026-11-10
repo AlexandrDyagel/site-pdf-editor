@@ -133,12 +133,11 @@ const spanHint = computed(() => {
         <AppButton
           size="sm"
           :variant="props.line.bold ? 'primary' : 'subtle'"
-          icon="bold"
           block
-          title="Жирный"
+          title="Полужирный (B)"
           @click.stop="props.line.bold = !props.line.bold"
         >
-          Ж
+          <span class="text-[15px] font-semibold leading-none">B</span>
         </AppButton>
         <AppButton
           size="sm"
@@ -147,9 +146,16 @@ const spanHint = computed(() => {
           block
           title="Курсив"
           @click.stop="props.line.italic = !props.line.italic"
-        >
-          К
-        </AppButton>
+        />
+        <AppButton
+          size="sm"
+          :variant="props.line.underline ? 'primary' : 'subtle'"
+          icon="underline"
+          block
+          title="Подчёркнутый"
+          data-testid="seal-line-underline"
+          @click.stop="props.line.underline = !props.line.underline"
+        />
         <AppButton
           size="sm"
           variant="subtle"
@@ -158,9 +164,7 @@ const spanHint = computed(() => {
           title="Центрировать между кольцами"
           data-testid="seal-line-align-gap"
           @click.stop="props.line.radiusOffset = 0"
-        >
-          Ц
-        </AppButton>
+        />
       </div>
     </div>
 
@@ -186,7 +190,7 @@ const spanHint = computed(() => {
         :step="0.2"
         :precision="1"
         :data-testid="`seal-line-${props.index}-tracking`"
-        @update:model-value="props.line.letterSpacing = Number($event)"
+        @update:model-value="props.line.letterSpacing = Number($event); props.line.spanAngle = 1"
       />
       <AppSlider
         :model-value="props.line.wordSpacing"
@@ -197,12 +201,12 @@ const spanHint = computed(() => {
         :step="0.5"
         :precision="1"
         :data-testid="`seal-line-${props.index}-word`"
-        @update:model-value="props.line.wordSpacing = Number($event)"
+        @update:model-value="props.line.wordSpacing = Number($event); props.line.spanAngle = 1"
       />
     </div>
 
     <AppSlider
-      :model-value="props.line.spanAngle"
+      :model-value="props.effectiveSpan"
       label="Угол дуги"
       unit="°"
       :min="1"

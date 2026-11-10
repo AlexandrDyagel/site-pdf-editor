@@ -52,6 +52,8 @@ export interface StampLineLayout {
   family: string;
   bold: boolean;
   italic: boolean;
+  /** Подчёркнутый текст. */
+  underline?: boolean;
 }
 
 /** Символ кругового текста. */
@@ -69,6 +71,8 @@ export interface StampCharLayout {
   fontId?: string;
   bold: boolean;
   italic: boolean;
+  /** Подчёркнутый текст. */
+  underline?: boolean;
 }
 
 /** Полная геометрия штампа. */
@@ -145,6 +149,7 @@ export function createStampLine(text: string, patch: Partial<StampTextLine> = {}
     fontSize: 12,
     bold: false,
     italic: false,
+    underline: false,
     align: 'center',
     letterSpacing: 0,
     wordSpacing: 0,
@@ -331,6 +336,7 @@ export function computeStampLayout(
       family: lineFamily,
       bold: line.bold,
       italic: line.italic,
+      underline: line.underline,
     });
     cursorY += lineHeight;
   });
@@ -798,6 +804,14 @@ export function paintStampLayout(
     } else {
       ctx.fillText(line.text, cursor, line.baseline);
     }
+    if (line.underline) {
+      ctx.strokeStyle = line.color;
+      ctx.lineWidth = Math.max(0.4, line.fontSize * 0.06);
+      ctx.beginPath();
+      ctx.moveTo(line.x, line.baseline + line.fontSize * 0.12);
+      ctx.lineTo(line.x + line.width, line.baseline + line.fontSize * 0.12);
+      ctx.stroke();
+    }
     ctx.restore();
   }
 
@@ -816,6 +830,15 @@ export function paintStampLayout(
     ctx.textAlign = 'left';
     ctx.textBaseline = 'alphabetic';
     ctx.fillText(char.char, 0, 0);
+    if (char.underline && char.char.trim()) {
+      const glyphWidth = ctx.measureText(char.char).width;
+      ctx.strokeStyle = char.color;
+      ctx.lineWidth = Math.max(0.4, char.fontSize * 0.06);
+      ctx.beginPath();
+      ctx.moveTo(0, char.fontSize * 0.12);
+      ctx.lineTo(glyphWidth, char.fontSize * 0.12);
+      ctx.stroke();
+    }
     ctx.restore();
   }
 
@@ -930,7 +953,7 @@ export function stampTemplateToSvg(
         line.italic ? ' font-style="italic"' : ''
       } fill="${line.color}" letter-spacing="${line.letterSpacing}"${
         line.wordSpacing ? ` word-spacing="${line.wordSpacing}"` : ''
-      }>${escape(line.text)}</text>`,
+      }${line.underline ? ' text-decoration="underline"' : ''}>${escape(line.text)}</text>`,
     );
   }
 
@@ -940,8 +963,8 @@ export function stampTemplateToSvg(
       `<text x="0" y="0" transform="translate(${char.x} ${char.y}) rotate(${char.angle})" font-family="${escape(
         char.family,
       )}" font-size="${char.fontSize}" fill="${char.color}"${
-        glyphAlpha < 0.999 ? ` opacity="${glyphAlpha.toFixed(2)}"` : ''
-      }>${escape(char.char)}</text>`,
+        char.underline ? ' text-decoration="underline"' : ''
+      }${glyphAlpha < 0.999 ? ` opacity="${glyphAlpha.toFixed(2)}"` : ''}>${escape(char.char)}</text>`,
     );
   }
 

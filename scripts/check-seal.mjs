@@ -353,7 +353,7 @@ try {
 
   const spanStart = await cdp.evaluate(`(() => {
     const line = window.__SEAL_DESIGNER__.seal.lines[0];
-    return { span: window.__sealLineInfo(line.id).span, tracking: line.letterSpacing };
+    return { span: window.__sealLineInfo(line.id).span, tracking: line.letterSpacing, word: line.wordSpacing };
   })()`);
   const handleGrow = await cdp.evaluate(`(() => {
     const node = document.querySelector('[data-testid=seal-handle-0]').getBoundingClientRect();
@@ -374,10 +374,11 @@ try {
   await sleep(500);
   const spanGrown = await cdp.evaluate(`(() => {
     const line = window.__SEAL_DESIGNER__.seal.lines[0];
-    return { target: line.spanAngle, tracking: line.letterSpacing, actual: window.__sealLineInfo(line.id).span };
+    return { target: line.spanAngle, tracking: line.letterSpacing, word: line.wordSpacing, actual: window.__sealLineInfo(line.id).span };
   })()`);
   check('маркер растягивает строку',
-    spanGrown.target === 1 && spanGrown.tracking > spanStart.tracking && spanGrown.actual > spanStart.span,
+    spanGrown.target > 1 && spanGrown.tracking > spanStart.tracking &&
+      spanGrown.word > spanStart.word && Math.abs(spanGrown.actual - spanGrown.target) < 2,
     JSON.stringify({ spanStart, spanGrown }));
 
   const handleShrink = await cdp.evaluate(`(() => {
@@ -392,15 +393,27 @@ try {
   await sleep(500);
   const spanShrunk = await cdp.evaluate(`(() => {
     const line = window.__SEAL_DESIGNER__.seal.lines[0];
-    return { target: line.spanAngle, tracking: line.letterSpacing, actual: window.__sealLineInfo(line.id).span };
+    return { target: line.spanAngle, tracking: line.letterSpacing, word: line.wordSpacing, actual: window.__sealLineInfo(line.id).span };
   })()`);
-  check('маркер сжимает строку',
-    spanShrunk.target === 1 && spanShrunk.tracking < spanGrown.tracking && spanShrunk.actual < spanGrown.actual,
+  check('маркер сжимает строку до предела и держит актуальный угол',
+    spanShrunk.tracking < spanGrown.tracking &&
+      spanShrunk.word <= spanGrown.word &&
+      Math.abs(spanShrunk.actual - spanShrunk.target) < 2 &&
+      spanShrunk.target >= 8,
     JSON.stringify({ spanGrown, spanShrunk }));
-  check('маркер двигает ползунок «Между буквами»',
-    Math.abs(spanGrown.tracking - spanStart.tracking) > 0.2 &&
-      Math.abs(spanShrunk.tracking - spanGrown.tracking) > 0.2,
-    JSON.stringify({ start: spanStart.tracking, grown: spanGrown.tracking, shrunk: spanShrunk.tracking }));
+  check('маркер двигает ползунки «Между буквами» и «Между словами»',
+    Math.abs(spanGrown.tracking - spanStart.tracking) > 0.05 &&
+      Math.abs(spanShrunk.tracking - spanGrown.tracking) > 0.05 &&
+      Math.abs(spanGrown.word - spanStart.word) > 0.2 &&
+      Math.abs(spanShrunk.word - spanGrown.word) > 0.2,
+    JSON.stringify({ start: spanStart, grown: spanGrown, shrunk: spanShrunk }));
+  const angleSlider = await cdp.evaluate(`(() => {
+    const input = document.querySelector('[data-testid=seal-line-0-span] input');
+    return { value: input ? Number(input.value) : null, actual: window.__sealLineInfo(window.__SEAL_DESIGNER__.seal.lines[0].id).span };
+  })()`);
+  check('ползунок «Угол дуги» показывает фактический угол',
+    angleSlider.value !== null && Math.abs(angleSlider.value - angleSlider.actual) < 1.5,
+    JSON.stringify(angleSlider));
 
   console.log('\n5. Перетаскивание строки мышью');
   const beforeDrag = await cdp.evaluate(`window.__sealLineInfo(window.__SEAL_DESIGNER__.seal.lines[0].id)`);
@@ -1963,9 +1976,17 @@ try {
     canvas.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, clientX: point.x, clientY: point.y, button: 0, pointerId: 803 }));
     window.dispatchEvent(new PointerEvent('pointermove', { bubbles: true, clientX: point.x + 14, clientY: point.y + 10, pointerId: 803 }));
     await new Promise((r) => setTimeout(r, 300));
+    const overlay = document.querySelector('[data-testid=seal-designer] [data-testid=seal-overlay]');
+    const overlayCtx = overlay.getContext('2d');
+    const pixels = overlayCtx.getImageData(0, 0, overlay.width, overlay.height).data;
+    let red = 0;
+    for (let i = 0; i < pixels.length; i += 4) {
+      if (pixels[i] > 150 && pixels[i + 1] < 110 && pixels[i + 2] < 140 && pixels[i + 3] > 20) red += 1;
+    }
     const before = {
       annotation: document.querySelector('[data-testid=seal-preview]').getAttribute('data-ring-annotation'),
       gap: t.seal.rings[1].gap,
+      red,
     };
     window.dispatchEvent(new PointerEvent('pointerup', { bubbles: true, pointerId: 803 }));
     await new Promise((r) => setTimeout(r, 250));
@@ -1977,6 +1998,8 @@ try {
   check('при перетаскивании кольца видна размерная линия между кольцами',
     ringDimension.before.annotation === 'true' && ringDimension.after === 'false',
     JSON.stringify(ringDimension));
+  check('размерная линия и число при перетаскивании кольца — красные',
+    ringDimension.before.red > 5, JSON.stringify(ringDimension.before));
 
   console.log('\n20. Центрирование, предел кольца и кнопки выравнивания');
 
@@ -2099,6 +2122,224 @@ try {
       Math.abs(groupGuides.groupX - groupGuides.center) < 3 &&
       Math.abs(groupGuides.groupY - groupGuides.center) < 3,
     JSON.stringify(groupGuides));
+
+  console.log('\n21. Кнопки текста, красные маркеры и оси по прилипанию');
+
+  const textButtons = await cdp.evaluate(`(async () => {
+    const t = window.__SEAL_DESIGNER__;
+    Array.from(document.querySelectorAll('[data-testid=seal-designer] [role=tab]'))
+      .find((n) => n.textContent.trim() === 'Текст')?.click();
+    await new Promise((r) => setTimeout(r, 300));
+    const card = document.querySelector('[data-testid=seal-line-0]');
+    const bold = card?.querySelector('button[title^="Полужирный"]');
+    const italic = card?.querySelector('button[title="Курсив"]');
+    const center = card?.querySelector('button[title^="Центрировать"]');
+    const underline = card?.querySelector('[data-testid=seal-line-underline]');
+    const boldSpan = bold?.querySelector('span');
+    if (underline) underline.click();
+    await new Promise((r) => setTimeout(r, 300));
+    const underlineOn = t.seal.lines[0].underline;
+    if (underline) underline.click();
+    await new Promise((r) => setTimeout(r, 300));
+    const underlineOff = t.seal.lines[0].underline;
+    return {
+      bold: bold?.textContent?.trim(),
+      weight: boldSpan ? getComputedStyle(boldSpan).fontWeight : null,
+      italicText: italic?.textContent?.trim() ?? null,
+      centerText: center?.textContent?.trim() ?? null,
+      underline: Boolean(underline),
+      underlineOn,
+      underlineOff,
+    };
+  })()`);
+  check('жирная кнопка — только полужирная B',
+    textButtons.bold === 'B' && textButtons.weight === '600', JSON.stringify(textButtons));
+
+  const underlineCheck = await cdp.evaluate(`(async () => {
+    const t = window.__SEAL_DESIGNER__;
+    Array.from(document.querySelectorAll('[data-testid=seal-designer] [role=tab]'))
+      .find((n) => n.textContent.trim() === 'Центр')?.click();
+    await new Promise((r) => setTimeout(r, 300));
+    const button = document.querySelector('[data-testid=seal-center-underline]');
+    const before = Boolean(t.lines[0].underline);
+    button?.click();
+    await new Promise((r) => setTimeout(r, 300));
+    const after = Boolean(t.lines[0].underline);
+    button?.click();
+    await new Promise((r) => setTimeout(r, 300));
+    const again = Boolean(t.lines[0].underline);
+    return { before, after, again, exists: Boolean(button) };
+  })()`);
+  check('кнопка подчёркивания работает в обе стороны',
+    underlineCheck.exists && underlineCheck.after === !underlineCheck.before &&
+      underlineCheck.again === underlineCheck.before, JSON.stringify(underlineCheck));
+
+  const redMarker = await cdp.evaluate(`(async () => {
+    const t = window.__SEAL_DESIGNER__;
+    const layout = window.__sealLayout();
+    const line = layout.seal.ringLines[0];
+    const point = window.__SEAL_PREVIEW__.client(
+      line.chars[Math.floor(line.chars.length / 2)].x,
+      line.chars[Math.floor(line.chars.length / 2)].y,
+    );
+    const canvas = document.querySelector('[data-testid=seal-preview-canvas]');
+    canvas.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, clientX: point.x, clientY: point.y, button: 0, pointerId: 950 }));
+    canvas.dispatchEvent(new PointerEvent('pointerup', { bubbles: true, pointerId: 950 }));
+    await new Promise((r) => setTimeout(r, 350));
+    const handle = document.querySelector('[data-testid=seal-handle-0]');
+    return {
+      border: handle ? getComputedStyle(handle).borderColor : null,
+      center: { x: t.lines[0] ? window.__SEAL_PREVIEW__.client(0, 0) : null },
+    };
+  })()`);
+  check('текстовые маркеры с красной обводкой',
+    redMarker.border === 'rgb(225, 29, 72)', JSON.stringify(redMarker));
+
+  const centerMarker = await cdp.evaluate(`(async () => {
+    const t = window.__SEAL_DESIGNER__;
+    const layout = window.__sealLayout();
+    const line = layout.lines[0];
+    const point = window.__SEAL_PREVIEW__.client(line.x + line.width / 2, line.baseline - line.fontSize * 0.35);
+    const canvas = document.querySelector('[data-testid=seal-preview-canvas]');
+    canvas.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, clientX: point.x, clientY: point.y, button: 0, pointerId: 951 }));
+    canvas.dispatchEvent(new PointerEvent('pointerup', { bubbles: true, pointerId: 951 }));
+    await new Promise((r) => setTimeout(r, 350));
+    const overlay = document.querySelector('[data-testid=seal-designer] [data-testid=seal-overlay]');
+    const rect = overlay.getBoundingClientRect();
+    const ctx = overlay.getContext('2d');
+    const ratio = overlay.width / rect.width;
+    const cx = Math.round((point.x - rect.left) * ratio);
+    const cy = Math.round((point.y - rect.top) * ratio);
+    const data = ctx.getImageData(Math.max(0, cx - 8), Math.max(0, cy - 8), 16, 16).data;
+    let red = 0;
+    for (let i = 0; i < data.length; i += 4) {
+      if (data[i] > 180 && data[i + 1] < 90 && data[i + 2] < 120 && data[i + 3] > 40) red += 1;
+    }
+    return { selected: window.__SEAL_DESIGNER_STATE__.get().selectedCenterIndex, red };
+  })()`);
+  check('у выбранной строки центра есть красный маркер центра',
+    centerMarker.selected !== null && centerMarker.red > 0, JSON.stringify(centerMarker));
+
+  check('кнопки курсива и центрирования без букв',
+    textButtons.italicText === '' && textButtons.centerText === '', JSON.stringify(textButtons));
+
+  const snapAxes = await cdp.evaluate(`(async () => {
+    const t = window.__SEAL_DESIGNER__;
+    Array.from(document.querySelectorAll('[data-testid=seal-designer] [role=tab]'))
+      .find((n) => n.textContent.trim() === 'Центр')?.click();
+    await new Promise((r) => setTimeout(r, 300));
+    t.lines[0].offsetX = 0;
+    t.lines[0].offsetY = 5;
+    await new Promise((r) => setTimeout(r, 400));
+    const layout = window.__sealLayout();
+    const line = layout.lines[0];
+    const point = window.__SEAL_PREVIEW__.client(line.x + line.width / 2, line.baseline - line.fontSize * 0.35);
+    const canvas = document.querySelector('[data-testid=seal-preview-canvas]');
+    canvas.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, clientX: point.x, clientY: point.y, button: 0, pointerId: 960 }));
+    window.dispatchEvent(new PointerEvent('pointermove', { bubbles: true, clientX: point.x + 1, clientY: point.y, pointerId: 960 }));
+    await new Promise((r) => setTimeout(r, 350));
+    const during = {
+      axes: window.__SEAL_PREVIEW__.axes(),
+      guides: document.querySelector('[data-testid=seal-preview]').getAttribute('data-guides'),
+    };
+    const overlay = document.querySelector('[data-testid=seal-designer] [data-testid=seal-overlay]');
+    const ctx = overlay.getContext('2d');
+    const rect = overlay.getBoundingClientRect();
+    const ratio = overlay.width / rect.width;
+    const data = ctx.getImageData(Math.round((rect.width / 2) * ratio), 0, 1, Math.round((rect.height * 0.3) * ratio)).data;
+    during.pixel = Array.from(data);
+    window.dispatchEvent(new PointerEvent('pointerup', { bubbles: true, pointerId: 960 }));
+    await new Promise((r) => setTimeout(r, 250));
+    return { during, after: window.__SEAL_PREVIEW__.axes() };
+  })()`);
+  check('показывается только та ось, к которой прилип текст',
+    snapAxes.during.axes.vertical === true && snapAxes.during.axes.horizontal === false &&
+      snapAxes.during.guides === 'true' && snapAxes.after.vertical === false,
+    JSON.stringify(snapAxes));
+  let axisRed = 0;
+  for (let i = 0; i < snapAxes.during.pixel.length; i += 4) {
+    if (snapAxes.during.pixel[i] > 150 && snapAxes.during.pixel[i + 1] < 100 && snapAxes.during.pixel[i + 2] < 130) axisRed += 1;
+  }
+  check('ось центрирования красная', axisRed > 0,
+    JSON.stringify({ red: axisRed, samples: snapAxes.during.pixel.length / 4 }));
+
+  const circular = await cdp.evaluate(`(async () => {
+    const t = window.__SEAL_DESIGNER__;
+    Array.from(document.querySelectorAll('[data-testid=seal-designer] [role=tab]'))
+      .find((n) => n.textContent.trim() === 'Текст')?.click();
+    t.seal.lines[0].radiusOffset = 0;
+    t.seal.lines[0].angleOffset = 0;
+    await new Promise((r) => setTimeout(r, 400));
+    const line = window.__sealLayout().seal.ringLines[0];
+    const ch = line.chars[Math.floor(line.chars.length / 2)];
+    const point = window.__SEAL_PREVIEW__.client(ch.x, ch.y);
+    const canvas = document.querySelector('[data-testid=seal-preview-canvas]');
+    canvas.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, clientX: point.x, clientY: point.y, button: 0, pointerId: 961 }));
+    window.dispatchEvent(new PointerEvent('pointermove', { bubbles: true, clientX: point.x, clientY: point.y - 2, pointerId: 961 }));
+    await new Promise((r) => setTimeout(r, 300));
+    const during = {
+      axes: window.__SEAL_PREVIEW__.axes(),
+      guides: document.querySelector('[data-testid=seal-preview]').getAttribute('data-guides'),
+    };
+    window.dispatchEvent(new PointerEvent('pointerup', { bubbles: true, pointerId: 961 }));
+    await new Promise((r) => setTimeout(r, 250));
+    return { during, after: window.__SEAL_PREVIEW__.axes() };
+  })()`);
+  check('круговая строка прилипает к середине зазора и показывает кольцевую ось',
+    circular.during.axes.circular === true && circular.during.guides === 'true' &&
+      circular.after.circular === false,
+    JSON.stringify(circular));
+
+  const marqueeBlue = await cdp.evaluate(`(async () => {
+    const root = document.querySelector('[data-testid=seal-preview]');
+    const rect = root.getBoundingClientRect();
+    root.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, clientX: rect.left + rect.width * 0.15, clientY: rect.top + rect.height * 0.15, button: 0, pointerId: 962 }));
+    window.dispatchEvent(new PointerEvent('pointermove', { bubbles: true, clientX: rect.left + rect.width * 0.65, clientY: rect.top + rect.height * 0.65, pointerId: 962 }));
+    await new Promise((r) => setTimeout(r, 250));
+    const overlay = document.querySelector('[data-testid=seal-designer] [data-testid=seal-overlay]');
+    const ctx = overlay.getContext('2d');
+    const ratio = overlay.width / overlay.getBoundingClientRect().width;
+    const x = Math.round(rect.width * 0.4 * ratio);
+    const y = Math.round(rect.height * 0.4 * ratio);
+    const data = ctx.getImageData(x, y, 1, 1).data;
+    window.dispatchEvent(new PointerEvent('pointerup', { bubbles: true, pointerId: 962 }));
+    await new Promise((r) => setTimeout(r, 200));
+    return Array.from(data);
+  })()`);
+  check('область выделения мышкой — синеватая',
+    marqueeBlue[2] > marqueeBlue[0] + 10 && marqueeBlue[3] > 15, JSON.stringify(marqueeBlue));
+
+  const ringColors = await cdp.evaluate(`(async () => {
+    const t = window.__SEAL_DESIGNER__;
+    t.color = '#1d4ed8';
+    await new Promise((r) => setTimeout(r, 300));
+    const blueStroke = window.__SEAL_PREVIEW__.ringStroke();
+    t.color = '#b91c1c';
+    await new Promise((r) => setTimeout(r, 300));
+    const redStroke = window.__SEAL_PREVIEW__.ringStroke();
+    return { blueStroke, redStroke };
+  })()`);
+  check('штрих кольца контрастен цвету печати',
+    ringColors.blueStroke !== '#1d4ed8' && ringColors.redStroke !== '#b91c1c' &&
+      ringColors.blueStroke !== ringColors.redStroke,
+    JSON.stringify(ringColors));
+
+  const wordSlider = await cdp.evaluate(`(async () => {
+    const t = window.__SEAL_DESIGNER__;
+    Array.from(document.querySelectorAll('[data-testid=seal-designer] [role=tab]'))
+      .find((n) => n.textContent.trim() === 'Текст')?.click();
+    await new Promise((r) => setTimeout(r, 300));
+    t.seal.lines[0].wordSpacing = 7;
+    await new Promise((r) => setTimeout(r, 300));
+    const input = document.querySelector('[data-testid=seal-line-0-word] input');
+    const shown = input ? Number(input.value) : null;
+    input.value = '9';
+    input.dispatchEvent(new Event('input', { bubbles: true }));
+    await new Promise((r) => setTimeout(r, 300));
+    return { shown, value: t.seal.lines[0].wordSpacing };
+  })()`);
+  check('ползунок «Между словами» показывает и меняет значение',
+    wordSlider.shown === 7 && wordSlider.value === 9, JSON.stringify(wordSlider));
 
   await cdp.evaluate(`window.__PDF_EDITOR__.ui.closeAllModals(); 'ok'`);
   await sleep(600);

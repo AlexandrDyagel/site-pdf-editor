@@ -835,8 +835,8 @@ function onGroupMove(dx: number, dy: number): void {
         const groupX = (left + right) / 2;
         const groupY = (top + bottom) / 2;
         const center = sizeCenter();
-        const snapX = Math.abs(groupX - center) < 2 ? center - groupX : 0;
-        const snapY = Math.abs(groupY - center) < 2 ? center - groupY : 0;
+        const snapX = Math.abs(groupX - center) < 1.2 ? center - groupX : 0;
+        const snapY = Math.abs(groupY - center) < 1.2 ? center - groupY : 0;
         if (snapX !== 0 || snapY !== 0) {
           for (const layoutIndex of selection.centers) {
             const index = templateCenterIndex(layoutIndex);
@@ -976,14 +976,26 @@ function onSpanChange(lineId: string, angle: number): void {
     updateLine(lineId, { spanAngle: target });
     return;
   }
-  // Тянем за маркер — меняем именно трекинг, чтобы ползунок «Между буквами»
-  // показывал реальное значение. Угол при этом остаётся естественным.
+  // Тянем за маркер — распределяем растяжение между трекингом и
+  // межсловным интервалом, чтобы оба ползунка показывали реальные значения.
   const actual = Math.abs(geometry.endAngle - geometry.startAngle);
-  const delta = ((target - actual) * Math.PI * geometry.radius) / (180 * count);
-  const letterSpacing = Math.round(((line.letterSpacing ?? 0) + delta) * 10) / 10;
+  const spaces = Array.from(line.text).filter((char) => char === ' ').length;
+  const k = template.value.width / Math.max(1, sealDiameterPx(settings.diameterMm));
+  const currentLength = (actual * Math.PI * geometry.radius) / 180;
+  // Ширины самих букв без трекинга и межсловных интервалов.
+  const baseWidths =
+    currentLength -
+    ((line.letterSpacing ?? 0) * count + (line.wordSpacing ?? 0) * spaces) * k;
+  const targetLength = (target * Math.PI * geometry.radius) / 180;
+  const neededPt = (targetLength - baseWidths) / Math.max(0.01, k);
+  // Половина запаса уходит в трекинг, половина — в пробелы (если они есть).
+  const letterSpacing =
+    spaces > 0 ? (neededPt * 0.5) / count : neededPt / count;
+  const wordSpacing = spaces > 0 ? (neededPt * 0.5) / spaces : line.wordSpacing ?? 0;
   updateLine(lineId, {
-    spanAngle: 1,
-    letterSpacing: Math.min(60, Math.max(-4, letterSpacing)),
+    spanAngle: target,
+    letterSpacing: Math.min(60, Math.max(-4, Math.round(letterSpacing * 10) / 10)),
+    wordSpacing: Math.min(60, Math.max(0, Math.round(wordSpacing * 10) / 10)),
   });
 }
 
@@ -1819,12 +1831,11 @@ function onPickEnd(color: string | null): void {
                   <AppButton
                     size="sm"
                     :variant="line.bold ? 'primary' : 'subtle'"
-                    icon="bold"
                     block
-                    title="Жирный"
+                    title="Полужирный (B)"
                     @click="updateCenterLine(index, { bold: !line.bold })"
                   >
-                    Ж
+                    <span class="text-[15px] font-semibold leading-none">B</span>
                   </AppButton>
                   <AppButton
                     size="sm"
@@ -1833,9 +1844,16 @@ function onPickEnd(color: string | null): void {
                     block
                     title="Курсив"
                     @click="updateCenterLine(index, { italic: !line.italic })"
-                  >
-                    К
-                  </AppButton>
+                  />
+                  <AppButton
+                    size="sm"
+                    :variant="line.underline ? 'primary' : 'subtle'"
+                    icon="underline"
+                    block
+                    title="Подчёркнутый"
+                    data-testid="seal-center-underline"
+                    @click="updateCenterLine(index, { underline: !line.underline })"
+                  />
                   <AppButton
                     size="sm"
                     variant="subtle"
@@ -1844,9 +1862,7 @@ function onPickEnd(color: string | null): void {
                     title="Центрировать по вертикальной оси печати"
                     data-testid="seal-center-align"
                     @click="updateCenterLine(index, { offsetX: 0 })"
-                  >
-                    Ц
-                  </AppButton>
+                  />
                 </div>
               </div>
               <div class="grid grid-cols-2 gap-2">

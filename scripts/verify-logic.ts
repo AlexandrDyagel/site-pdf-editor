@@ -838,6 +838,26 @@ check(
   }),
 );
 
+const underlineTemplate = createSealTemplate({
+  lines: [createStampLine('ПОДЧЕРКНУТЫЙ', { fontSize: 10, underline: true })],
+});
+const underlineLayout = computeStampLayout(underlineTemplate, () => 'PT Sans');
+check(
+  'подчёркивание сохраняется в раскладке и SVG',
+  underlineLayout.lines[0].underline === true &&
+    stampTemplateToSvg(underlineTemplate, () => 'PT Sans').includes('text-decoration="underline"'),
+  String(underlineLayout.lines[0].underline),
+);
+const sealUnderlineTemplate = createSealTemplate();
+if (sealUnderlineTemplate.seal) sealUnderlineTemplate.seal.lines[0].underline = true;
+const sealUnderlineLayout = computeStampLayout(sealUnderlineTemplate, () => 'PT Sans');
+check(
+  'подчёркивание круговой строки доходит до букв',
+  sealUnderlineLayout.seal?.ringLines[0]?.underline === true &&
+    sealUnderlineLayout.seal?.ringLines[0]?.chars[0]?.underline === true,
+  JSON.stringify(sealUnderlineLayout.seal?.ringLines[0]?.underline),
+);
+
 const normalizedLines = normalizeSealSettings({
   ...defaultSeal,
   lines: [

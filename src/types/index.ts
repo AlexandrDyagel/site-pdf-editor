@@ -489,6 +489,8 @@ export interface StampTextLine {
   fontSize: number;
   bold: boolean;
   italic: boolean;
+  /** Подчёркнутый текст. */
+  underline?: boolean;
   align: 'left' | 'center' | 'right';
   /** Межбуквенное расстояние, pt. */
   letterSpacing: number;
@@ -606,6 +608,8 @@ export interface SealRingLine {
   fontId?: string;
   bold: boolean;
   italic: boolean;
+  /** Подчёркнутый текст. */
+  underline?: boolean;
 }
 
 /** Разделительная окружность между дугами и центром. */

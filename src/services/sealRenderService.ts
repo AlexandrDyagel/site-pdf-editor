@@ -83,6 +83,7 @@ export function createSealRingLine(patch: Partial<SealRingLine> = {}): SealRingL
     angleOffset: 0,
     bold: false,
     italic: false,
+    underline: false,
     ...patch,
   };
 }
@@ -265,6 +266,7 @@ function normalizeRingLine(line: SealRingLine, ringCount: number): SealRingLine 
     angleOffset: (((angle + 180) % 360) + 360) % 360 - 180,
     bold: Boolean(line.bold),
     italic: Boolean(line.italic),
+    underline: Boolean(line.underline),
   };
 }
 
@@ -427,6 +429,8 @@ export interface SealArcLayoutInput {
   color: string;
   bold: boolean;
   italic: boolean;
+  /** Подчёркнутый текст. */
+  underline?: boolean;
 }
 
 /** Результат раскладки дугового текста. */
@@ -579,6 +583,7 @@ export function layoutSealArc(input: SealArcLayoutInput): SealArcLayout {
       fontId: input.fontId,
       bold: input.bold,
       italic: input.italic,
+      underline: Boolean(input.underline),
     });
     cursor += advance;
   }
@@ -654,6 +659,8 @@ export interface SealRingLineGeometry {
   /** Центр дуги, градусы (270 — верх, 90 — низ). */
   centerAngle: number;
   text: string;
+  /** Подчёркнутый текст. */
+  underline?: boolean;
 }
 
 /** Зазор между кольцами (или свободное место внутри последнего кольца). */
@@ -930,6 +937,7 @@ export function computeSealParts(
       color,
       bold: line.bold,
       italic: line.italic,
+      underline: Boolean(line.underline),
     });
 
     ringLines.push({
@@ -945,6 +953,7 @@ export function computeSealParts(
       endAngle: layout.endAngle,
       centerAngle,
       text: line.text,
+      underline: Boolean(line.underline),
     });
   }
 
@@ -1051,6 +1060,7 @@ export function computeSealParts(
       family,
       bold: line.bold,
       italic: line.italic,
+      underline: line.underline,
     };
   });
 
