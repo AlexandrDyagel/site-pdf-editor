@@ -21,6 +21,7 @@
  *    панорамирует превью.
  */
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue';
+import AppIcon from '@/components/ui/AppIcon.vue';
 import type { SealMultiSelection, StampTemplate } from '@/types';
 import { computeStampLayout, paintStampLayout } from '@/services/stampRenderService';
 import { sealArcMinSpan } from '@/services/sealRenderService';
@@ -38,6 +39,7 @@ const props = withDefaults(
     selectedLineId?: string | null;
     selectedCenterIndex?: number | null;
     selectedRingIndex?: number | null;
+    selectedStraightLineId?: string | null;
     selectedLogo?: boolean;
     selectedLogoIndex?: number | null;
     selectedReference?: boolean;
@@ -49,6 +51,7 @@ const props = withDefaults(
     selectedLineId: null,
     selectedCenterIndex: null,
     selectedRingIndex: null,
+    selectedStraightLineId: null,
     selectedLogo: false,
     selectedLogoIndex: null,
     selectedReference: false,
@@ -67,6 +70,8 @@ const emit = defineEmits<{
   'center-select': [lineIndex: number];
   'center-stretch': [lineIndex: number, width: number];
   'center-move': [lineIndex: number, offsetX: number, offsetY: number];
+  'center-rotate': [lineIndex: number, rotation: number];
+  'group-rotate': [deltaAngle: number, pivotX: number, pivotY: number];
   'ring-select': [ringIndex: number];
   'ring-resize': [ringIndex: number, radius: number];
   'ring-delete': [ringIndex: number];
@@ -85,6 +90,10 @@ const emit = defineEmits<{
   'zoom-change': [factor: number];
   'selection-change': [selection: SealMultiSelection | null];
   'group-move': [dx: number, dy: number];
+  'straight-line-select': [lineId: string];
+  'straight-line-move': [lineId: string, x: number, y: number];
+  'straight-line-resize': [lineId: string, x: number, y: number, length: number, rotation: number];
+  'straight-line-rotate': [lineId: string, rotation: number];
   'edit-line': [lineId: string];
   'delete-line': [lineId: string];
 }>();
@@ -120,6 +129,15 @@ const panning = ref(false);
 const marquee = ref<{ x1: number; y1: number; x2: number; y2: number } | null>(null);
 /** Живая размерная линия между кольцами при перетаскивании. */
 const ringAnnotation = ref<{ ringIndex: number; radius: number; angle: number } | null>(null);
+/** Красная размерная линия при растягивании прямого объекта. */
+const strokeAnnotation = ref<{
+  endpoint: 'start' | 'end';
+  x1: number;
+  y1: number;
+  x2: number;
+  y2: number;
+  distance: number;
+} | null>(null);
 const overlay = ref<HTMLCanvasElement | null>(null);
 /** Размер рабочей области превью в CSS-пикселях. */
 const viewport = ref({ w: 0, h: 0 });
@@ -213,6 +231,22 @@ function drawRotationStem(
   context.restore();
 }
 
+function inkTop(line: { baseline: number; fontSize: number; inkAscent?: number }): number {
+  return line.baseline - (line.inkAscent ?? line.fontSize * 0.72);
+}
+function inkBottom(line: { baseline: number; fontSize: number; inkDescent?: number }): number {
+  return line.baseline + (line.inkDescent ?? line.fontSize * 0.2);
+}
+function inkCenter(line: {
+  baseline: number;
+  fontSize: number;
+  inkAscent?: number;
+  inkDescent?: number;
+  inkCenterY?: number;
+}): number {
+  return line.inkCenterY ?? (inkTop(line) + inkBottom(line)) / 2;
+}
+
 function draw(): void {
   const element = canvas.value;
   if (!element) return;
@@ -241,13 +275,27 @@ function draw(): void {
     if (ring) {
       context.save();
       context.setLineDash([2 / props.zoom, 2 / props.zoom]);
-      context.lineWidth = 0.8 / props.zoom;
+      context.lineWidth = 1.05 / props.zoom;
       context.strokeStyle = ringSelectionColor();
       context.beginPath();
       context.arc(ring.cx, ring.cy, ring.radius, 0, Math.PI * 2);
       context.stroke();
       context.restore();
     }
+  }
+
+  // Выбранная прямая линия — тонкий синий контур поверх штриха.
+  if (selectedStraightLine.value) {
+    const line = selectedStraightLine.value;
+    context.save();
+    context.setLineDash([3 / props.zoom, 2 / props.zoom]);
+    context.lineWidth = 1 / props.zoom;
+    context.strokeStyle = '#355ef0';
+    context.beginPath();
+    context.moveTo(line.x1, line.y1);
+    context.lineTo(line.x2, line.y2);
+    context.stroke();
+    context.restore();
   }
 
   // Выбранный логотип — рамка как у картинки на холсте (сплошная синяя)
@@ -283,7 +331,7 @@ function draw(): void {
   if (props.selection) {
     context.save();
     context.lineWidth = 1 / props.zoom;
-    context.strokeStyle = '#355ef0';
+    context.strokeStyle = '#e11d48';
     for (const lineId of props.selection.lines) {
       const line = layout.value.seal?.ringLines.find((item) => item.lineId === lineId);
       if (!line || line.chars.length === 0) continue;
@@ -304,11 +352,20 @@ function draw(): void {
       if (line) {
         context.strokeRect(
           line.x - 1,
-          line.baseline - line.fontSize,
+          inkTop(line) - 1,
           line.width + 2,
-          line.fontSize * 1.3,
+          inkBottom(line) - inkTop(line) + 2,
         );
       }
+    }
+    context.strokeStyle = '#355ef0';
+    for (const lineId of props.selection.strokes ?? []) {
+      const line = layout.value.seal?.straightLines.find((item) => item.lineId === lineId);
+      if (!line) continue;
+      context.beginPath();
+      context.moveTo(line.x1, line.y1);
+      context.lineTo(line.x2, line.y2);
+      context.stroke();
     }
     for (const index of props.selection.logos) {
       const logo = layout.value.logos[index];
@@ -384,6 +441,28 @@ function drawOverlay(): void {
     context.restore();
   }
 
+  const line = selectedStraightLine.value;
+  if (line) {
+    const centerPoint = toScreen(line.cx, line.cy);
+    const rotate = strokeRotatePoint.value;
+    context.save();
+    context.strokeStyle = axisColor;
+    context.lineWidth = 1;
+    if (rotate) {
+      context.beginPath();
+      context.moveTo(centerPoint.x, centerPoint.y);
+      context.lineTo(rotate.x, rotate.y);
+      context.stroke();
+    }
+    context.fillStyle = '#ffffff';
+    context.lineWidth = 1.5;
+    context.beginPath();
+    context.arc(centerPoint.x, centerPoint.y, 3.5, 0, Math.PI * 2);
+    context.fill();
+    context.stroke();
+    context.restore();
+  }
+
   // Круговая ось: строка прилипла к середине кольцевого зазора.
   if (axes.circular && snapCircleRadius.value !== null) {
     context.save();
@@ -407,10 +486,18 @@ function drawOverlay(): void {
   if (markerLines.length > 0) {
     const left = Math.min(...markerLines.map((item) => item.x));
     const right = Math.max(...markerLines.map((item) => item.x + item.width));
-    const top = Math.min(...markerLines.map((item) => item.baseline - item.fontSize));
-    const bottom = Math.max(...markerLines.map((item) => item.baseline));
+    const top = Math.min(...markerLines.map((item) => inkTop(item)));
+    const bottom = Math.max(...markerLines.map((item) => inkBottom(item)));
     const marker = toScreen((left + right) / 2, (top + bottom) / 2);
     context.save();
+    if (centerRotation.value) {
+      context.strokeStyle = axisColor;
+      context.lineWidth = 1;
+      context.beginPath();
+      context.moveTo(marker.x, marker.y);
+      context.lineTo(centerRotation.value.marker.x, centerRotation.value.marker.y);
+      context.stroke();
+    }
     context.fillStyle = '#ffffff';
     context.strokeStyle = axisColor;
     context.lineWidth = 1.5;
@@ -505,6 +592,43 @@ function drawOverlay(): void {
     context.fillText(text, labelX, labelY + 0.5);
     context.restore();
   }
+
+  // Красная размерная линия при растягивании прямой линии.
+  if (strokeAnnotation.value) {
+    const info = strokeAnnotation.value;
+    const start = toScreen(info.x1, info.y1);
+    const end = toScreen(info.x2, info.y2);
+    context.save();
+    context.lineWidth = 1;
+    context.strokeStyle = '#e11d48';
+    context.beginPath();
+    context.moveTo(start.x, start.y);
+    context.lineTo(end.x, end.y);
+    context.stroke();
+    const angle = Math.atan2(end.y - start.y, end.x - start.x);
+    for (const point of [start, end]) {
+      context.beginPath();
+      context.moveTo(point.x + Math.cos(angle + 2.6) * 5, point.y + Math.sin(angle + 2.6) * 5);
+      context.lineTo(point.x, point.y);
+      context.lineTo(point.x + Math.cos(angle - 2.6) * 5, point.y + Math.sin(angle - 2.6) * 5);
+      context.stroke();
+    }
+    const middle = { x: (start.x + end.x) / 2, y: (start.y + end.y) / 2 };
+    const text = `${info.distance.toFixed(1)} pt`;
+    context.font = '600 11px Ui Sans, system-ui, sans-serif';
+    const width = context.measureText(text).width;
+    context.fillStyle = 'rgba(255,255,255,0.94)';
+    context.strokeStyle = '#fda4af';
+    context.beginPath();
+    context.roundRect(middle.x - width / 2 - 4, middle.y - 18, width + 8, 16, 4);
+    context.fill();
+    context.stroke();
+    context.fillStyle = '#be123c';
+    context.textAlign = 'center';
+    context.textBaseline = 'middle';
+    context.fillText(text, middle.x, middle.y - 10);
+    context.restore();
+  }
 }
 
 watch(() => props.template, async () => {
@@ -518,6 +642,8 @@ watch(() => props.zoom, () => {
 });
 watch(pan, () => { draw(); drawOverlay(); }, { deep: true });
 watch(() => props.selectedRingIndex, () => { draw(); drawOverlay(); });
+watch(() => props.selectedStraightLineId, () => { draw(); drawOverlay(); });
+watch(strokeAnnotation, () => drawOverlay(), { deep: true });
 watch(() => props.selectedCenterIndex, () => { draw(); drawOverlay(); });
 watch(() => props.selectedLogoIndex, () => { draw(); drawOverlay(); });
 watch(() => props.selectedLogo, () => { draw(); drawOverlay(); });
@@ -676,6 +802,7 @@ function exposePreviewDebug(): void {
     },
     axes: () => ({ ...snapAxes.value }),
     ringStroke: () => ringSelectionColor(),
+    strokeAnnotation: () => (strokeAnnotation.value ? { ...strokeAnnotation.value } : null),
   };
 }
 
@@ -697,6 +824,33 @@ const selectedGeometry = computed(() => {
   return layout.value.seal?.ringLines.find((item) => item.lineId === props.selectedLineId) ?? null;
 });
 
+const selectedStraightLine = computed(() => {
+  if (!props.selectedStraightLineId) return null;
+  return (
+    layout.value.seal?.straightLines.find((item) => item.lineId === props.selectedStraightLineId) ?? null
+  );
+});
+
+const strokeHandlePoints = computed(() => {
+  const line = selectedStraightLine.value;
+  if (!line) return [] as { endpoint: 'start' | 'end'; x: number; y: number }[];
+  return [
+    { endpoint: 'start' as const, ...screenPoint(line.x1, line.y1) },
+    { endpoint: 'end' as const, ...screenPoint(line.x2, line.y2) },
+  ];
+});
+
+const strokeRotatePoint = computed(() => {
+  const line = selectedStraightLine.value;
+  if (!line) return null;
+  const radians = (line.rotation * Math.PI) / 180;
+  const distance = 22 / Math.max(0.4, props.zoom);
+  return screenPoint(
+    line.cx + Math.sin(radians) * distance,
+    line.cy - Math.cos(radians) * distance,
+  );
+});
+
 const handlePoints = computed(() => {
   const ringLine = selectedGeometry.value;
   if (!ringLine || ringLine.chars.length === 0) return [] as { angle: number; x: number; y: number }[];
@@ -712,12 +866,43 @@ const handlePoints = computed(() => {
   });
 });
 
+const centerRotation = computed(() => {
+  const selectedCenters = props.selection?.centers ?? [];
+  if (selectedCenters.length > 1) {
+    const lines = selectedCenters
+      .map((index) => layout.value.lines[index])
+      .filter((item) => Boolean(item));
+    if (lines.length === 0) return null;
+    const left = Math.min(...lines.map((item) => item.x));
+    const right = Math.max(...lines.map((item) => item.x + item.width));
+    const top = Math.min(...lines.map((item) => inkTop(item)));
+    const bottom = Math.max(...lines.map((item) => inkBottom(item)));
+    const pivotX = (left + right) / 2;
+    const pivotY = (top + bottom) / 2;
+    const marker = screenPoint(pivotX, top - 22 / Math.max(0.4, props.zoom));
+    return { kind: 'group' as const, pivotX, pivotY, marker, rotation: 0 };
+  }
+  if (props.selectedCenterIndex === null) return null;
+  const line = layout.value.lines[props.selectedCenterIndex];
+  if (!line) return null;
+  const centerX = line.x + line.width / 2;
+  const centerY = inkCenter(line);
+  const rotation = line.rotation ?? 0;
+  const radians = (rotation * Math.PI) / 180;
+  const distance = (line.inkAscent ?? line.fontSize * 0.72) + 22 / Math.max(0.4, props.zoom);
+  const marker = screenPoint(
+    centerX + Math.sin(radians) * distance,
+    centerY - Math.cos(radians) * distance,
+  );
+  return { kind: 'single' as const, index: props.selectedCenterIndex, pivotX: centerX, pivotY: centerY, marker, rotation };
+});
+
 const centerHandlePoints = computed(() => {
   const index = props.selectedCenterIndex;
   if (index === null) return [] as { side: 'left' | 'right'; x: number; y: number }[];
   const line = layout.value.lines[index];
   if (!line) return [];
-  const y = line.baseline - line.fontSize * 0.35;
+  const y = inkCenter(line);
   return [
     { side: 'left' as const, ...screenPoint(line.x, y) },
     { side: 'right' as const, ...screenPoint(line.x + line.width, y) },
@@ -801,6 +986,43 @@ type DragState =
   | { kind: 'reference-resize'; centerX: number; centerY: number; startWidth: number; startHeight: number }
   | { kind: 'reference-rotate'; centerX: number; centerY: number; startPointerAngle: number; startRotation: number }
   | { kind: 'group'; lastX: number; lastY: number }
+  | {
+      kind: 'stroke-move';
+      lineId: string;
+      startX: number;
+      startY: number;
+      startCx: number;
+      startCy: number;
+    }
+  | {
+      kind: 'stroke-resize';
+      lineId: string;
+      endpoint: 'start' | 'end';
+      otherX: number;
+      otherY: number;
+    }
+  | {
+      kind: 'stroke-rotate';
+      lineId: string;
+      centerX: number;
+      centerY: number;
+      startPointerAngle: number;
+      startRotation: number;
+    }
+  | {
+      kind: 'center-rotate';
+      index: number;
+      centerX: number;
+      centerY: number;
+      startPointerAngle: number;
+      startRotation: number;
+    }
+  | {
+      kind: 'group-rotate';
+      pivotX: number;
+      pivotY: number;
+      lastPointerAngle: number;
+    }
   | { kind: 'pan'; startX: number; startY: number; startPanX: number; startPanY: number };
 
 let dragState: DragState | null = null;
@@ -842,6 +1064,100 @@ function onWindowMove(event: PointerEvent): void {
   const cx = size.value / 2;
   const cy = size.value / 2;
 
+  if (state.kind === 'stroke-move') {
+    const x = state.startCx + point.x - state.startX;
+    const y = state.startCy + point.y - state.startY;
+    snapAxes.value = {
+      vertical: Math.abs(x - cx) < 1.2,
+      horizontal: Math.abs(y - cy) < 1.2,
+      circular: false,
+    };
+    emit(
+      'straight-line-move',
+      state.lineId,
+      Math.abs(x - cx) < 1.2 ? cx : Math.round(x * 10) / 10,
+      Math.abs(y - cy) < 1.2 ? cy : Math.round(y * 10) / 10,
+    );
+    return;
+  }
+
+  if (state.kind === 'stroke-resize') {
+    const dx = point.x - state.otherX;
+    const dy = point.y - state.otherY;
+    const length = Math.max(2, Math.hypot(dx, dy));
+    const rotation = ((Math.atan2(dy, dx) * 180) / Math.PI + 360) % 360;
+    const centerX = state.otherX + dx / 2;
+    const centerY = state.otherY + dy / 2;
+    emit(
+      'straight-line-resize',
+      state.lineId,
+      Math.round((centerX - size.value / 2) * 10) / 10,
+      Math.round((centerY - size.value / 2) * 10) / 10,
+      Math.round(length * 10) / 10,
+      Math.round(rotation * 10) / 10,
+    );
+    // Красная размерная линия до внутренней границы колец.
+    const rings = layout.value.seal?.ink.rings ?? [];
+    const inner = rings[rings.length - 1];
+    if (inner) {
+      const innerEdge = Math.max(1, inner.radius - inner.width / 2);
+      const unitX = dx / length;
+      const unitY = dy / length;
+      const originX = point.x - cx;
+      const originY = point.y - cy;
+      const b = originX * unitX + originY * unitY;
+      const c = originX * originX + originY * originY - innerEdge * innerEdge;
+      const disc = b * b - c;
+      if (disc >= 0) {
+        const t = -b + Math.sqrt(disc);
+        if (t > 0.05) {
+          strokeAnnotation.value = {
+            endpoint: state.endpoint,
+            x1: point.x,
+            y1: point.y,
+            x2: cx + originX + unitX * t,
+            y2: cy + originY + unitY * t,
+            distance: t,
+          };
+        }
+      }
+    }
+    return;
+  }
+
+  if (state.kind === 'stroke-rotate') {
+    const angle = (Math.atan2(point.y - state.centerY, point.x - state.centerX) * 180) / Math.PI;
+    let delta = angle - state.startPointerAngle;
+    delta = ((delta % 360) + 540) % 360 - 180;
+    emit(
+      'straight-line-rotate',
+      state.lineId,
+      Math.round(((state.startRotation + delta + 360) % 360) * 10) / 10,
+    );
+    return;
+  }
+
+  if (state.kind === 'center-rotate') {
+    const angle = (Math.atan2(point.y - state.centerY, point.x - state.centerX) * 180) / Math.PI;
+    let delta = angle - state.startPointerAngle;
+    delta = ((delta % 360) + 540) % 360 - 180;
+    emit(
+      'center-rotate',
+      state.index,
+      Math.round(((state.startRotation + delta + 360) % 360) * 10) / 10,
+    );
+    return;
+  }
+
+  if (state.kind === 'group-rotate') {
+    const angle = (Math.atan2(point.y - state.pivotY, point.x - state.pivotX) * 180) / Math.PI;
+    let delta = angle - state.lastPointerAngle;
+    delta = ((delta % 360) + 540) % 360 - 180;
+    state.lastPointerAngle = angle;
+    emit('group-rotate', Math.round(delta * 10) / 10, state.pivotX, state.pivotY);
+    return;
+  }
+
   if (state.kind === 'group') {
     const dx = point.x - state.lastX;
     const dy = point.y - state.lastY;
@@ -853,8 +1169,8 @@ function onWindowMove(event: PointerEvent): void {
       if (boxes.length > 0) {
         const left = Math.min(...boxes.map((item) => item.x));
         const right = Math.max(...boxes.map((item) => item.x + item.width));
-        const top = Math.min(...boxes.map((item) => item.baseline - item.fontSize));
-        const bottom = Math.max(...boxes.map((item) => item.baseline));
+        const top = Math.min(...boxes.map((item) => inkTop(item)));
+        const bottom = Math.max(...boxes.map((item) => inkBottom(item)));
         const groupX = (left + right) / 2 + dx;
         const groupY = (top + bottom) / 2 + dy;
         snapAxes.value = {
@@ -863,6 +1179,28 @@ function onWindowMove(event: PointerEvent): void {
           circular: false,
         };
       }
+    }
+    // Дуговой текст в группе тоже притягивается к середине зазора.
+    const lineIds = props.selection?.lines ?? [];
+    if (lineIds.length > 0) {
+      let circular = false;
+      let circleRadius: number | null = null;
+      for (const lineId of lineIds) {
+        const templateLine = props.template.seal?.lines.find((item) => item.id === lineId);
+        const geometry = layout.value.seal?.ringLines.find((item) => item.lineId === lineId);
+        if (!templateLine || !geometry) continue;
+        const radians = (geometry.centerAngle * Math.PI) / 180;
+        const radialDelta = dx * Math.cos(radians) + dy * Math.sin(radians);
+        const offset = (templateLine.radiusOffset ?? 0) + radialDelta;
+        if (Math.abs(offset) < 0.9) {
+          circular = true;
+          const slot = layout.value.seal?.slots[geometry.slot];
+          if (slot) circleRadius = slot.center;
+          break;
+        }
+      }
+      snapAxes.value = { ...snapAxes.value, circular };
+      snapCircleRadius.value = circular ? circleRadius : null;
     }
     emit('group-move', dx, dy);
     state.lastX = point.x;
@@ -933,13 +1271,13 @@ function onWindowMove(event: PointerEvent): void {
       const dx = offsetX - state.startOffsetX;
       const dy = offsetY - state.startOffsetY;
       const centerX = line.x + line.width / 2 + dx;
-      const centerY = line.baseline - line.fontSize * 0.35 + dy;
+      const centerY = inkCenter(line) + dy;
       if (Math.abs(centerX - size.value / 2) < 1.2) {
         offsetX = state.startOffsetX + (size.value / 2 - (line.x + line.width / 2));
         snapped.vertical = true;
       }
       if (Math.abs(centerY - size.value / 2) < 1.2) {
-        offsetY = state.startOffsetY + (size.value / 2 - (line.baseline - line.fontSize * 0.35));
+        offsetY = state.startOffsetY + (size.value / 2 - inkCenter(line));
         snapped.horizontal = true;
       }
     }
@@ -1037,6 +1375,7 @@ function onWindowUp(): void {
   snapAxes.value = { vertical: false, horizontal: false, circular: false };
   snapCircleRadius.value = null;
   ringAnnotation.value = null;
+  strokeAnnotation.value = null;
   window.removeEventListener('pointermove', onWindowMove);
 }
 
@@ -1109,15 +1448,22 @@ type Target =
   | { kind: 'line'; key: string }
   | { kind: 'center'; key: number }
   | { kind: 'ring'; key: number }
-  | { kind: 'logo'; key: number };
+  | { kind: 'logo'; key: number }
+  | { kind: 'stroke'; key: string };
 
 function emptySelection(): SealMultiSelection {
-  return { lines: [], centers: [], rings: [], logos: [] };
+  return { lines: [], centers: [], rings: [], logos: [], strokes: [] };
 }
 
 function selectionCount(selection: SealMultiSelection | null): number {
   if (!selection) return 0;
-  return selection.lines.length + selection.centers.length + selection.rings.length + selection.logos.length;
+  return (
+    selection.lines.length +
+    selection.centers.length +
+    selection.rings.length +
+    selection.logos.length +
+    selection.strokes.length
+  );
 }
 
 function selectionIncludes(selection: SealMultiSelection | null, target: Target): boolean {
@@ -1125,13 +1471,40 @@ function selectionIncludes(selection: SealMultiSelection | null, target: Target)
   if (target.kind === 'line') return selection.lines.includes(target.key);
   if (target.kind === 'center') return selection.centers.includes(target.key);
   if (target.kind === 'ring') return selection.rings.includes(target.key);
+  if (target.kind === 'stroke') return selection.strokes.includes(target.key);
   return selection.logos.includes(target.key);
+}
+
+function distanceToSegment(
+  point: { x: number; y: number },
+  start: { x: number; y: number },
+  end: { x: number; y: number },
+): number {
+  const dx = end.x - start.x;
+  const dy = end.y - start.y;
+  const lengthSquared = dx * dx + dy * dy;
+  if (lengthSquared === 0) return Math.hypot(point.x - start.x, point.y - start.y);
+  let t = ((point.x - start.x) * dx + (point.y - start.y) * dy) / lengthSquared;
+  t = Math.max(0, Math.min(1, t));
+  return Math.hypot(point.x - (start.x + dx * t), point.y - (start.y + dy * t));
+}
+
+function hitStraightLine(point: { x: number; y: number }): string | null {
+  const lines = layout.value.seal?.straightLines ?? [];
+  for (const line of lines) {
+    if (distanceToSegment(point, { x: line.x1, y: line.y1 }, { x: line.x2, y: line.y2 }) <= line.width / 2 + 2) {
+      return line.lineId;
+    }
+  }
+  return null;
 }
 
 /** Все объекты под точкой — для Shift-клика и группового перетаскивания. */
 function hitTarget(point: { x: number; y: number }): Target | null {
   const logoIndex = hitLogo(point);
   if (logoIndex !== null) return { kind: 'logo', key: logoIndex };
+  const strokeId = hitStraightLine(point);
+  if (strokeId) return { kind: 'stroke', key: strokeId };
   const centerIndex = hitCenterLine(point);
   if (centerIndex !== null) return { kind: 'center', key: centerIndex };
   const ink = pickInk(point);
@@ -1152,6 +1525,7 @@ function withTargetSelection(
         centers: [...base.centers],
         rings: [...base.rings],
         logos: [...base.logos],
+        strokes: [...base.strokes],
       }
     : emptySelection();
   const toggle = <T extends string | number>(list: T[], key: T): void => {
@@ -1159,7 +1533,8 @@ function withTargetSelection(
     if (index >= 0) list.splice(index, 1);
     else if (!subtract) list.push(key);
   };
-  if (target.kind === 'line') toggle(selection.lines, target.key);
+  if (target.kind === 'stroke') toggle(selection.strokes, target.key);
+  else if (target.kind === 'line') toggle(selection.lines, target.key);
   else if (target.kind === 'center') toggle(selection.centers, target.key);
   else if (target.kind === 'ring') toggle(selection.rings, target.key);
   else toggle(selection.logos, target.key);
@@ -1255,6 +1630,17 @@ function onMarqueeUp(event: PointerEvent): void {
       selection.logos.push(index);
     }
   });
+  for (const line of layout.value.seal?.straightLines ?? []) {
+    let intersects = false;
+    for (let step = 0; step <= 16; step += 1) {
+      const t = step / 16;
+      if (pointInside(line.x1 + (line.x2 - line.x1) * t, line.y1 + (line.y2 - line.y1) * t)) {
+        intersects = true;
+        break;
+      }
+    }
+    if (intersects) selection.strokes.push(line.lineId);
+  }
   for (const [index, ring] of (layout.value.seal?.ink.rings ?? []).entries()) {
     let intersects = false;
     // Частая выборка: кольцо тонкое, 32 точки его легко пропускают.
@@ -1282,12 +1668,14 @@ function mergeSelections(
         centers: [...base.centers],
         rings: [...base.rings],
         logos: [...base.logos],
+        strokes: [...base.strokes],
       }
     : emptySelection();
   for (const key of extra.lines) if (!merged.lines.includes(key)) merged.lines.push(key);
   for (const key of extra.centers) if (!merged.centers.includes(key)) merged.centers.push(key);
   for (const key of extra.rings) if (!merged.rings.includes(key)) merged.rings.push(key);
   for (const key of extra.logos) if (!merged.logos.includes(key)) merged.logos.push(key);
+  for (const key of extra.strokes) if (!merged.strokes.includes(key)) merged.strokes.push(key);
   return merged;
 }
 
@@ -1387,6 +1775,23 @@ function onCanvasDown(event: PointerEvent): void {
     return;
   }
 
+  const strokeId = hitStraightLine(point);
+  if (strokeId) {
+    const line = layout.value.seal?.straightLines.find((item) => item.lineId === strokeId);
+    if (line) {
+      emit('straight-line-select', strokeId);
+      startDrag(event, {
+        kind: 'stroke-move',
+        lineId: strokeId,
+        startX: point.x,
+        startY: point.y,
+        startCx: line.cx - size.value / 2,
+        startCy: line.cy - size.value / 2,
+      });
+    }
+    return;
+  }
+
   const centerIndex = hitCenterLine(point);
   if (centerIndex !== null) {
     emit('center-select', centerIndex);
@@ -1460,8 +1865,66 @@ function startLogoMove(event: PointerEvent, point: { x: number; y: number }, log
 
 /* --- маркеры --- */
 
-function onRingHandleDown(event: PointerEvent): void {
+/** Потянуть за конец линии: второй конец остаётся на месте. */
+function onStrokeEndpointDown(event: PointerEvent, endpoint: 'start' | 'end'): void {
   event.preventDefault();
+  event.stopPropagation();
+  const line = selectedStraightLine.value;
+  if (!line) return;
+  startDrag(event, {
+    kind: 'stroke-resize',
+    lineId: line.lineId,
+    endpoint,
+    otherX: endpoint === 'start' ? line.x2 : line.x1,
+    otherY: endpoint === 'start' ? line.y2 : line.y1,
+  });
+}
+
+/** Поворот линии вокруг её центра. */
+function onStrokeRotateDown(event: PointerEvent): void {
+  event.preventDefault();
+  event.stopPropagation();
+  const line = selectedStraightLine.value;
+  const point = toSealPoint(event);
+  if (!line || !point) return;
+  startDrag(event, {
+    kind: 'stroke-rotate',
+    lineId: line.lineId,
+    centerX: line.cx,
+    centerY: line.cy,
+    startPointerAngle: (Math.atan2(point.y - line.cy, point.x - line.cx) * 180) / Math.PI,
+    startRotation: line.rotation,
+  });
+}
+
+/** Поворот строки центра или группы строк. */
+function onCenterRotateDown(event: PointerEvent): void {
+  event.preventDefault();
+  event.stopPropagation();
+  const target = centerRotation.value;
+  const point = toSealPoint(event);
+  if (!target || !point) return;
+  const pointerAngle = (Math.atan2(point.y - target.pivotY, point.x - target.pivotX) * 180) / Math.PI;
+  if (target.kind === 'single') {
+    startDrag(event, {
+      kind: 'center-rotate',
+      index: target.index,
+      centerX: target.pivotX,
+      centerY: target.pivotY,
+      startPointerAngle: pointerAngle,
+      startRotation: target.rotation,
+    });
+  } else {
+    startDrag(event, {
+      kind: 'group-rotate',
+      pivotX: target.pivotX,
+      pivotY: target.pivotY,
+      lastPointerAngle: pointerAngle,
+    });
+  }
+}
+
+function onRingHandleDown(event: PointerEvent): void {  event.preventDefault();
   event.stopPropagation();
   const lineId = props.selectedLineId;
   const ringLine = selectedGeometry.value;
@@ -1750,6 +2213,7 @@ onBeforeUnmount(() => {
     class="relative h-full w-full overflow-hidden"
     data-testid="seal-preview"
     :data-ring-annotation="ringAnnotation ? 'true' : 'false'"
+    :data-stroke-annotation="strokeAnnotation ? 'true' : 'false'"
     :data-marquee="marquee ? 'true' : 'false'"
     :data-guides="guidesVisible ? 'true' : 'false'"
     :class="spacePressed ? 'cursor-grab' : ''"
@@ -1810,6 +2274,46 @@ onBeforeUnmount(() => {
           title="Потяните, чтобы растянуть или сжать строку центра"
           @pointerdown="onCenterHandleDown($event, selectedCenterIndex)"
         />
+      </template>
+
+      <!-- Поворот строки центра / группы строк -->
+      <template v-if="handles && centerRotation">
+        <button
+          type="button"
+          data-testid="seal-center-rotate"
+          :data-kind="centerRotation.kind"
+          class="absolute z-10 flex h-[22px] w-[22px] -translate-x-1/2 -translate-y-1/2 cursor-grab items-center justify-center rounded-full border-2 border-white bg-[#e11d48] text-white shadow-md"
+          :style="{ left: `${centerRotation.marker.x}px`, top: `${centerRotation.marker.y}px` }"
+          title="Повернуть текст"
+          @pointerdown="onCenterRotateDown"
+        >
+          <AppIcon name="rotate" :size="12" />
+        </button>
+      </template>
+
+      <!-- Маркеры прямой линии: концы + поворот -->
+      <template v-if="handles && selectedStraightLineId !== null && strokeHandlePoints.length > 0">
+        <button
+          v-for="point in strokeHandlePoints"
+          :key="`stroke-handle-${point.endpoint}`"
+          type="button"
+          :data-testid="`seal-stroke-handle-${point.endpoint}`"
+          class="absolute z-10 h-2 w-2 -translate-x-1/2 -translate-y-1/2 cursor-ew-resize rounded-[1px] border-[1.5px] border-[#2f6bff] bg-white shadow-sm"
+          :style="{ left: `${point.x}px`, top: `${point.y}px` }"
+          title="Потяните за конец линии"
+          @pointerdown="onStrokeEndpointDown($event, point.endpoint)"
+        />
+        <button
+          v-if="strokeRotatePoint"
+          type="button"
+          data-testid="seal-stroke-rotate"
+          class="absolute z-10 flex h-[22px] w-[22px] -translate-x-1/2 -translate-y-1/2 cursor-grab items-center justify-center rounded-full border-2 border-white bg-[#2f6bff] text-white shadow-md"
+          :style="{ left: `${strokeRotatePoint.x}px`, top: `${strokeRotatePoint.y}px` }"
+          title="Повернуть линию"
+          @pointerdown="onStrokeRotateDown"
+        >
+          <AppIcon name="rotate" :size="12" />
+        </button>
       </template>
 
       <!-- Маркеры логотипа: углы + поворот -->

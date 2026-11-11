@@ -24,11 +24,14 @@ const props = defineProps<{
   active: boolean;
   /** Фактический угол с учётом растяжения/сжатия, градусы. */
   effectiveSpan: number;
+  /** Радиус базовой линии — для пересчёта угла в интервалы при ползунке. */
+  arcRadius?: number;
 }>();
 
 const emit = defineEmits<{
   select: [];
   delete: [];
+  'angle-change': [angle: number];
 }>();
 
 const root = ref<HTMLElement | null>(null);
@@ -53,6 +56,20 @@ function scrollIntoView(): void {
 }
 
 defineExpose({ focusText, scrollIntoView });
+
+function setArcAngle(value: number): void {
+  const target = Math.min(400, Math.max(1, Number(value)));
+  const line = props.line;
+  const count = Array.from(line.text).length;
+  const spaces = Array.from(line.text).filter((char) => char === ' ').length;
+  const radius = props.arcRadius ?? 40;
+  const extraPt = ((target - props.effectiveSpan) * Math.PI * radius) / 180;
+  const letter = (line.letterSpacing ?? 0) + (spaces > 0 ? extraPt * 0.5 / Math.max(1, count) : extraPt / Math.max(1, count));
+  const word = (line.wordSpacing ?? 0) + (spaces > 0 ? extraPt * 0.5 / Math.max(1, spaces) : 0);
+  line.spanAngle = target;
+  line.letterSpacing = Math.min(60, Math.max(-4, Math.round(letter * 10) / 10));
+  line.wordSpacing = Math.min(60, Math.max(0, Math.round(word * 10) / 10));
+}
 
 const spanHint = computed(() => {
   if (props.line.spanAngle <= 1.001) {
@@ -213,7 +230,7 @@ const spanHint = computed(() => {
       :max="400"
       :step="1"
       :data-testid="`seal-line-${props.index}-span`"
-      @update:model-value="props.line.spanAngle = Number($event)"
+      @update:model-value="setArcAngle(Number($event))"
     />
     <p class="-mt-1 text-[11px] text-slate-400">{{ spanHint }}. Дугу можно тянуть за маркеры на превью.</p>
 

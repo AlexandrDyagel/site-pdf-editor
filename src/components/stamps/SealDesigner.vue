@@ -13,7 +13,14 @@
  * имеют контекстное меню.
  */
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue';
-import type { SealMultiSelection, SealRingLine, StampLogo, StampTemplate, StampTextLine } from '@/types';
+import type {
+  SealMultiSelection,
+  SealRingLine,
+  SealStraightLine,
+  StampLogo,
+  StampTemplate,
+  StampTextLine,
+} from '@/types';
 import { SEAL_COLORS } from '@/constants';
 import { createId } from '@/utils/id';
 import {
@@ -23,6 +30,7 @@ import {
   createSealRing,
   createSealRingLine,
   createSealSettings,
+  createSealStraightLine,
   normalizeSealSettings,
   sealDiameterMm,
   sealDiameterPx,
@@ -69,6 +77,7 @@ const zoom = ref(3);
 const isSaving = ref(false);
 /** Выбранная строка текста по кольцу (для маркеров и правки). */
 const selectedLineId = ref<string | null>(null);
+const selectedStraightLineId = ref<string | null>(null);
 /** Выбранная строка в центре (клик по ней показывает свойства справа). */
 const selectedCenterIndex = ref<number | null>(null);
 /** Выбранное кольцо (клик по кольцу показывает его настройки справа). */
@@ -96,7 +105,13 @@ const multiSelection = ref<SealMultiSelection | null>(null);
 const multiSelectionCount = computed(() => {
   const selection = multiSelection.value;
   if (!selection) return 0;
-  return selection.lines.length + selection.centers.length + selection.rings.length + selection.logos.length;
+  return (
+    selection.lines.length +
+    selection.centers.length +
+    selection.rings.length +
+    selection.logos.length +
+    selection.strokes.length
+  );
 });
 
 /** Сколько строк максимум может стоять в одном кольцевом зазоре. */
@@ -141,6 +156,7 @@ const tabs = [
   { id: 'rings', label: 'Кольца', icon: 'circle' },
   { id: 'text', label: 'Текст', icon: 'type' },
   { id: 'center', label: 'Центр', icon: 'seal' },
+  { id: 'lines', label: 'Линии', icon: 'line' },
   { id: 'logo', label: 'Логотип', icon: 'image' },
   { id: 'sample', label: 'Образец', icon: 'layers' },
   { id: 'ink', label: 'Краска', icon: 'sliders' },
@@ -156,6 +172,7 @@ const fontOptions = computed(() =>
 
 /** Настройки печати (они всегда есть у открытого конструктора). */
 const seal = computed(() => template.value.seal ?? createSealSettings());
+const straightLines = computed<SealStraightLine[]>(() => template.value.seal?.straightLines ?? []);
 const diameterPx = computed(() => sealDiameterPx(seal.value.diameterMm));
 const maxArcRadius = computed(() => Math.round(diameterPx.value / 2));
 
@@ -174,6 +191,15 @@ const lineSpans = computed(() => {
   const result: Record<string, number> = {};
   for (const item of layout.seal?.ringLines ?? []) {
     result[item.lineId] = Math.abs(item.endAngle - item.startAngle);
+  }
+  return result;
+});
+
+const lineRadii = computed(() => {
+  const layout = computeStampLayout(template.value, (fontId) => fonts.familyOf(fontId));
+  const result: Record<string, number> = {};
+  for (const item of layout.seal?.ringLines ?? []) {
+    result[item.lineId] = item.radius;
   }
   return result;
 });
@@ -236,6 +262,7 @@ watch(
       selectedLogo.value = false;
       selectedLogoIndex.value = null;
       selectedReference.value = false;
+  selectedStraightLineId.value = null;
       reference.value = draft.reference ?? null;
       restoredDraft.value = true;
       resetHistory();
@@ -262,6 +289,7 @@ watch(
     selectedLogo.value = false;
     selectedLogoIndex.value = null;
     selectedReference.value = false;
+  selectedStraightLineId.value = null;
     reference.value = null;
     restoredDraft.value = false;
     resetHistory();
@@ -300,6 +328,7 @@ function resetDraft(): void {
   selectedLogo.value = false;
   selectedLogoIndex.value = null;
   selectedReference.value = false;
+  selectedStraightLineId.value = null;
   reference.value = null;
   zoom.value = fitZoomValue();
   resetHistory();
@@ -416,6 +445,107 @@ watch(
   { deep: true },
 );
 
+/** Стрелки: сдвиг выбранных объектов с шагом 0.1 pt. */
+function nudgeSelection(dx: number, dy: number): boolean {
+  const round = (value: number): number => Math.round(value * 10) / 10;
+  const selection = multiSelection.value;
+  if (selection) {
+    for (const layoutIndex of selection.centers) {
+      const index = templateCenterIndex(layoutIndex);
+      const line = template.value.lines[index];
+      if (!line) continue;
+      updateCenterLine(index, {
+        offsetX: round((line.offsetX ?? 0) + dx),
+        offsetY: round(line.offsetY + dy),
+      });
+    }
+    for (const lineId of selection.lines) {
+      const line = template.value.seal?.lines.find((item) => item.id === lineId);
+      if (!line) continue;
+      updateLine(lineId, {
+        angleOffset: round(line.angleOffset + (dx !== 0 ? Math.sign(dx) * 0.1 : 0)),
+        radiusOffset: round(line.radiusOffset + (dy !== 0 ? -Math.sign(dy) * 0.1 : 0)),
+      });
+    }
+    for (const index of selection.logos) {
+      const logo = stampLogos.value[index];
+      if (!logo) continue;
+      updateLogo(index, {
+        offsetX: round(logo.offsetX + dx),
+        offsetY: round(logo.offsetY + dy),
+      });
+    }
+    if (template.value.seal && selection.strokes.length > 0) {
+      template.value.seal.straightLines = straightLines.value.map((line) =>
+        selection.strokes.includes(line.id)
+          ? { ...line, x: round(line.x + dx), y: round(line.y + dy) }
+          : line,
+      );
+    }
+    return (
+      selection.centers.length +
+        selection.lines.length +
+        selection.logos.length +
+        selection.strokes.length >
+      0
+    );
+  }
+  if (selectedCenterIndex.value !== null) {
+    const line = template.value.lines[selectedCenterIndex.value];
+    if (!line) return false;
+    updateCenterLine(selectedCenterIndex.value, {
+      offsetX: round((line.offsetX ?? 0) + dx),
+      offsetY: round(line.offsetY + dy),
+    });
+    return true;
+  }
+  if (selectedLineId.value) {
+    const line = template.value.seal?.lines.find((item) => item.id === selectedLineId.value);
+    if (!line) return false;
+    updateLine(line.id, {
+      angleOffset: round(line.angleOffset + (dx !== 0 ? Math.sign(dx) * 0.1 : 0)),
+      radiusOffset: round(line.radiusOffset + (dy !== 0 ? -Math.sign(dy) * 0.1 : 0)),
+    });
+    return true;
+  }
+  if (selectedLogoIndex.value !== null) {
+    const logo = stampLogos.value[selectedLogoIndex.value];
+    if (!logo) return false;
+    updateLogo(selectedLogoIndex.value, {
+      offsetX: round(logo.offsetX + dx),
+      offsetY: round(logo.offsetY + dy),
+    });
+    return true;
+  }
+  if (selectedStraightLineId.value) {
+    const line = straightLines.value.find((item) => item.id === selectedStraightLineId.value);
+    if (!line) return false;
+    updateStraightLine(line.id, { x: round(line.x + dx), y: round(line.y + dy) });
+    return true;
+  }
+  if (selectedReference.value && reference.value) {
+    reference.value = {
+      ...reference.value,
+      x: round(reference.value.x + dx),
+      y: round(reference.value.y + dy),
+    };
+    return true;
+  }
+  if (selectedRingIndex.value !== null && selectedRingIndex.value > 0 && template.value.seal) {
+    const index = selectedRingIndex.value;
+    const ring = template.value.seal.rings[index];
+    if (!ring) return false;
+    const step = dy < 0 ? 0.1 : dy > 0 ? -0.1 : 0;
+    if (step === 0) return false;
+    template.value.seal.rings[index] = {
+      ...ring,
+      gap: Math.min(100, Math.max(0.5, round(ring.gap + step))),
+    };
+    return true;
+  }
+  return false;
+}
+
 /** Ctrl+Z / Ctrl+Shift+Z / Ctrl+Y и Delete внутри конструктора. */
 function onDesignerKeydown(event: KeyboardEvent): void {
   if (!ui.modals.sealDesigner) return;
@@ -430,6 +560,18 @@ function onDesignerKeydown(event: KeyboardEvent): void {
   const mod = event.ctrlKey || event.metaKey;
   // event.code не зависит от раскладки: Ctrl+Z работает и на русской.
   const code = event.code;
+
+  // Стрелки двигают выбранный объект на 0,1 pt.
+  if (!typing && !mod && !event.altKey && event.key.startsWith('Arrow')) {
+    const dx = event.key === 'ArrowLeft' ? -0.1 : event.key === 'ArrowRight' ? 0.1 : 0;
+    const dy = event.key === 'ArrowUp' ? -0.1 : event.key === 'ArrowDown' ? 0.1 : 0;
+    if (nudgeSelection(dx, dy)) {
+      event.preventDefault();
+      event.stopPropagation();
+      event.stopImmediatePropagation();
+    }
+    return;
+  }
 
   if (mod && !event.altKey && code === 'KeyZ') {
     // В поле ввода Ctrl+Z — родная отмена набора, её не перехватываем.
@@ -463,6 +605,13 @@ function onDesignerKeydown(event: KeyboardEvent): void {
       event.stopPropagation();
       event.stopImmediatePropagation();
       deleteLine(selectedLineId.value);
+      return;
+    }
+    if (selectedStraightLineId.value) {
+      event.preventDefault();
+      event.stopPropagation();
+      event.stopImmediatePropagation();
+      removeStraightLine(selectedStraightLineId.value);
       return;
     }
     if (selectedCenterIndex.value !== null) {
@@ -513,7 +662,10 @@ function onGlobalPointerDown(event: PointerEvent): void {
     target.closest('[data-testid^=seal-logo-handle-]') ||
     target.closest('[data-testid=seal-logo-rotate]') ||
     target.closest('[data-testid^=seal-ref-handle-]') ||
-    target.closest('[data-testid=seal-ref-rotate]')
+    target.closest('[data-testid=seal-ref-rotate]') ||
+    target.closest('[data-testid=seal-center-rotate]') ||
+    target.closest('[data-testid^=seal-stroke-handle-]') ||
+    target.closest('[data-testid=seal-stroke-rotate]')
   ) {
     return;
   }
@@ -564,6 +716,7 @@ onMounted(() => {
             selectedCenterIndex: number | null;
             selectedRingIndex: number | null;
             selectedLogoIndex: number | null;
+            selectedStraightLineId: string | null;
             multi: SealMultiSelection | null;
           };
         };
@@ -574,6 +727,7 @@ onMounted(() => {
         selectedCenterIndex: selectedCenterIndex.value,
         selectedRingIndex: selectedRingIndex.value,
         selectedLogoIndex: selectedLogoIndex.value,
+        selectedStraightLineId: selectedStraightLineId.value,
         multi: multiSelection.value,
       }),
     };
@@ -692,6 +846,7 @@ function selectLine(lineId: string | null, options: { reveal?: boolean } = {}): 
   selectedLogoIndex.value = null;
   selectedCenterIndex.value = null;
   selectedReference.value = false;
+  selectedStraightLineId.value = null;
   if (!lineId || options.reveal === false) return;
   tab.value = 'text';
   void nextTick(() => {
@@ -712,6 +867,7 @@ function selectRing(index: number, options: { reveal?: boolean } = {}): void {
   selectedLogo.value = false;
   selectedLogoIndex.value = null;
   selectedReference.value = false;
+  selectedStraightLineId.value = null;
   tab.value = 'rings';
   if (options.reveal === false) return;
   void nextTick(() => {
@@ -730,6 +886,7 @@ function selectCenterLine(index: number, options: { reveal?: boolean } = {}): vo
   selectedLogo.value = false;
   selectedLogoIndex.value = null;
   selectedReference.value = false;
+  selectedStraightLineId.value = null;
   tab.value = 'center';
   if (options.reveal === false) return;
   void nextTick(() => {
@@ -743,11 +900,13 @@ function selectCenterLine(index: number, options: { reveal?: boolean } = {}): vo
 function clearSelection(): void {
   multiSelection.value = null;
   selectedLineId.value = null;
+  selectedStraightLineId.value = null;
   selectedCenterIndex.value = null;
   selectedRingIndex.value = null;
   selectedLogo.value = false;
   selectedLogoIndex.value = null;
   selectedReference.value = false;
+  selectedStraightLineId.value = null;
 }
 
 /** Клик по логотипу: выделяем его, чтобы показать углы и поворот. */
@@ -759,6 +918,7 @@ function selectLogo(index = 0): void {
   selectedCenterIndex.value = null;
   selectedRingIndex.value = null;
   selectedReference.value = false;
+  selectedStraightLineId.value = null;
   tab.value = 'logo';
   void nextTick(() => {
     rightColumn.value
@@ -777,6 +937,7 @@ function onSelectionChange(selection: SealMultiSelection | null): void {
   selectedLogo.value = false;
   selectedLogoIndex.value = null;
   selectedReference.value = false;
+  selectedStraightLineId.value = null;
 }
 
 /** Сдвиг группы: каждая строка пересчитывает свои смещения. */
@@ -804,6 +965,8 @@ function onGroupMove(dx: number, dy: number): void {
         let deltaAngle = newAngle - geometry.centerAngle;
         deltaAngle = ((deltaAngle % 360) + 540) % 360 - 180;
         line.radiusOffset = Math.round((line.radiusOffset + newRadius - geometry.radius) * 10) / 10;
+        // Группа дугового текста тоже притягивается к середине зазора.
+        if (Math.abs(line.radiusOffset) < 0.9) line.radiusOffset = 0;
         line.angleOffset = Math.round((((line.angleOffset + deltaAngle + 180) % 360) + 360) % 360 - 180);
       }
     }
@@ -830,8 +993,12 @@ function onGroupMove(dx: number, dy: number): void {
       if (boxes.length > 0) {
         const left = Math.min(...boxes.map((item) => item.x));
         const right = Math.max(...boxes.map((item) => item.x + item.width));
-        const top = Math.min(...boxes.map((item) => item.baseline - item.fontSize));
-        const bottom = Math.max(...boxes.map((item) => item.baseline));
+        const top = Math.min(
+          ...boxes.map((item) => item.baseline - (item.inkAscent ?? item.fontSize * 0.72)),
+        );
+        const bottom = Math.max(
+          ...boxes.map((item) => item.baseline + (item.inkDescent ?? item.fontSize * 0.2)),
+        );
         const groupX = (left + right) / 2;
         const groupY = (top + bottom) / 2;
         const center = sizeCenter();
@@ -860,6 +1027,17 @@ function onGroupMove(dx: number, dy: number): void {
       offsetY: Math.round((logo.offsetY + dy) * 10) / 10,
     });
   }
+  if (template.value.seal && selection.strokes.length > 0) {
+    template.value.seal.straightLines = straightLines.value.map((line) =>
+      selection.strokes.includes(line.id)
+        ? {
+            ...line,
+            x: Math.round((line.x + dx) * 10) / 10,
+            y: Math.round((line.y + dy) * 10) / 10,
+          }
+        : line,
+    );
+  }
 }
 
 function sizeCenter(): number {
@@ -874,6 +1052,10 @@ function deleteMultiSelection(): void {
   if (settings && selection.lines.length > 0) {
     const remove = new Set(selection.lines);
     settings.lines = settings.lines.filter((line) => !remove.has(line.id));
+  }
+  if (settings && selection.strokes.length > 0) {
+    const remove = new Set(selection.strokes);
+    settings.straightLines = (settings.straightLines ?? []).filter((line) => !remove.has(line.id));
   }
   if (selection.centers.length > 0) {
     const visible = template.value.lines.filter((line) => line.text.trim().length > 0);
@@ -937,8 +1119,67 @@ function addLine(): void {
   selectLine(line.id, { reveal: true });
 }
 
-function updateLine(lineId: string, patch: Partial<SealRingLine>): void {
+/** Добавить прямую линию в центр печати. */
+function addStraightLine(): void {
   const settings = template.value.seal;
+  if (!settings) return;
+  const line = createSealStraightLine({
+    x: 0,
+    y: 0,
+    length: Math.max(10, Math.round(sizeCenter() * 0.9 * 10) / 10),
+    width: 1,
+    rotation: 0,
+  });
+  settings.straightLines = [...(settings.straightLines ?? []), line];
+  selectStraightLine(line.id);
+}
+
+function updateStraightLine(lineId: string, patch: Partial<SealStraightLine>): void {
+  const settings = template.value.seal;
+  if (!settings) return;
+  settings.straightLines = (settings.straightLines ?? []).map((line) =>
+    line.id === lineId ? { ...line, ...patch } : line,
+  );
+}
+
+function onStraightLineMove(lineId: string, x: number, y: number): void {
+  updateStraightLine(lineId, { x, y });
+}
+
+function onStraightLineResize(
+  lineId: string,
+  x: number,
+  y: number,
+  length: number,
+  rotation: number,
+): void {
+  updateStraightLine(lineId, { x, y, length, rotation });
+}
+
+function onStraightLineRotate(lineId: string, rotation: number): void {
+  updateStraightLine(lineId, { rotation });
+}
+
+function removeStraightLine(lineId: string): void {
+  const settings = template.value.seal;
+  if (!settings) return;
+  settings.straightLines = (settings.straightLines ?? []).filter((line) => line.id !== lineId);
+  if (selectedStraightLineId.value === lineId) selectedStraightLineId.value = null;
+}
+
+function selectStraightLine(lineId: string): void {
+  multiSelection.value = null;
+  selectedStraightLineId.value = lineId;
+  selectedLineId.value = null;
+  selectedCenterIndex.value = null;
+  selectedRingIndex.value = null;
+  selectedLogo.value = false;
+  selectedLogoIndex.value = null;
+  selectedReference.value = false;
+  tab.value = 'lines';
+}
+
+function updateLine(lineId: string, patch: Partial<SealRingLine>): void {  const settings = template.value.seal;
   if (!settings) return;
   const current = settings.lines.find((line) => line.id === lineId);
   if (!current) return;
@@ -963,7 +1204,7 @@ function deleteLine(lineId: string): void {
   if (selectedLineId.value === lineId) selectedLineId.value = null;
 }
 
-function onSpanChange(lineId: string, angle: number): void {
+function onSpanChange(lineId: string, angle: number, explicitAngle = true): void {
   const settings = template.value.seal;
   if (!settings) return;
   const line = settings.lines.find((item) => item.id === lineId);
@@ -993,10 +1234,15 @@ function onSpanChange(lineId: string, angle: number): void {
     spaces > 0 ? (neededPt * 0.5) / count : neededPt / count;
   const wordSpacing = spaces > 0 ? (neededPt * 0.5) / spaces : line.wordSpacing ?? 0;
   updateLine(lineId, {
-    spanAngle: target,
+    spanAngle: explicitAngle ? target : 1,
     letterSpacing: Math.min(60, Math.max(-4, Math.round(letterSpacing * 10) / 10)),
     wordSpacing: Math.min(60, Math.max(0, Math.round(wordSpacing * 10) / 10)),
   });
+}
+
+/** Ползунок «Угол дуги»: ставим угол, а трекинг и пробелы подстраиваем под него. */
+function onAngleChange(lineId: string, angle: number): void {
+  onSpanChange(lineId, angle, true);
 }
 
 function onLineMove(lineId: string, radiusOffset: number, angleOffset: number): void {
@@ -1153,6 +1399,39 @@ function onCenterMove(layoutIndex: number, offsetX: number, offsetY: number): vo
   updateCenterLine(index, { offsetX, offsetY });
 }
 
+function onCenterRotate(layoutIndex: number, rotation: number): void {
+  const index = templateCenterIndex(layoutIndex);
+  if (index < 0) return;
+  updateCenterLine(index, { rotation });
+}
+
+/** Поворот группы строк вокруг её центра. */
+function onGroupRotate(deltaAngle: number, pivotX: number, pivotY: number): void {
+  const selection = multiSelection.value;
+  if (!selection || selection.centers.length === 0) return;
+  const layout = computeStampLayout(template.value, (id) => fonts.familyOf(id));
+  const radians = (deltaAngle * Math.PI) / 180;
+  const cos = Math.cos(radians);
+  const sin = Math.sin(radians);
+  for (const layoutIndex of selection.centers) {
+    const index = templateCenterIndex(layoutIndex);
+    const line = template.value.lines[index];
+    const geometry = layout.lines[layoutIndex];
+    if (!line || !geometry) continue;
+    const centerX = geometry.x + geometry.width / 2;
+    const centerY = geometry.inkCenterY ?? geometry.baseline - geometry.fontSize * 0.36;
+    const dx = centerX - pivotX;
+    const dy = centerY - pivotY;
+    const nextX = pivotX + dx * cos - dy * sin;
+    const nextY = pivotY + dx * sin + dy * cos;
+    updateCenterLine(index, {
+      offsetX: Math.round(((line.offsetX ?? 0) + nextX - centerX) * 10) / 10,
+      offsetY: Math.round((line.offsetY + nextY - centerY) * 10) / 10,
+      rotation: ((line.rotation ?? 0) + deltaAngle + 360) % 360,
+    });
+  }
+}
+
 /* ======================== Логотип ======================== */
 
 /** Обновить один логотип и синхронизировать совместимый `logo`. */
@@ -1285,6 +1564,7 @@ function toggleReferenceLock(): void {
   const locked = !reference.value.locked;
   reference.value = { ...reference.value, locked };
   if (locked) selectedReference.value = false;
+  selectedStraightLineId.value = null;
   ui.notify.info(
     locked ? 'Образец заблокирован' : 'Образец разблокирован',
     locked ? 'Клики по нему игнорируются — случайно не сдвинете' : 'Образец снова можно двигать и поворачивать',
@@ -1294,6 +1574,7 @@ function toggleReferenceLock(): void {
 function removeReference(): void {
   reference.value = null;
   selectedReference.value = false;
+  selectedStraightLineId.value = null;
 }
 
 /* ======================== Пресеты ======================== */
@@ -1535,6 +1816,7 @@ function onPickEnd(color: string | null): void {
             :selected-line-id="selectedLineId"
             :selected-center-index="selectedCenterIndex"
             :selected-ring-index="selectedRingIndex"
+            :selected-straight-line-id="selectedStraightLineId"
             :selected-logo="selectedLogo"
             :selected-logo-index="selectedLogoIndex"
             :selection="multiSelection"
@@ -1548,6 +1830,8 @@ function onPickEnd(color: string | null): void {
             @center-select="selectCenterLine"
             @center-stretch="onCenterStretch"
             @center-move="onCenterMove"
+            @center-rotate="onCenterRotate"
+            @group-rotate="onGroupRotate"
             @ring-select="selectRing"
             @ring-resize="onRingResize"
             @ring-delete="onRingDelete"
@@ -1557,6 +1841,10 @@ function onPickEnd(color: string | null): void {
             @logo-rotate="onLogoRotate"
             @selection-change="onSelectionChange"
             @group-move="onGroupMove"
+            @straight-line-select="selectStraightLine"
+            @straight-line-move="onStraightLineMove"
+            @straight-line-resize="onStraightLineResize"
+            @straight-line-rotate="onStraightLineRotate"
             @reference-select="selectReference"
             @reference-move="onReferenceMove"
             @reference-resize="onReferenceResize"
@@ -1768,6 +2056,7 @@ function onPickEnd(color: string | null): void {
             :font-options="fontOptions"
             :active="selectedLineId === line.id"
             :effective-span="lineSpans[line.id] ?? 0"
+            :arc-radius="lineRadii[line.id] ?? 40"
             @select="selectLine(line.id, { reveal: false })"
             @delete="deleteLine(line.id)"
           />
@@ -1897,6 +2186,36 @@ function onPickEnd(color: string | null): void {
                 </div>
               </div>
             </div>
+          </AppSection>
+        </div>
+
+        <!-- Прямые линии печати -->
+        <div v-show="tab === 'lines'" class="space-y-3" data-testid="seal-lines-tab">
+          <AppSection title="Линии печати" icon="line">
+            <div class="flex items-center justify-between gap-2">
+              <span class="text-[11px] text-slate-400">Линия — такой же объект, как текст и логотип</span>
+              <AppButton size="xs" icon="plus" data-testid="seal-add-straight-line" @click="addStraightLine">
+                Линия
+              </AppButton>
+            </div>
+            <div v-for="(line, index) in straightLines" :key="line.id" class="space-y-2 rounded-lg border border-slate-200 px-2.5 py-2 dark:border-slate-700" :class="selectedStraightLineId === line.id ? 'border-brand-400' : ''" :data-testid="`seal-straight-line-${index}`" @click="selectStraightLine(line.id)">
+              <div class="flex items-center justify-between gap-2">
+                <span class="text-[12px] font-medium">Линия {{ index + 1 }}</span>
+                <AppButton size="xs" variant="ghost" icon="trash" :data-testid="`seal-straight-line-remove-${index}`" @click.stop="removeStraightLine(line.id)" />
+              </div>
+              <AppSlider :model-value="line.width" label="Толщина" unit="pt" :min="0.1" :max="10" :step="0.1" :precision="1" @update:model-value="updateStraightLine(line.id, { width: Number($event) })" />
+              <AppSlider :model-value="line.length" label="Длина" unit="pt" :min="2" :max="200" :step="0.5" :precision="1" @update:model-value="updateStraightLine(line.id, { length: Number($event) })" />
+              <AppSlider :model-value="line.rotation" label="Поворот" unit="°" :min="0" :max="359" :step="1" @update:model-value="updateStraightLine(line.id, { rotation: Number($event) })" />
+            </div>
+            <p v-if="straightLines.length" class="text-[11px] text-slate-400">
+              Тяните за конец — второй конец остаётся на месте; красная линия покажет расстояние
+              до внутренней границы колец. Круглый маркер вращает, тело линии двигает её; центр
+              прилипает к осям.
+            </p>
+            <p v-else class="text-[11px] text-slate-400">
+              Добавьте линию, задайте толщину и тяните за концы. Линия входит в печать, PDF и
+              библиотеку вместе с остальными объектами.
+            </p>
           </AppSection>
         </div>
 

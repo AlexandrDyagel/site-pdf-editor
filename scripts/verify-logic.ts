@@ -47,6 +47,7 @@ import {
   createSealRing,
   createSealRingLine,
   createSealSettings,
+  createSealStraightLine,
   layoutSealArc,
   normalizeSealSettings,
   sealArcMinSpan,
@@ -856,6 +857,27 @@ check(
   sealUnderlineLayout.seal?.ringLines[0]?.underline === true &&
     sealUnderlineLayout.seal?.ringLines[0]?.chars[0]?.underline === true,
   JSON.stringify(sealUnderlineLayout.seal?.ringLines[0]?.underline),
+);
+
+const straightTemplate = createSealTemplate();
+if (straightTemplate.seal) {
+  straightTemplate.seal.straightLines = [
+    createSealStraightLine({ x: 0, y: 0, length: 30, width: 2, rotation: 30 }),
+  ];
+}
+const straightLayout = computeStampLayout(straightTemplate, () => 'PT Sans');
+const straightGeometry = straightLayout.seal?.straightLines[0];
+check(
+  'прямая линия попадает в геометрию печати',
+  Boolean(straightGeometry) &&
+    Math.abs((straightGeometry?.length ?? 0) - 30) < 0.01 &&
+    Math.abs((straightGeometry?.width ?? 0) - 2) < 0.01 &&
+    Math.abs((straightGeometry?.rotation ?? 0) - 30) < 0.01,
+  JSON.stringify(straightGeometry),
+);
+check(
+  'прямая линия экспортируется в SVG',
+  stampTemplateToSvg(straightTemplate, () => 'PT Sans').includes('<line'),
 );
 
 const normalizedLines = normalizeSealSettings({

@@ -182,6 +182,16 @@ export async function drawStampToPdfPage(
   // Круглая печать: кольца, зерно и разделитель — векторно.
   if (layout.seal) {
     drawSealInkToPdfPage(page, ctx, layout.seal.ink, layout.color, alpha);
+    for (const line of layout.seal.straightLines) {
+      const { r, g, b } = hexToRgb(line.color);
+      page.drawLine({
+        start: ctx.toPdf(line.x1, line.y1),
+        end: ctx.toPdf(line.x2, line.y2),
+        thickness: Math.max(0.1, line.width),
+        color: rgb(r, g, b),
+        opacity: alpha,
+      });
+    }
   }
 
   // Разделитель.

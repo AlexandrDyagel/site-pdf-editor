@@ -29,11 +29,12 @@ import type {
   SealRing,
   SealRingLine,
   SealSettings,
+  SealStraightLine,
   StampLogo,
   StampTemplate,
 } from '@/types';
 import type { StampCharLayout, StampLineLayout } from '@/services/stampRenderService';
-import { measureTextWidth } from '@/utils/textLayout';
+import { measureInkMetrics, measureTextWidth } from '@/utils/textLayout';
 import { createId } from '@/utils/id';
 
 /* ==========================================================================
@@ -128,6 +129,20 @@ export function createSealInk(patch: Partial<SealInk> = {}): SealInk {
 }
 
 /** Настройки печати по умолчанию. */
+/** Новая прямая линия на печати. */
+export function createSealStraightLine(patch: Partial<SealStraightLine> = {}): SealStraightLine {
+  return {
+    id: patch.id ?? createId('sealline'),
+    x: patch.x ?? 0,
+    y: patch.y ?? 0,
+    length: patch.length ?? 20,
+    width: patch.width ?? 1,
+    rotation: patch.rotation ?? 0,
+    color: patch.color ?? null,
+    ...patch,
+  };
+}
+
 export function createSealSettings(patch: Partial<SealSettings> = {}): SealSettings {
   return {
     diameterMm: SEAL_DEFAULT_MM,
@@ -151,6 +166,7 @@ export function createSealSettings(patch: Partial<SealSettings> = {}): SealSetti
         side: 'bottom',
       }),
     ],
+    straightLines: [],
     divider: { enabled: false, radius: 0, width: 1.2 },
     ink: createSealInk(),
     ...patch,
@@ -324,10 +340,25 @@ export function normalizeSealSettings(seal: SealSettings): SealSettings {
     }
   }
 
+  const straightLines = (seal.straightLines ?? [])
+    .slice(0, 40)
+    .map((line, index) =>
+      createSealStraightLine({
+        id: line.id || createId('sealline'),
+        x: clamp(line.x ?? 0, -2000, 2000),
+        y: clamp(line.y ?? 0, -2000, 2000),
+        length: clamp(line.length ?? 20, 1, 2000),
+        width: clamp(line.width ?? 1, 0.1, 20),
+        rotation: ((line.rotation ?? 0) % 360 + 360) % 360,
+        color: line.color ?? null,
+      }),
+    );
+
   return {
     diameterMm: clamp(seal.diameterMm, SEAL_MIN_MM, SEAL_MAX_MM),
     rings,
     lines,
+    straightLines,
     version: 2,
     divider: {
       enabled: Boolean(seal.divider?.enabled),
@@ -676,6 +707,21 @@ export interface SealSlotGeometry {
   outerEdge: number;
 }
 
+/** Прямая линия печати в координатах шаблона. */
+export interface SealStraightLineGeometry {
+  lineId: string;
+  cx: number;
+  cy: number;
+  x1: number;
+  y1: number;
+  x2: number;
+  y2: number;
+  length: number;
+  width: number;
+  rotation: number;
+  color: string;
+}
+
 /** Полная геометрия печати в координатах шаблона. */
 export interface SealLogoGeometry {
   src: string;
@@ -694,6 +740,8 @@ export interface SealParts {
   ink: SealInkGeometry;
   /** Строки текста по кольцам. */
   ringLines: SealRingLineGeometry[];
+  /** Прямые линии на печати. */
+  straightLines: SealStraightLineGeometry[];
   /** Зазоры между кольцами — нужны интерфейсу конструктора. */
   slots: SealSlotGeometry[];
   lines: StampLineLayout[];
@@ -1047,6 +1095,16 @@ export function computeSealParts(
           ? cx + size / 2 - metric.fontSize - lineWidth
           : cx - lineWidth / 2) + (line.offsetX ?? 0);
     cursorY += metric.height;
+    const ink =
+      measureInkMetrics(line.text, {
+        fontFamily: family,
+        fontSize: metric.fontSize,
+        bold: line.bold,
+        italic: line.italic,
+        letterSpacing: line.letterSpacing,
+        wordSpacing: line.wordSpacing ?? 0,
+        lineHeight: 1.25,
+      }) ?? { ascent: metric.fontSize * 0.72, descent: metric.fontSize * 0.2 };
     return {
       text: line.text,
       x,
@@ -1061,6 +1119,10 @@ export function computeSealParts(
       bold: line.bold,
       italic: line.italic,
       underline: line.underline,
+      inkAscent: ink.ascent,
+      inkDescent: ink.descent,
+      inkCenterY: baseline - (ink.ascent - ink.descent) / 2,
+      rotation: line.rotation ?? 0,
     };
   });
 
@@ -1117,11 +1179,36 @@ export function computeSealParts(
     }
   }
 
+  // --- Прямые линии -------------------------------------------------------
+  const straightLines: SealStraightLineGeometry[] = (seal.straightLines ?? []).map((line) => {
+    const length = Math.max(1, line.length * k);
+    const lineWidth = Math.max(0.1, line.width * k);
+    const lineCx = cx + line.x * k;
+    const lineCy = cy + line.y * k;
+    const radians = (line.rotation * Math.PI) / 180;
+    const dx = (Math.cos(radians) * length) / 2;
+    const dy = (Math.sin(radians) * length) / 2;
+    return {
+      lineId: line.id,
+      cx: lineCx,
+      cy: lineCy,
+      x1: lineCx - dx,
+      y1: lineCy - dy,
+      x2: lineCx + dx,
+      y2: lineCy + dy,
+      length,
+      width: lineWidth,
+      rotation: line.rotation,
+      color: line.color || color,
+    };
+  });
+
   return {
     width,
     height,
     ink: { ink: seal.ink, rings, ghostRings, specks, divider },
     ringLines,
+    straightLines,
     slots: slotGeometry,
     lines,
     logos,

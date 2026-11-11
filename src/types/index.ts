@@ -491,6 +491,8 @@ export interface StampTextLine {
   italic: boolean;
   /** Подчёркнутый текст. */
   underline?: boolean;
+  /** Поворот строки вокруг её центра, градусы. */
+  rotation?: number;
   align: 'left' | 'center' | 'right';
   /** Межбуквенное расстояние, pt. */
   letterSpacing: number;
@@ -641,6 +643,22 @@ export interface SealInk {
   seed: number;
 }
 
+/** Прямая линия на печати. */
+export interface SealStraightLine {
+  id: string;
+  /** Центр линии, pt. */
+  x: number;
+  y: number;
+  /** Длина, pt. */
+  length: number;
+  /** Толщина, pt. */
+  width: number;
+  /** Поворот вокруг центра, градусы. */
+  rotation: number;
+  /** Свой цвет; null — цвет печати. */
+  color?: string | null;
+}
+
 /** Полная геометрия круглой печати — всё, что нужно рендерерам. */
 export interface SealSettings {
   /** Диаметр в миллиметрах (30–60). */
@@ -649,6 +667,8 @@ export interface SealSettings {
   rings: SealRing[];
   /** Строки текста по кольцам (основная модель). */
   lines: SealRingLine[];
+  /** Прямые линии. */
+  straightLines?: SealStraightLine[];
   divider: SealDivider;
   ink: SealInk;
   /** @deprecated Старые шаблоны: верхняя дуга. Читается при импорте. */
@@ -683,6 +703,8 @@ export interface SealMultiSelection {
   centers: number[];
   rings: number[];
   logos: number[];
+  /** Прямые линии. */
+  strokes: string[];
 }
 
 /** Шаблон штампа. */

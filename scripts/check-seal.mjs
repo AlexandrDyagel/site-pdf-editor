@@ -1904,7 +1904,7 @@ try {
     const canvas = document.querySelector('[data-testid=seal-preview-canvas]');
     const point = window.__SEAL_PREVIEW__.client(line.x + line.width / 2, line.baseline - line.fontSize * 0.4);
     canvas.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, clientX: point.x, clientY: point.y, button: 0, pointerId: 801 }));
-    window.dispatchEvent(new PointerEvent('pointermove', { bubbles: true, clientX: point.x + 5, clientY: point.y + 4, pointerId: 801 }));
+    window.dispatchEvent(new PointerEvent('pointermove', { bubbles: true, clientX: point.x + 1, clientY: point.y, pointerId: 801 }));
     await new Promise((r) => setTimeout(r, 500));
     const overlay = document.querySelector('[data-testid=seal-designer] [data-testid=seal-overlay]');
     const ctx = overlay.getContext('2d');
@@ -2229,7 +2229,7 @@ try {
       .find((n) => n.textContent.trim() === 'Центр')?.click();
     await new Promise((r) => setTimeout(r, 300));
     t.lines[0].offsetX = 0;
-    t.lines[0].offsetY = 5;
+    t.lines[0].offsetY = 15;
     await new Promise((r) => setTimeout(r, 400));
     const layout = window.__sealLayout();
     const line = layout.lines[0];
@@ -2262,6 +2262,27 @@ try {
   }
   check('ось центрирования красная', axisRed > 0,
     JSON.stringify({ red: axisRed, samples: snapAxes.during.pixel.length / 4 }));
+
+  const horizontalSnap = await cdp.evaluate(`(async () => {
+    const t = window.__SEAL_DESIGNER__;
+    t.lines[0].offsetX = 15;
+    const current = window.__sealLayout().lines[0];
+    t.lines[0].offsetY += t.width / 2 - (current.inkCenterY ?? current.baseline - current.fontSize * 0.36);
+    await new Promise((r) => setTimeout(r, 400));
+    const line = window.__sealLayout().lines[0];
+    const point = window.__SEAL_PREVIEW__.client(line.x + line.width / 2, line.inkCenterY ?? line.baseline);
+    const canvas = document.querySelector('[data-testid=seal-preview-canvas]');
+    canvas.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, clientX: point.x, clientY: point.y, button: 0, pointerId: 1010 }));
+    window.dispatchEvent(new PointerEvent('pointermove', { bubbles: true, clientX: point.x, clientY: point.y + 1, pointerId: 1010 }));
+    await new Promise((r) => setTimeout(r, 350));
+    const axes = window.__SEAL_PREVIEW__.axes();
+    window.dispatchEvent(new PointerEvent('pointerup', { bubbles: true, pointerId: 1010 }));
+    await new Promise((r) => setTimeout(r, 250));
+    return { axes, offsetY: t.lines[0].offsetY };
+  })()`);
+  check('текст прилипает к горизонтальной оси по центру букв',
+    horizontalSnap.axes.horizontal === true && horizontalSnap.axes.vertical === false,
+    JSON.stringify(horizontalSnap));
 
   const circular = await cdp.evaluate(`(async () => {
     const t = window.__SEAL_DESIGNER__;
@@ -2340,6 +2361,327 @@ try {
   })()`);
   check('ползунок «Между словами» показывает и меняет значение',
     wordSlider.shown === 7 && wordSlider.value === 9, JSON.stringify(wordSlider));
+
+  console.log('\n22. Стрелки, прямые линии и поворот текста');
+
+  const angleSpacing = await cdp.evaluate(`(async () => {
+    const t = window.__SEAL_DESIGNER__;
+    Array.from(document.querySelectorAll('[data-testid=seal-designer] [role=tab]'))
+      .find((n) => n.textContent.trim() === 'Текст')?.click();
+    await new Promise((r) => setTimeout(r, 300));
+    const line = t.seal.lines[0];
+    line.text = 'ТЕСТ ТЕКСТ';
+    line.letterSpacing = 1;
+    line.wordSpacing = 2;
+    await new Promise((r) => setTimeout(r, 300));
+    const slider = document.querySelector('[data-testid=seal-line-0-span] input');
+    slider.value = '250';
+    slider.dispatchEvent(new Event('input', { bubbles: true }));
+    await new Promise((r) => setTimeout(r, 500));
+    const geometry = window.__sealLayout().seal.ringLines.find((item) => item.lineId === line.id);
+    return {
+      target: line.spanAngle,
+      actual: Math.abs(geometry.endAngle - geometry.startAngle),
+      tracking: line.letterSpacing,
+      word: line.wordSpacing,
+    };
+  })()`);
+  check('смена угла двигает и трекинг, и межсловный интервал',
+    Math.abs(angleSpacing.actual - 250) < 2 && angleSpacing.tracking > 1 && angleSpacing.word > 2,
+    JSON.stringify(angleSpacing));
+
+  const keyboardMoves = await cdp.evaluate(`(async () => {
+    const t = window.__SEAL_DESIGNER__;
+    const centerLine = window.__sealLayout().lines[0];
+    const point = window.__SEAL_PREVIEW__.client(centerLine.x + centerLine.width / 2, centerLine.inkCenterY ?? centerLine.baseline);
+    const canvas = document.querySelector('[data-testid=seal-preview-canvas]');
+    canvas.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, clientX: point.x, clientY: point.y, button: 0, pointerId: 970 }));
+    canvas.dispatchEvent(new PointerEvent('pointerup', { bubbles: true, pointerId: 970 }));
+    t.lines[0].offsetX = 0;
+    t.lines[0].offsetY = 0;
+    await new Promise((r) => setTimeout(r, 300));
+    window.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowRight', code: 'ArrowRight' }));
+    window.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowUp', code: 'ArrowUp' }));
+    await new Promise((r) => setTimeout(r, 400));
+    const centerOffset = { x: t.lines[0].offsetX, y: t.lines[0].offsetY };
+    const arcLine = window.__sealLayout().seal.ringLines[0];
+    Array.from(document.querySelectorAll('[data-testid=seal-designer] [role=tab]'))
+      .find((n) => n.textContent.trim() === 'Текст')?.click();
+    await new Promise((r) => setTimeout(r, 250));
+    const arcCard = document.querySelector('[data-testid=seal-line-0]');
+    arcCard?.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, button: 0, pointerId: 971 }));
+    await new Promise((r) => setTimeout(r, 300));
+    const arcBefore = { radius: t.seal.lines[0].radiusOffset, angle: t.seal.lines[0].angleOffset };
+    window.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowUp', code: 'ArrowUp' }));
+    window.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowRight', code: 'ArrowRight' }));
+    await new Promise((r) => setTimeout(r, 400));
+    const arcAfter = { radius: t.seal.lines[0].radiusOffset, angle: t.seal.lines[0].angleOffset };
+    if (t.seal.rings.length < 2) document.querySelector('[data-testid=seal-add-ring]')?.click();
+    Array.from(document.querySelectorAll('[data-testid=seal-designer] [role=tab]'))
+      .find((n) => n.textContent.trim() === 'Кольца')?.click();
+    await new Promise((r) => setTimeout(r, 300));
+    document.querySelector('[data-testid=seal-ring-1]')?.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, button: 0, pointerId: 972 }));
+    await new Promise((r) => setTimeout(r, 300));
+    const gapBefore = t.seal.rings[1].gap;
+    window.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowUp', code: 'ArrowUp' }));
+    await new Promise((r) => setTimeout(r, 300));
+    return { centerOffset, arcBefore, arcAfter, gapBefore, gapAfter: t.seal.rings[1].gap };
+  })()`);
+  check('стрелки двигают строку центра с шагом 0.1 pt',
+    Math.abs(keyboardMoves.centerOffset.x - 0.1) < 0.01 &&
+      Math.abs(keyboardMoves.centerOffset.y + 0.1) < 0.01,
+    JSON.stringify(keyboardMoves));
+  check('стрелки двигают дуговой текст',
+    keyboardMoves.arcAfter.radius > keyboardMoves.arcBefore.radius &&
+      keyboardMoves.arcAfter.angle !== keyboardMoves.arcBefore.angle,
+    JSON.stringify(keyboardMoves));
+  check('стрелка вверх увеличивает расстояние до кольца на 0.1 pt',
+    Math.abs((keyboardMoves.gapAfter - keyboardMoves.gapBefore) - 0.1) < 0.01,
+    JSON.stringify(keyboardMoves));
+
+  const straight = await cdp.evaluate(`(async () => {
+    const stamp = await import('/src/services/stampRenderService.ts');
+    const t = window.__SEAL_DESIGNER__;
+    Array.from(document.querySelectorAll('[data-testid=seal-designer] [role=tab]'))
+      .find((n) => n.textContent.trim() === 'Линии')?.click();
+    await new Promise((r) => setTimeout(r, 300));
+    document.querySelector('[data-testid=seal-add-straight-line]')?.click();
+    await new Promise((r) => setTimeout(r, 500));
+    const lines = t.seal.straightLines ?? [];
+    const line = lines[0];
+    const svg = stamp.stampTemplateToSvg(t, (id) => window.__PDF_EDITOR__.fonts.familyOf(id));
+    return { count: lines.length, svg: svg.includes('<line'), width: line?.width, rotation: line?.rotation };
+  })()`);
+  check('линия добавляется и рисуется в SVG',
+    straight.count === 1 && straight.svg === true && straight.width > 0,
+    JSON.stringify(straight));
+
+  const straightInteraction = await cdp.evaluate(`(async () => {
+    const t = window.__SEAL_DESIGNER__;
+    const canvas = document.querySelector('[data-testid=seal-preview-canvas]');
+    const geometry = window.__sealLayout().seal.straightLines[0];
+    const center = window.__SEAL_PREVIEW__.client(geometry.cx, geometry.cy);
+    canvas.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, clientX: center.x, clientY: center.y, button: 0, pointerId: 980 }));
+    canvas.dispatchEvent(new PointerEvent('pointerup', { bubbles: true, pointerId: 980 }));
+    await new Promise((r) => setTimeout(r, 400));
+    const selected = {
+      handles: document.querySelectorAll('[data-testid^=seal-stroke-handle-]').length,
+      rotate: Boolean(document.querySelector('[data-testid=seal-stroke-rotate]')),
+      state: window.__SEAL_DESIGNER_STATE__.get(),
+    };
+    const before = { x: t.seal.straightLines[0].x, y: t.seal.straightLines[0].y };
+    canvas.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, clientX: center.x, clientY: center.y, button: 0, pointerId: 981 }));
+    window.dispatchEvent(new PointerEvent('pointermove', { bubbles: true, clientX: center.x + 12, clientY: center.y + 4, pointerId: 981 }));
+    window.dispatchEvent(new PointerEvent('pointerup', { bubbles: true, pointerId: 981 }));
+    await new Promise((r) => setTimeout(r, 300));
+    const moved = { x: t.seal.straightLines[0].x, y: t.seal.straightLines[0].y };
+    const beforeGeometry = window.__sealLayout().seal.straightLines[0];
+    const endHandle = document.querySelector('[data-testid=seal-stroke-handle-end]');
+    const endRect = endHandle?.getBoundingClientRect();
+    const startHandle = endRect ? { x: endRect.left + endRect.width / 2, y: endRect.top + endRect.height / 2 } : null;
+    if (!startHandle || !endHandle) return { selected, moved, before, error: 'нет маркера' };
+    endHandle.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, clientX: startHandle.x, clientY: startHandle.y, button: 0, pointerId: 982 }));
+    window.dispatchEvent(new PointerEvent('pointermove', { bubbles: true, clientX: startHandle.x + 28, clientY: startHandle.y + 8, pointerId: 982 }));
+    await new Promise((r) => setTimeout(r, 300));
+    const duringAnnotation = document.querySelector('[data-testid=seal-preview]').getAttribute('data-stroke-annotation');
+    window.dispatchEvent(new PointerEvent('pointerup', { bubbles: true, pointerId: 982 }));
+    await new Promise((r) => setTimeout(r, 300));
+    const afterGeometry = window.__sealLayout().seal.straightLines[0];
+    const rotateButton = document.querySelector('[data-testid=seal-stroke-rotate]');
+    const rotationBefore = t.seal.straightLines[0].rotation;
+    let rotationAfter = rotationBefore;
+    if (rotateButton) {
+      const rr = rotateButton.getBoundingClientRect();
+      const rotateStart = { x: rr.left + rr.width / 2, y: rr.top + rr.height / 2 };
+      rotateButton.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, clientX: rotateStart.x, clientY: rotateStart.y, button: 0, pointerId: 983 }));
+      window.dispatchEvent(new PointerEvent('pointermove', { bubbles: true, clientX: rotateStart.x + 26, clientY: rotateStart.y + 12, pointerId: 983 }));
+      window.dispatchEvent(new PointerEvent('pointerup', { bubbles: true, pointerId: 983 }));
+      await new Promise((r) => setTimeout(r, 300));
+      rotationAfter = t.seal.straightLines[0].rotation;
+    }
+    return {
+      selected,
+      moved,
+      before,
+      lengthBefore: beforeGeometry.length,
+      lengthAfter: afterGeometry.length,
+      fixedStart: Math.hypot(afterGeometry.x1 - beforeGeometry.x1, afterGeometry.y1 - beforeGeometry.y1),
+      duringAnnotation,
+      afterAnnotation: document.querySelector('[data-testid=seal-preview]').getAttribute('data-stroke-annotation'),
+      rotationBefore,
+      rotationAfter,
+    };
+  })()`);
+  check('линия выделяется, двигается за тело и имеет маркеры концов и поворота',
+    straightInteraction.selected?.handles === 2 && straightInteraction.selected?.rotate === true &&
+      Math.abs((straightInteraction.moved?.x ?? 0) - (straightInteraction.before?.x ?? 0)) > 0.5,
+    JSON.stringify(straightInteraction));
+  check('растягивание за конец сохраняет второй конец и показывает красный размер',
+    straightInteraction.lengthAfter > straightInteraction.lengthBefore &&
+      straightInteraction.fixedStart < 1 &&
+      straightInteraction.duringAnnotation === 'true' &&
+      straightInteraction.afterAnnotation === 'false',
+    JSON.stringify(straightInteraction));
+  check('прямую линию можно вращать маркером',
+    Math.abs(straightInteraction.rotationAfter - straightInteraction.rotationBefore) > 1,
+    JSON.stringify(straightInteraction));
+
+  const groupRotate = await cdp.evaluate(`(async () => {
+    const t = window.__SEAL_DESIGNER__;
+    const root = document.querySelector('[data-testid=seal-preview]');
+    const rect = root.getBoundingClientRect();
+    root.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, clientX: rect.left + rect.width * 0.2, clientY: rect.top + rect.height * 0.2, button: 0, pointerId: 1001 }));
+    window.dispatchEvent(new PointerEvent('pointermove', { bubbles: true, clientX: rect.left + rect.width * 0.8, clientY: rect.top + rect.height * 0.8, pointerId: 1001 }));
+    window.dispatchEvent(new PointerEvent('pointerup', { bubbles: true, pointerId: 1001 }));
+    await new Promise((r) => setTimeout(r, 500));
+    const before = t.lines.map((line) => line.rotation ?? 0);
+    const button = document.querySelector('[data-testid=seal-center-rotate]');
+    if (!button) return { error: 'нет маркера' };
+    const b = button.getBoundingClientRect();
+    const start = { x: b.left + b.width / 2, y: b.top + b.height / 2 };
+    button.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, clientX: start.x, clientY: start.y, button: 0, pointerId: 1002 }));
+    window.dispatchEvent(new PointerEvent('pointermove', { bubbles: true, clientX: start.x + 30, clientY: start.y + 14, pointerId: 1002 }));
+    window.dispatchEvent(new PointerEvent('pointerup', { bubbles: true, pointerId: 1002 }));
+    await new Promise((r) => setTimeout(r, 400));
+    return {
+      kind: button.getAttribute('data-kind'),
+      changed: t.lines.some((line, index) => Math.abs((line.rotation ?? 0) - before[index]) > 1),
+    };
+  })()`);
+  check('группу строк можно вращать общим маркером',
+    groupRotate.kind === 'group' && groupRotate.changed === true,
+    JSON.stringify(groupRotate));
+
+  const arcGroupSnap = await cdp.evaluate(`(async () => {
+    const t = window.__SEAL_DESIGNER__;
+    document.body.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true }));
+    const root = document.querySelector('[data-testid=seal-preview]');
+    const rect = root.getBoundingClientRect();
+    root.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, clientX: rect.left + rect.width * 0.2, clientY: rect.top + rect.height * 0.2, button: 0, pointerId: 1003 }));
+    window.dispatchEvent(new PointerEvent('pointermove', { bubbles: true, clientX: rect.left + rect.width * 0.8, clientY: rect.top + rect.height * 0.8, pointerId: 1003 }));
+    window.dispatchEvent(new PointerEvent('pointerup', { bubbles: true, pointerId: 1003 }));
+    await new Promise((r) => setTimeout(r, 500));
+    t.seal.lines.forEach((line) => { line.radiusOffset = 0.5; });
+    await new Promise((r) => setTimeout(r, 400));
+    const line = window.__sealLayout().seal.ringLines[0];
+    const p = window.__SEAL_PREVIEW__.client(line.chars[Math.floor(line.chars.length / 2)].x, line.chars[Math.floor(line.chars.length / 2)].y);
+    const canvas = document.querySelector('[data-testid=seal-preview-canvas]');
+    canvas.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, clientX: p.x, clientY: p.y, button: 0, pointerId: 1004 }));
+    window.dispatchEvent(new PointerEvent('pointermove', { bubbles: true, clientX: p.x, clientY: p.y + 1, pointerId: 1004 }));
+    await new Promise((r) => setTimeout(r, 300));
+    const circular = window.__SEAL_PREVIEW__.axes().circular;
+    window.dispatchEvent(new PointerEvent('pointerup', { bubbles: true, pointerId: 1004 }));
+    await new Promise((r) => setTimeout(r, 300));
+    return {
+      circular,
+      offsets: t.seal.lines.map((item) => item.radiusOffset),
+    };
+  })()`);
+  check('группа дугового текста прилипает к середине зазора',
+    arcGroupSnap.circular === true &&
+      arcGroupSnap.offsets.every((offset) => Math.abs(offset) < 0.01),
+    JSON.stringify(arcGroupSnap));
+
+  const centerRotate = await cdp.evaluate(`(async () => {
+    const t = window.__SEAL_DESIGNER__;
+    Array.from(document.querySelectorAll('[data-testid=seal-designer] [role=tab]'))
+      .find((n) => n.textContent.trim() === 'Центр')?.click();
+    await new Promise((r) => setTimeout(r, 300));
+    t.lines[0].rotation = 0;
+    await new Promise((r) => setTimeout(r, 300));
+    const layout = window.__sealLayout();
+    const line = layout.lines[0];
+    const p = window.__SEAL_PREVIEW__.client(line.x + line.width / 2, line.inkCenterY ?? line.baseline);
+    const canvas = document.querySelector('[data-testid=seal-preview-canvas]');
+    canvas.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, clientX: p.x, clientY: p.y, button: 0, pointerId: 990 }));
+    canvas.dispatchEvent(new PointerEvent('pointerup', { bubbles: true, pointerId: 990 }));
+    await new Promise((r) => setTimeout(r, 300));
+    const button = document.querySelector('[data-testid=seal-center-rotate]');
+    if (!button) return { error: 'нет маркера поворота' };
+    const rect = button.getBoundingClientRect();
+    const start = { x: rect.left + rect.width / 2, y: rect.top + rect.height / 2 };
+    button.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, clientX: start.x, clientY: start.y, button: 0, pointerId: 991 }));
+    window.dispatchEvent(new PointerEvent('pointermove', { bubbles: true, clientX: start.x + 30, clientY: start.y + 10, pointerId: 991 }));
+    window.dispatchEvent(new PointerEvent('pointerup', { bubbles: true, pointerId: 991 }));
+    await new Promise((r) => setTimeout(r, 400));
+    return { rotation: t.lines[0].rotation };
+  })()`);
+  check('строку центра можно вращать маркером',
+    centerRotate.rotation !== undefined && Math.abs(centerRotate.rotation) > 1,
+    JSON.stringify(centerRotate));
+
+  console.log('\n23. Стрелки для группы, логотипа, образца и линии');
+
+  const groupArrows = await cdp.evaluate(`(async () => {
+    const t = window.__SEAL_DESIGNER__;
+    const root = document.querySelector('[data-testid=seal-preview]');
+    const rect = root.getBoundingClientRect();
+    root.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, clientX: rect.left + rect.width * 0.2, clientY: rect.top + rect.height * 0.2, button: 0, pointerId: 995 }));
+    window.dispatchEvent(new PointerEvent('pointermove', { bubbles: true, clientX: rect.left + rect.width * 0.8, clientY: rect.top + rect.height * 0.8, pointerId: 995 }));
+    window.dispatchEvent(new PointerEvent('pointerup', { bubbles: true, pointerId: 995 }));
+    await new Promise((r) => setTimeout(r, 500));
+    const selection = window.__SEAL_DESIGNER_STATE__.get().multi;
+    const before = t.lines.slice(0, 2).map((line) => ({ x: line.offsetX ?? 0, y: line.offsetY }));
+    window.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowRight', code: 'ArrowRight' }));
+    window.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowUp', code: 'ArrowUp' }));
+    await new Promise((r) => setTimeout(r, 400));
+    const after = t.lines.slice(0, 2).map((line) => ({ x: line.offsetX ?? 0, y: line.offsetY }));
+    return { centers: selection?.centers.length ?? 0, before, after, rotate: Boolean(document.querySelector('[data-testid=seal-center-rotate]')) };
+  })()`);
+  check('стрелки двигают группу строк',
+    groupArrows.centers >= 2 &&
+      Math.abs(groupArrows.after[0].x - groupArrows.before[0].x - 0.1) < 0.001 &&
+      Math.abs(groupArrows.after[1].y - groupArrows.before[1].y + 0.1) < 0.001,
+    JSON.stringify(groupArrows));
+  check('у группы строк есть общий маркер поворота', groupArrows.rotate === true, JSON.stringify(groupArrows));
+
+  const objectArrows = await cdp.evaluate(`(async () => {
+    const t = window.__SEAL_DESIGNER__;
+    const canvas = document.querySelector('[data-testid=seal-preview-canvas]');
+    const png = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAgAAAAIAQMAAAD+wSzIAAAABlBMVEX///+/v7+jQ3Y5AAAADklEQVQI12P4AIX8EAgALgAD/aNpbtEAAAAASUVORK5CYII=';
+    t.logos = [{ id: 'arrow-logo', src: png, width: 20, height: 20, offsetX: 0, offsetY: 0, opacity: 1, rotation: 0 }];
+    t.logo = t.logos[0];
+    await new Promise((r) => setTimeout(r, 500));
+    const logo = window.__sealLayout().logo;
+    const point = window.__SEAL_PREVIEW__.client(logo.x + logo.width / 2, logo.y + logo.height / 2);
+    canvas.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, clientX: point.x, clientY: point.y, button: 0, pointerId: 996 }));
+    canvas.dispatchEvent(new PointerEvent('pointerup', { bubbles: true, pointerId: 996 }));
+    await new Promise((r) => setTimeout(r, 300));
+    const logoBefore = t.logos[0].offsetX;
+    window.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowRight', code: 'ArrowRight' }));
+    await new Promise((r) => setTimeout(r, 300));
+    const logoAfter = t.logos[0].offsetX;
+
+    const c = document.createElement('canvas');
+    c.width = 100; c.height = 100;
+    const ctx = c.getContext('2d');
+    ctx.fillStyle = '#f59e0b'; ctx.fillRect(0, 0, 100, 100);
+    window.__SEAL_REFERENCE__.set({ src: c.toDataURL('image/png'), x: t.width * 0.5, y: t.height * 0.5, width: t.width * 1.2, height: t.height * 1.2, rotation: 0, opacity: 0.5, visible: true, locked: false });
+    await new Promise((r) => setTimeout(r, 500));
+    const refRect = document.querySelector('[data-testid=seal-reference-image]').getBoundingClientRect();
+    canvas.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, clientX: refRect.right - 4, clientY: refRect.top + 4, button: 0, pointerId: 997 }));
+    canvas.dispatchEvent(new PointerEvent('pointerup', { bubbles: true, pointerId: 997 }));
+    await new Promise((r) => setTimeout(r, 300));
+    const refBefore = window.__SEAL_REFERENCE__.get().x;
+    window.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowLeft', code: 'ArrowLeft' }));
+    await new Promise((r) => setTimeout(r, 300));
+    const refAfter = window.__SEAL_REFERENCE__.get().x;
+
+    document.querySelector('[data-testid=seal-straight-line-0]')?.click();
+    await new Promise((r) => setTimeout(r, 300));
+    const lineBefore = t.seal.straightLines[0].y;
+    window.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowDown', code: 'ArrowDown' }));
+    await new Promise((r) => setTimeout(r, 300));
+    return { logoBefore, logoAfter, refBefore, refAfter, lineBefore, lineAfter: t.seal.straightLines[0].y };
+  })()`);
+  check('стрелки двигают логотип с шагом 0.1 pt',
+    Math.abs((objectArrows.logoAfter - objectArrows.logoBefore) - 0.1) < 0.01, JSON.stringify(objectArrows));
+  check('стрелки двигают образец с шагом 0.1 pt',
+    Math.abs((objectArrows.refAfter - objectArrows.refBefore) + 0.1) < 0.08, JSON.stringify(objectArrows));
+  check('стрелки двигают прямую линию с шагом 0.1 pt',
+    Math.abs((objectArrows.lineAfter - objectArrows.lineBefore) - 0.1) < 0.08, JSON.stringify(objectArrows));
+
+
 
   await cdp.evaluate(`window.__PDF_EDITOR__.ui.closeAllModals(); 'ok'`);
   await sleep(600);

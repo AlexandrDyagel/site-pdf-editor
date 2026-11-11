@@ -27,6 +27,7 @@ import {
   type SealInkGeometry,
   type SealRingLineGeometry,
   type SealSlotGeometry,
+  type SealStraightLineGeometry,
 } from '@/services/sealRenderService';
 
 /** Шрифт для отрисовки штампа. */
@@ -54,6 +55,13 @@ export interface StampLineLayout {
   italic: boolean;
   /** Подчёркнутый текст. */
   underline?: boolean;
+  /** Реальная рамка «чернил» строки относительно базовой линии, pt. */
+  inkAscent?: number;
+  inkDescent?: number;
+  /** Центр букв по вертикали (для осей и маркера центра). */
+  inkCenterY?: number;
+  /** Поворот строки вокруг её центра, градусы. */
+  rotation?: number;
 }
 
 /** Символ кругового текста. */
@@ -102,6 +110,8 @@ export interface StampLayout {
     ringLines: SealRingLineGeometry[];
     /** Кольцевые зазоры — нужны перетаскиванию строк в конструкторе. */
     slots: SealSlotGeometry[];
+    /** Прямые линии печати. */
+    straightLines: SealStraightLineGeometry[];
   } | null;
   logo: StampLogoLayout | null;
   /** Все логотипы (для печати их может быть несколько). */
@@ -565,7 +575,12 @@ function buildSealLayout(
     frames: [],
     lines: parts.lines,
     chars: parts.ringLines.flatMap((item) => item.chars),
-    seal: { ink: parts.ink, ringLines: parts.ringLines, slots: parts.slots },
+    seal: {
+      ink: parts.ink,
+      ringLines: parts.ringLines,
+      straightLines: parts.straightLines,
+      slots: parts.slots,
+    },
     logo: parts.logo,
     logos: parts.logos,
   };
@@ -660,6 +675,17 @@ function scaleStampLayout(layout: StampLayout, scale: number): StampLayout {
             thickness: p(slot.thickness),
             innerEdge: p(slot.innerEdge),
             outerEdge: p(slot.outerEdge),
+          })),
+          straightLines: layout.seal.straightLines.map((line) => ({
+            ...line,
+            cx: p(line.cx),
+            cy: p(line.cy),
+            x1: p(line.x1),
+            y1: p(line.y1),
+            x2: p(line.x2),
+            y2: p(line.y2),
+            length: p(line.length),
+            width: p(line.width),
           })),
         }
       : null,
@@ -763,6 +789,18 @@ export function paintStampLayout(
   // «Краска» круглой печати: кольца, второй прокат, зерно, разделитель.
   if (layout.seal) {
     paintSealInk(ctx, layout.seal.ink, layout.color);
+    // Прямые линии — такие же объекты печати, как кольца и текст.
+    for (const line of layout.seal.straightLines) {
+      ctx.save();
+      ctx.strokeStyle = line.color;
+      ctx.lineWidth = Math.max(0.1, line.width);
+      ctx.lineCap = 'round';
+      ctx.beginPath();
+      ctx.moveTo(line.x1, line.y1);
+      ctx.lineTo(line.x2, line.y2);
+      ctx.stroke();
+      ctx.restore();
+    }
   }
 
   // Внешняя и внутренняя рамки.
@@ -793,6 +831,13 @@ export function paintStampLayout(
     ctx.save();
     ctx.fillStyle = line.color;
     ctx.font = `${line.italic ? 'italic ' : ''}${line.bold ? '700' : '400'} ${line.fontSize}px "${line.family}"`;
+    if (line.rotation) {
+      const centerX = line.x + line.width / 2;
+      const centerY = line.inkCenterY ?? line.baseline - line.fontSize * 0.36;
+      ctx.translate(centerX, centerY);
+      ctx.rotate((line.rotation * Math.PI) / 180);
+      ctx.translate(-centerX, -centerY);
+    }
     let cursor = line.x;
     const wordSpacing = line.wordSpacing ?? 0;
     if (line.letterSpacing || wordSpacing) {
@@ -927,6 +972,14 @@ export function stampTemplateToSvg(
   // Кольца, зерно и разделитель печати — векторными примитивами.
   if (layout.seal) {
     parts.push(...sealInkToSvg(layout.seal.ink, layout.color, layout.opacity));
+    for (const line of layout.seal.straightLines) {
+      parts.push(
+        `<line x1="${line.x1}" y1="${line.y1}" x2="${line.x2}" y2="${line.y2}" stroke="${line.color}" stroke-width="${Math.max(
+          0.1,
+          line.width,
+        )}" stroke-linecap="round" opacity="${layout.opacity}" />`,
+      );
+    }
   }
 
   if (layout.divider) {
@@ -953,7 +1006,13 @@ export function stampTemplateToSvg(
         line.italic ? ' font-style="italic"' : ''
       } fill="${line.color}" letter-spacing="${line.letterSpacing}"${
         line.wordSpacing ? ` word-spacing="${line.wordSpacing}"` : ''
-      }${line.underline ? ' text-decoration="underline"' : ''}>${escape(line.text)}</text>`,
+      }${line.underline ? ' text-decoration="underline"' : ''}${
+        line.rotation
+          ? ` transform="rotate(${line.rotation} ${line.x + line.width / 2} ${
+              line.inkCenterY ?? line.baseline - line.fontSize * 0.36
+            })"`
+          : ''
+      }>${escape(line.text)}</text>`,
     );
   }
 
