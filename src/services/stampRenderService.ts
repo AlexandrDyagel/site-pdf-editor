@@ -794,7 +794,7 @@ export function paintStampLayout(
       ctx.save();
       ctx.strokeStyle = line.color;
       ctx.lineWidth = Math.max(0.1, line.width);
-      ctx.lineCap = 'round';
+      ctx.lineCap = line.cap;
       ctx.beginPath();
       ctx.moveTo(line.x1, line.y1);
       ctx.lineTo(line.x2, line.y2);
@@ -977,7 +977,7 @@ export function stampTemplateToSvg(
         `<line x1="${line.x1}" y1="${line.y1}" x2="${line.x2}" y2="${line.y2}" stroke="${line.color}" stroke-width="${Math.max(
           0.1,
           line.width,
-        )}" stroke-linecap="round" opacity="${layout.opacity}" />`,
+        )}" stroke-linecap="${line.cap}" opacity="${layout.opacity}" />`,
       );
     }
   }

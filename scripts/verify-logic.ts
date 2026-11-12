@@ -862,7 +862,7 @@ check(
 const straightTemplate = createSealTemplate();
 if (straightTemplate.seal) {
   straightTemplate.seal.straightLines = [
-    createSealStraightLine({ x: 0, y: 0, length: 30, width: 2, rotation: 30 }),
+    createSealStraightLine({ x: 0, y: 0, length: 30, width: 2, rotation: 30, cap: 'butt' }),
   ];
 }
 const straightLayout = computeStampLayout(straightTemplate, () => 'PT Sans');
@@ -872,12 +872,14 @@ check(
   Boolean(straightGeometry) &&
     Math.abs((straightGeometry?.length ?? 0) - 30) < 0.01 &&
     Math.abs((straightGeometry?.width ?? 0) - 2) < 0.01 &&
-    Math.abs((straightGeometry?.rotation ?? 0) - 30) < 0.01,
+    Math.abs((straightGeometry?.rotation ?? 0) - 30) < 0.01 &&
+    straightGeometry?.cap === 'butt',
   JSON.stringify(straightGeometry),
 );
 check(
   'прямая линия экспортируется в SVG',
-  stampTemplateToSvg(straightTemplate, () => 'PT Sans').includes('<line'),
+  stampTemplateToSvg(straightTemplate, () => 'PT Sans').includes('<line') &&
+    stampTemplateToSvg(straightTemplate, () => 'PT Sans').includes('stroke-linecap="butt"'),
 );
 
 const normalizedLines = normalizeSealSettings({

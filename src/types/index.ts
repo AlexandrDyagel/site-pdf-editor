@@ -655,6 +655,8 @@ export interface SealStraightLine {
   width: number;
   /** Поворот вокруг центра, градусы. */
   rotation: number;
+  /** Форма концов линии. */
+  cap?: 'round' | 'butt';
   /** Свой цвет; null — цвет печати. */
   color?: string | null;
 }

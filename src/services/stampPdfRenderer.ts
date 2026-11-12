@@ -190,6 +190,7 @@ export async function drawStampToPdfPage(
         thickness: Math.max(0.1, line.width),
         color: rgb(r, g, b),
         opacity: alpha,
+        lineCap: line.cap === 'butt' ? LineCapStyle.Butt : LineCapStyle.Round,
       });
     }
   }

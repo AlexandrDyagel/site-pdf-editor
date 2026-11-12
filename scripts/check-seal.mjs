@@ -2420,6 +2420,7 @@ try {
     Array.from(document.querySelectorAll('[data-testid=seal-designer] [role=tab]'))
       .find((n) => n.textContent.trim() === 'Кольца')?.click();
     await new Promise((r) => setTimeout(r, 300));
+    t.seal.rings[1].gap = 5;
     document.querySelector('[data-testid=seal-ring-1]')?.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, button: 0, pointerId: 972 }));
     await new Promise((r) => setTimeout(r, 300));
     const gapBefore = t.seal.rings[1].gap;
@@ -2435,8 +2436,8 @@ try {
     keyboardMoves.arcAfter.radius > keyboardMoves.arcBefore.radius &&
       keyboardMoves.arcAfter.angle !== keyboardMoves.arcBefore.angle,
     JSON.stringify(keyboardMoves));
-  check('стрелка вверх увеличивает расстояние до кольца на 0.1 pt',
-    Math.abs((keyboardMoves.gapAfter - keyboardMoves.gapBefore) - 0.1) < 0.01,
+  check('стрелка вверх уменьшает расстояние до кольца на 0.1 pt',
+    Math.abs((keyboardMoves.gapAfter - keyboardMoves.gapBefore) + 0.1) < 0.01,
     JSON.stringify(keyboardMoves));
 
   const straight = await cdp.evaluate(`(async () => {
@@ -2577,10 +2578,152 @@ try {
       offsets: t.seal.lines.map((item) => item.radiusOffset),
     };
   })()`);
-  check('группа дугового текста прилипает к середине зазора',
+  check('группа дугового текста центрируется как единая группа',
     arcGroupSnap.circular === true &&
-      arcGroupSnap.offsets.every((offset) => Math.abs(offset) < 0.01),
+      Math.abs(
+        arcGroupSnap.offsets.reduce((sum, value) => sum + value, 0) /
+          Math.max(1, arcGroupSnap.offsets.length),
+      ) < 0.01 &&
+      arcGroupSnap.offsets.some((offset) => Math.abs(offset) > 0.05),
     JSON.stringify(arcGroupSnap));
+
+  console.log('\n24. Карточка линии, концы, поворот и прилипание логотипа');
+
+  const ringsLabels = await cdp.evaluate(`(async () => {
+    Array.from(document.querySelectorAll('[data-testid=seal-designer] [role=tab]'))
+      .find((n) => n.textContent.trim() === 'Кольца')?.click();
+    await new Promise((r) => setTimeout(r, 300));
+    const card = (index) => document.querySelector('[data-testid=seal-ring-' + index + ']');
+    return {
+      outer: card(0)?.textContent?.trim().slice(0, 20),
+      first: card(1)?.textContent?.trim().slice(0, 20),
+    };
+  })()`);
+  check('внешнее кольцо подписано, остальные нумеруются с 1',
+    ringsLabels.outer?.includes('Внешнее кольцо') && ringsLabels.first?.includes('Кольцо 1'),
+    JSON.stringify(ringsLabels));
+
+  const lineCard = await cdp.evaluate(`(async () => {
+    const card = document.querySelector('[data-testid=seal-straight-line-0]');
+    card?.click();
+    await new Promise((r) => setTimeout(r, 350));
+    const tab = Array.from(document.querySelectorAll('[data-testid=seal-designer] [role=tab]'))
+      .find((n) => n.getAttribute('aria-selected') === 'true')?.textContent.trim();
+    return { tab, active: card?.getAttribute('data-active') };
+  })()`);
+  check('при выборе линии открывается её карточка',
+    lineCard.tab === 'Линии' && lineCard.active === 'true', JSON.stringify(lineCard));
+
+  const lineRotation = await cdp.evaluate(`(async () => {
+    const t = window.__SEAL_DESIGNER__;
+    const slider = document.querySelector('[data-testid=seal-center-line-0-rotation] input');
+    if (slider) {
+      slider.value = '45';
+      slider.dispatchEvent(new Event('input', { bubbles: true }));
+    }
+    await new Promise((r) => setTimeout(r, 300));
+    return { exists: Boolean(slider), value: t.lines[0].rotation };
+  })()`);
+  check('у центрального текста есть ползунок поворота',
+    lineRotation.exists === true && Math.abs(lineRotation.value - 45) < 1,
+    JSON.stringify(lineRotation));
+
+  const objectRotation = await cdp.evaluate(`(async () => {
+    const t = window.__SEAL_DESIGNER__;
+    if (!t.logos?.length) {
+      const png = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAgAAAAIAQMAAAD+wSzIAAAABlBMVEX///+/v7+jQ3Y5AAAADklEQVQI12P4AIX8EAgALgAD/aNpbtEAAAAASUVORK5CYII=';
+      t.logos = [{ id: 'rot-logo', src: png, width: 20, height: 20, offsetX: 0, offsetY: 0, opacity: 1, rotation: 0 }];
+      t.logo = t.logos[0];
+      await new Promise((r) => setTimeout(r, 300));
+    }
+    Array.from(document.querySelectorAll('[data-testid=seal-designer] [role=tab]'))
+      .find((n) => n.textContent.trim() === 'Логотип')?.click();
+    await new Promise((r) => setTimeout(r, 300));
+    const logoSlider = document.querySelector('[data-testid=seal-logo-0-rotation] input');
+    if (logoSlider) {
+      logoSlider.value = '30';
+      logoSlider.dispatchEvent(new Event('input', { bubbles: true }));
+    }
+    Array.from(document.querySelectorAll('[data-testid=seal-designer] [role=tab]'))
+      .find((n) => n.textContent.trim() === 'Образец')?.click();
+    await new Promise((r) => setTimeout(r, 300));
+    const refSlider = document.querySelector('[data-testid=seal-reference-rotation] input');
+    if (refSlider) {
+      refSlider.value = '20';
+      refSlider.dispatchEvent(new Event('input', { bubbles: true }));
+    }
+    await new Promise((r) => setTimeout(r, 300));
+    return {
+      logoExists: Boolean(logoSlider),
+      logo: t.logos?.[0]?.rotation,
+      refExists: Boolean(refSlider),
+      ref: window.__SEAL_REFERENCE__.get()?.rotation,
+    };
+  })()`);
+  check('у логотипа и образца есть ползунки поворота',
+    objectRotation.logoExists && objectRotation.refExists &&
+      Math.abs(objectRotation.logo - 30) < 1 && Math.abs(objectRotation.ref - 20) < 1,
+    JSON.stringify(objectRotation));
+
+  const objectSnap = await cdp.evaluate(`(async () => {
+    const t = window.__SEAL_DESIGNER__;
+    t.logos[0].offsetX = 2;
+    t.logos[0].offsetY = 2;
+    t.logos[0].rotation = 0;
+    await new Promise((r) => setTimeout(r, 400));
+    const logo = window.__sealLayout().logo;
+    const point = window.__SEAL_PREVIEW__.client(logo.x + logo.width / 2, logo.y + logo.height / 2);
+    const canvas = document.querySelector('[data-testid=seal-preview-canvas]');
+    canvas.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, clientX: point.x, clientY: point.y, button: 0, pointerId: 1020 }));
+    window.dispatchEvent(new PointerEvent('pointermove', { bubbles: true, clientX: point.x + 1, clientY: point.y + 1, pointerId: 1020 }));
+    await new Promise((r) => setTimeout(r, 300));
+    const logoAxes = window.__SEAL_PREVIEW__.axes();
+    const logoOffsets = { x: t.logos[0].offsetX, y: t.logos[0].offsetY };
+    window.dispatchEvent(new PointerEvent('pointerup', { bubbles: true, pointerId: 1020 }));
+
+    window.__SEAL_REFERENCE__.set({ src: 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAgAAAAIAQMAAAD+wSzIAAAABlBMVEX///+/v7+jQ3Y5AAAADklEQVQI12P4AIX8EAgALgAD/aNpbtEAAAAASUVORK5CYII=', x: t.width / 2 + 2, y: t.height / 2 + 2, width: t.width * 0.7, height: t.height * 0.7, rotation: 0, opacity: 0.5, visible: true, locked: false });
+    await new Promise((r) => setTimeout(r, 500));
+    const refRect = document.querySelector('[data-testid=seal-reference-image]').getBoundingClientRect();
+    canvas.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, clientX: refRect.right - 4, clientY: refRect.top + 4, button: 0, pointerId: 1021 }));
+    window.dispatchEvent(new PointerEvent('pointermove', { bubbles: true, clientX: refRect.right - 3, clientY: refRect.top + 5, pointerId: 1021 }));
+    await new Promise((r) => setTimeout(r, 300));
+    const refAxes = window.__SEAL_PREVIEW__.axes();
+    const refCenter = window.__SEAL_REFERENCE__.get();
+    window.dispatchEvent(new PointerEvent('pointerup', { bubbles: true, pointerId: 1021 }));
+    return { logoAxes, logoOffsets, refAxes, refX: refCenter.x, refY: refCenter.y, center: t.width / 2 };
+  })()`);
+  check('логотип прилипает центром к осям',
+    objectSnap.logoAxes.vertical === true && objectSnap.logoAxes.horizontal === true &&
+      Math.abs(objectSnap.logoOffsets.x) < 0.01 && Math.abs(objectSnap.logoOffsets.y) < 0.01,
+    JSON.stringify(objectSnap));
+  check('образец прилипает центром к осям',
+    objectSnap.refAxes.vertical === true && objectSnap.refAxes.horizontal === true &&
+      Math.abs(objectSnap.refX - objectSnap.center) < 0.08 &&
+      Math.abs(objectSnap.refY - objectSnap.center) < 0.08,
+    JSON.stringify(objectSnap));
+
+  const lineSnap = await cdp.evaluate(`(async () => {
+    const t = window.__SEAL_DESIGNER__;
+    t.seal.straightLines[0].x = 2;
+    t.seal.straightLines[0].y = 2;
+    await new Promise((r) => setTimeout(r, 400));
+    const line = window.__sealLayout().seal.straightLines[0];
+    const point = window.__SEAL_PREVIEW__.client(
+      line.x1 + (line.x2 - line.x1) * 0.75,
+      line.y1 + (line.y2 - line.y1) * 0.75,
+    );
+    const canvas = document.querySelector('[data-testid=seal-preview-canvas]');
+    canvas.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, clientX: point.x, clientY: point.y, button: 0, pointerId: 1022 }));
+    window.dispatchEvent(new PointerEvent('pointermove', { bubbles: true, clientX: point.x + 1, clientY: point.y + 1, pointerId: 1022 }));
+    await new Promise((r) => setTimeout(r, 300));
+    const axes = window.__SEAL_PREVIEW__.axes();
+    window.dispatchEvent(new PointerEvent('pointerup', { bubbles: true, pointerId: 1022 }));
+    return { axes, x: t.seal.straightLines[0].x, y: t.seal.straightLines[0].y };
+  })()`);
+  check('центр прямой линии прилипает к осям',
+    lineSnap.axes.vertical === true && lineSnap.axes.horizontal === true &&
+      Math.abs(lineSnap.x) < 0.01 && Math.abs(lineSnap.y) < 0.01,
+    JSON.stringify(lineSnap));
 
   const centerRotate = await cdp.evaluate(`(async () => {
     const t = window.__SEAL_DESIGNER__;
@@ -2593,8 +2736,7 @@ try {
     const line = layout.lines[0];
     const p = window.__SEAL_PREVIEW__.client(line.x + line.width / 2, line.inkCenterY ?? line.baseline);
     const canvas = document.querySelector('[data-testid=seal-preview-canvas]');
-    canvas.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, clientX: p.x, clientY: p.y, button: 0, pointerId: 990 }));
-    canvas.dispatchEvent(new PointerEvent('pointerup', { bubbles: true, pointerId: 990 }));
+    document.querySelector('[data-testid=seal-center-card-0]')?.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, button: 0, pointerId: 990 }));
     await new Promise((r) => setTimeout(r, 300));
     const button = document.querySelector('[data-testid=seal-center-rotate]');
     if (!button) return { error: 'нет маркера поворота' };

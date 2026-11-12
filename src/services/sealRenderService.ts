@@ -138,6 +138,7 @@ export function createSealStraightLine(patch: Partial<SealStraightLine> = {}): S
     length: patch.length ?? 20,
     width: patch.width ?? 1,
     rotation: patch.rotation ?? 0,
+    cap: patch.cap ?? 'round',
     color: patch.color ?? null,
     ...patch,
   };
@@ -350,6 +351,7 @@ export function normalizeSealSettings(seal: SealSettings): SealSettings {
         length: clamp(line.length ?? 20, 1, 2000),
         width: clamp(line.width ?? 1, 0.1, 20),
         rotation: ((line.rotation ?? 0) % 360 + 360) % 360,
+        cap: line.cap === 'butt' ? 'butt' : 'round',
         color: line.color ?? null,
       }),
     );
@@ -719,6 +721,7 @@ export interface SealStraightLineGeometry {
   length: number;
   width: number;
   rotation: number;
+  cap: 'round' | 'butt';
   color: string;
 }
 
@@ -1199,6 +1202,7 @@ export function computeSealParts(
       length,
       width: lineWidth,
       rotation: line.rotation,
+      cap: line.cap === 'butt' ? 'butt' : 'round',
       color: line.color || color,
     };
   });

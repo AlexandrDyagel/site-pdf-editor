@@ -535,7 +535,7 @@ function nudgeSelection(dx: number, dy: number): boolean {
     const index = selectedRingIndex.value;
     const ring = template.value.seal.rings[index];
     if (!ring) return false;
-    const step = dy < 0 ? 0.1 : dy > 0 ? -0.1 : 0;
+    const step = dy < 0 ? -0.1 : dy > 0 ? 0.1 : 0;
     if (step === 0) return false;
     template.value.seal.rings[index] = {
       ...ring,
@@ -965,9 +965,42 @@ function onGroupMove(dx: number, dy: number): void {
         let deltaAngle = newAngle - geometry.centerAngle;
         deltaAngle = ((deltaAngle % 360) + 540) % 360 - 180;
         line.radiusOffset = Math.round((line.radiusOffset + newRadius - geometry.radius) * 10) / 10;
-        // Группа дугового текста тоже притягивается к середине зазора.
-        if (Math.abs(line.radiusOffset) < 0.9) line.radiusOffset = 0;
         line.angleOffset = Math.round((((line.angleOffset + deltaAngle + 180) % 360) + 360) % 360 - 180);
+      }
+    }
+    // Группа дугового текста прилипает к середине зазора своим общим
+    // центром между верхней и нижней границей букв — строки не съезжаются.
+    if (selection.lines.length > 1) {
+      const layout = computeStampLayout(template.value, (id) => fonts.familyOf(id));
+      const bySlot = new Map<number, NonNullable<typeof layout.seal>['ringLines']>();
+      for (const lineId of selection.lines) {
+        const geometry = layout.seal?.ringLines.find((item) => item.lineId === lineId);
+        if (!geometry) continue;
+        const bucket = bySlot.get(geometry.slot) ?? [];
+        bucket.push(geometry);
+        bySlot.set(geometry.slot, bucket);
+      }
+      for (const [slotIndex, geometries] of bySlot) {
+        const slot = layout.seal?.slots[slotIndex];
+        if (!slot || geometries.length < 2) continue;
+        let outer = Number.NEGATIVE_INFINITY;
+        let inner = Number.POSITIVE_INFINITY;
+        for (const geometry of geometries) {
+          const ascent = geometry.fontSize * 0.72;
+          const descent = geometry.fontSize * 0.2;
+          const outerEdge = geometry.radius + (geometry.side === 'top' ? ascent : descent);
+          const innerEdge = geometry.radius - (geometry.side === 'top' ? descent : ascent);
+          outer = Math.max(outer, outerEdge);
+          inner = Math.min(inner, innerEdge);
+        }
+        const groupCenter = (outer + inner) / 2;
+        if (Math.abs(groupCenter - slot.center) < 1.2) {
+          const shift = Math.round((slot.center - groupCenter) * 10) / 10;
+          for (const geometry of geometries) {
+            const line = settings.lines.find((item) => item.id === geometry.lineId);
+            if (line) line.radiusOffset = Math.round((line.radiusOffset + shift) * 10) / 10;
+          }
+        }
       }
     }
     for (const layoutIndex of selection.centers) {
@@ -1002,8 +1035,8 @@ function onGroupMove(dx: number, dy: number): void {
         const groupX = (left + right) / 2;
         const groupY = (top + bottom) / 2;
         const center = sizeCenter();
-        const snapX = Math.abs(groupX - center) < 1.2 ? center - groupX : 0;
-        const snapY = Math.abs(groupY - center) < 1.2 ? center - groupY : 0;
+        const snapX = Math.abs(groupX - center) < 2.5 ? center - groupX : 0;
+        const snapY = Math.abs(groupY - center) < 2.5 ? center - groupY : 0;
         if (snapX !== 0 || snapY !== 0) {
           for (const layoutIndex of selection.centers) {
             const index = templateCenterIndex(layoutIndex);
@@ -1177,6 +1210,13 @@ function selectStraightLine(lineId: string): void {
   selectedLogoIndex.value = null;
   selectedReference.value = false;
   tab.value = 'lines';
+  void nextTick(() => {
+    const index = straightLines.value.findIndex((item) => item.id === lineId);
+    if (index < 0) return;
+    rightColumn.value
+      ?.querySelector(`[data-testid="seal-straight-line-${index}"]`)
+      ?.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+  });
 }
 
 function updateLine(lineId: string, patch: Partial<SealRingLine>): void {  const settings = template.value.seal;
@@ -1556,6 +1596,11 @@ function toggleReference(): void {
 function setReferenceOpacity(value: number): void {
   if (!reference.value) return;
   reference.value = { ...reference.value, opacity: Math.min(1, Math.max(0.05, value)) };
+}
+
+function setReferenceRotation(value: number): void {
+  if (!reference.value) return;
+  reference.value = { ...reference.value, rotation: ((value % 360) + 360) % 360 };
 }
 
 /** Замок образца: клики по нему больше не выбирают и не двигают его. */
@@ -1976,7 +2021,7 @@ function onPickEnd(color: string | null): void {
                 <span
                   class="text-[11px] font-medium uppercase tracking-wide text-slate-500 dark:text-slate-400"
                 >
-                  Кольцо {{ index + 1 }}
+                  {{ index === 0 ? 'Внешнее кольцо' : `Кольцо ${index}` }}
                 </span>
                 <AppButton
                   size="xs"
@@ -2181,6 +2226,16 @@ function onPickEnd(color: string | null): void {
                   :data-testid="`seal-center-line-${index}-word`"
                   @update:model-value="updateCenterLine(index, { wordSpacing: Number($event) || 0 })"
                 />
+                <AppSlider
+                  :model-value="line.rotation ?? 0"
+                  label="Поворот"
+                  unit="°"
+                  :min="0"
+                  :max="359"
+                  :step="1"
+                  :data-testid="`seal-center-line-${index}-rotation`"
+                  @update:model-value="updateCenterLine(index, { rotation: Number($event) })"
+                />
                 <div class="flex items-end text-[11px] leading-tight text-slate-400">
                   Клик по строке на превью — маркеры растяжения; строку можно перетащить.
                 </div>
@@ -2198,7 +2253,7 @@ function onPickEnd(color: string | null): void {
                 Линия
               </AppButton>
             </div>
-            <div v-for="(line, index) in straightLines" :key="line.id" class="space-y-2 rounded-lg border border-slate-200 px-2.5 py-2 dark:border-slate-700" :class="selectedStraightLineId === line.id ? 'border-brand-400' : ''" :data-testid="`seal-straight-line-${index}`" @click="selectStraightLine(line.id)">
+            <div v-for="(line, index) in straightLines" :key="line.id" class="space-y-2 rounded-lg border border-slate-200 px-2.5 py-2 dark:border-slate-700" :class="selectedStraightLineId === line.id ? 'border-brand-400' : ''" :data-testid="`seal-straight-line-${index}`" :data-active="selectedStraightLineId === line.id ? 'true' : 'false'" @click="selectStraightLine(line.id)">
               <div class="flex items-center justify-between gap-2">
                 <span class="text-[12px] font-medium">Линия {{ index + 1 }}</span>
                 <AppButton size="xs" variant="ghost" icon="trash" :data-testid="`seal-straight-line-remove-${index}`" @click.stop="removeStraightLine(line.id)" />
@@ -2206,6 +2261,13 @@ function onPickEnd(color: string | null): void {
               <AppSlider :model-value="line.width" label="Толщина" unit="pt" :min="0.1" :max="10" :step="0.1" :precision="1" @update:model-value="updateStraightLine(line.id, { width: Number($event) })" />
               <AppSlider :model-value="line.length" label="Длина" unit="pt" :min="2" :max="200" :step="0.5" :precision="1" @update:model-value="updateStraightLine(line.id, { length: Number($event) })" />
               <AppSlider :model-value="line.rotation" label="Поворот" unit="°" :min="0" :max="359" :step="1" @update:model-value="updateStraightLine(line.id, { rotation: Number($event) })" />
+              <AppSelect
+                :model-value="line.cap ?? 'round'"
+                label="Концы линии"
+                size="sm"
+                :options="[{ value: 'round', label: 'Закруглённые' }, { value: 'butt', label: 'Прямые' }]"
+                @update:model-value="updateStraightLine(line.id, { cap: String($event) === 'butt' ? 'butt' : 'round' })"
+              />
             </div>
             <p v-if="straightLines.length" class="text-[11px] text-slate-400">
               Тяните за конец — второй конец остаётся на месте; красная линия покажет расстояние
@@ -2267,6 +2329,16 @@ function onPickEnd(color: string | null): void {
                   :step="0.05"
                   :precision="2"
                   @update:model-value="updateLogo(index, { opacity: Number($event) })"
+                />
+                <AppSlider
+                  :model-value="logo.rotation ?? 0"
+                  label="Поворот"
+                  unit="°"
+                  :min="0"
+                  :max="359"
+                  :step="1"
+                  :data-testid="`seal-logo-${index}-rotation`"
+                  @update:model-value="updateLogo(index, { rotation: Number($event) })"
                 />
               </div>
               <AppButton size="sm" icon="upload" block data-testid="seal-logo-add" @click="uploadLogo">
@@ -2356,6 +2428,16 @@ function onPickEnd(color: string | null): void {
                 :precision="2"
                 data-testid="seal-reference-opacity"
                 @update:model-value="setReferenceOpacity(Number($event))"
+              />
+              <AppSlider
+                :model-value="reference.rotation"
+                label="Поворот"
+                unit="°"
+                :min="0"
+                :max="359"
+                :step="1"
+                data-testid="seal-reference-rotation"
+                @update:model-value="setReferenceRotation(Number($event))"
               />
               <p class="text-[11px] text-slate-400">
                 Образец лежит под оттиском: тяните за видимую часть, растягивайте за углы
