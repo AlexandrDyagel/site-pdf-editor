@@ -30,6 +30,7 @@ import type {
   SealRingLine,
   SealSettings,
   SealStraightLine,
+  SealSymbol,
   StampLogo,
   StampTemplate,
 } from '@/types';
@@ -144,6 +145,20 @@ export function createSealStraightLine(patch: Partial<SealStraightLine> = {}): S
   };
 }
 
+/** Новый символ на печати. */
+export function createSealSymbol(patch: Partial<SealSymbol> = {}): SealSymbol {
+  return {
+    id: patch.id ?? createId('sealsymbol'),
+    char: patch.char ?? '★',
+    x: patch.x ?? 0,
+    y: patch.y ?? 0,
+    fontSize: patch.fontSize ?? 10,
+    rotation: patch.rotation ?? 0,
+    color: patch.color ?? null,
+    ...patch,
+  };
+}
+
 export function createSealSettings(patch: Partial<SealSettings> = {}): SealSettings {
   return {
     diameterMm: SEAL_DEFAULT_MM,
@@ -168,6 +183,7 @@ export function createSealSettings(patch: Partial<SealSettings> = {}): SealSetti
       }),
     ],
     straightLines: [],
+    symbols: [],
     divider: { enabled: false, radius: 0, width: 1.2 },
     ink: createSealInk(),
     ...patch,
@@ -356,11 +372,27 @@ export function normalizeSealSettings(seal: SealSettings): SealSettings {
       }),
     );
 
+  const symbols = (seal.symbols ?? [])
+    .slice(0, 80)
+    .filter((item) => String(item.char ?? '').trim().length > 0)
+    .map((item) =>
+      createSealSymbol({
+        id: item.id || createId('sealsymbol'),
+        char: String(item.char).slice(0, 4),
+        x: clamp(item.x ?? 0, -2000, 2000),
+        y: clamp(item.y ?? 0, -2000, 2000),
+        fontSize: clamp(item.fontSize ?? 10, 1, 200),
+        rotation: ((item.rotation ?? 0) % 360 + 360) % 360,
+        color: item.color ?? null,
+      }),
+    );
+
   return {
     diameterMm: clamp(seal.diameterMm, SEAL_MIN_MM, SEAL_MAX_MM),
     rings,
     lines,
     straightLines,
+    symbols,
     version: 2,
     divider: {
       enabled: Boolean(seal.divider?.enabled),
@@ -725,6 +757,17 @@ export interface SealStraightLineGeometry {
   color: string;
 }
 
+/** Геометрия символа печати. */
+export interface SealSymbolGeometry {
+  symbolId: string;
+  char: string;
+  cx: number;
+  cy: number;
+  fontSize: number;
+  rotation: number;
+  color: string;
+}
+
 /** Полная геометрия печати в координатах шаблона. */
 export interface SealLogoGeometry {
   src: string;
@@ -745,6 +788,8 @@ export interface SealParts {
   ringLines: SealRingLineGeometry[];
   /** Прямые линии на печати. */
   straightLines: SealStraightLineGeometry[];
+  /** Символы на печати. */
+  symbols: SealSymbolGeometry[];
   /** Зазоры между кольцами — нужны интерфейсу конструктора. */
   slots: SealSlotGeometry[];
   lines: StampLineLayout[];
@@ -1207,12 +1252,24 @@ export function computeSealParts(
     };
   });
 
+  // --- Символы ------------------------------------------------------------
+  const symbols: SealSymbolGeometry[] = (seal.symbols ?? []).map((symbol) => ({
+    symbolId: symbol.id,
+    char: symbol.char,
+    cx: cx + symbol.x * k,
+    cy: cy + symbol.y * k,
+    fontSize: Math.max(1, symbol.fontSize * k),
+    rotation: symbol.rotation,
+    color: symbol.color || color,
+  }));
+
   return {
     width,
     height,
     ink: { ink: seal.ink, rings, ghostRings, specks, divider },
     ringLines,
     straightLines,
+    symbols,
     slots: slotGeometry,
     lines,
     logos,

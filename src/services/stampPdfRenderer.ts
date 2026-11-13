@@ -193,6 +193,21 @@ export async function drawStampToPdfPage(
         lineCap: line.cap === 'butt' ? LineCapStyle.Butt : LineCapStyle.Round,
       });
     }
+    for (const symbol of layout.seal.symbols) {
+      const font = await ctx.embedFont(template.fontId, false, false);
+      const { r, g, b } = hexToRgb(symbol.color);
+      const point = ctx.toPdf(symbol.cx, symbol.cy);
+      const width = font.widthOfTextAtSize(symbol.char, symbol.fontSize);
+      page.drawText(symbol.char, {
+        x: point.x - width / 2,
+        y: point.y - symbol.fontSize * 0.34,
+        size: symbol.fontSize,
+        font,
+        color: rgb(r, g, b),
+        opacity: alpha,
+        rotate: degrees(ctx.rotate + symbol.rotation),
+      });
+    }
   }
 
   // Разделитель.

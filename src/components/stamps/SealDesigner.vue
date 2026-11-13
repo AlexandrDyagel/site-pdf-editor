@@ -17,6 +17,7 @@ import type {
   SealMultiSelection,
   SealRingLine,
   SealStraightLine,
+  SealSymbol,
   StampLogo,
   StampTemplate,
   StampTextLine,
@@ -31,6 +32,7 @@ import {
   createSealRingLine,
   createSealSettings,
   createSealStraightLine,
+  createSealSymbol,
   normalizeSealSettings,
   sealDiameterMm,
   sealDiameterPx,
@@ -157,6 +159,7 @@ const tabs = [
   { id: 'text', label: 'Текст', icon: 'type' },
   { id: 'center', label: 'Центр', icon: 'seal' },
   { id: 'lines', label: 'Линии', icon: 'line' },
+  { id: 'symbols', label: 'Символ', icon: 'star' },
   { id: 'logo', label: 'Логотип', icon: 'image' },
   { id: 'sample', label: 'Образец', icon: 'layers' },
   { id: 'ink', label: 'Краска', icon: 'sliders' },
@@ -173,6 +176,7 @@ const fontOptions = computed(() =>
 /** Настройки печати (они всегда есть у открытого конструктора). */
 const seal = computed(() => template.value.seal ?? createSealSettings());
 const straightLines = computed<SealStraightLine[]>(() => template.value.seal?.straightLines ?? []);
+const sealSymbols = computed<SealSymbol[]>(() => template.value.seal?.symbols ?? []);
 const diameterPx = computed(() => sealDiameterPx(seal.value.diameterMm));
 const maxArcRadius = computed(() => Math.round(diameterPx.value / 2));
 
@@ -930,7 +934,10 @@ function selectLogo(index = 0): void {
 /** Выделение группы: снимаем одиночный фокус, чтобы не путать маркеры. */
 function onSelectionChange(selection: SealMultiSelection | null): void {
   multiSelection.value = selection;
-  if (!selection) return;
+  if (!selection) {
+    clearSelection();
+    return;
+  }
   selectedLineId.value = null;
   selectedCenterIndex.value = null;
   selectedRingIndex.value = null;
@@ -944,6 +951,8 @@ function onSelectionChange(selection: SealMultiSelection | null): void {
 function onGroupMove(dx: number, dy: number): void {
   const selection = multiSelection.value;
   if (!selection) return;
+  let groupSnapX = 0;
+  let groupSnapY = 0;
   const settings = template.value.seal;
   if (settings) {
     if (selection.lines.length > 0) {
@@ -1035,9 +1044,11 @@ function onGroupMove(dx: number, dy: number): void {
         const groupX = (left + right) / 2;
         const groupY = (top + bottom) / 2;
         const center = sizeCenter();
-        const snapX = Math.abs(groupX - center) < 2.5 ? center - groupX : 0;
-        const snapY = Math.abs(groupY - center) < 2.5 ? center - groupY : 0;
+        const snapX = Math.abs(groupX - center) < 1.2 ? center - groupX : 0;
+        const snapY = Math.abs(groupY - center) < 1.2 ? center - groupY : 0;
         if (snapX !== 0 || snapY !== 0) {
+          groupSnapX = snapX;
+          groupSnapY = snapY;
           for (const layoutIndex of selection.centers) {
             const index = templateCenterIndex(layoutIndex);
             const line = template.value.lines[index];
@@ -1056,8 +1067,8 @@ function onGroupMove(dx: number, dy: number): void {
     const logo = stampLogos.value[index];
     if (!logo) continue;
     updateLogo(index, {
-      offsetX: Math.round((logo.offsetX + dx) * 10) / 10,
-      offsetY: Math.round((logo.offsetY + dy) * 10) / 10,
+      offsetX: Math.round((logo.offsetX + dx + groupSnapX) * 10) / 10,
+      offsetY: Math.round((logo.offsetY + dy + groupSnapY) * 10) / 10,
     });
   }
   if (template.value.seal && selection.strokes.length > 0) {
@@ -1065,8 +1076,8 @@ function onGroupMove(dx: number, dy: number): void {
       selection.strokes.includes(line.id)
         ? {
             ...line,
-            x: Math.round((line.x + dx) * 10) / 10,
-            y: Math.round((line.y + dy) * 10) / 10,
+            x: Math.round((line.x + dx + groupSnapX) * 10) / 10,
+            y: Math.round((line.y + dy + groupSnapY) * 10) / 10,
           }
         : line,
     );
@@ -1200,6 +1211,36 @@ function removeStraightLine(lineId: string): void {
   if (selectedStraightLineId.value === lineId) selectedStraightLineId.value = null;
 }
 
+function addSealSymbol(char = '★'): void {
+  const settings = template.value.seal;
+  if (!settings) return;
+  settings.symbols = [
+    ...(settings.symbols ?? []),
+    createSealSymbol({
+      char,
+      x: 0,
+      y: 0,
+      fontSize: Math.max(6, Math.round(sizeCenter() * 0.16 * 10) / 10),
+      rotation: 0,
+    }),
+  ];
+  tab.value = 'symbols';
+}
+
+function updateSealSymbol(symbolId: string, patch: Partial<SealSymbol>): void {
+  const settings = template.value.seal;
+  if (!settings) return;
+  settings.symbols = (settings.symbols ?? []).map((symbol) =>
+    symbol.id === symbolId ? { ...symbol, ...patch } : symbol,
+  );
+}
+
+function removeSealSymbol(symbolId: string): void {
+  const settings = template.value.seal;
+  if (!settings) return;
+  settings.symbols = (settings.symbols ?? []).filter((symbol) => symbol.id !== symbolId);
+}
+
 function selectStraightLine(lineId: string): void {
   multiSelection.value = null;
   selectedStraightLineId.value = lineId;
@@ -1314,6 +1355,15 @@ async function onTextHit(lineId: string): Promise<void> {
       `[data-testid="seal-line-${index}-text"] input`,
     ),
   );
+}
+
+/** Удалить строку центра из контекстного меню (индекс видимой строки). */
+function onCenterMenuDelete(layoutIndex: number): void {
+  const visible = template.value.lines.filter((line) => line.text.trim().length > 0);
+  const line = visible[layoutIndex];
+  if (!line) return;
+  const index = template.value.lines.indexOf(line);
+  if (index >= 0) removeCenterLine(index);
 }
 
 /** Двойной клик по строке центра. */
@@ -1543,6 +1593,7 @@ function selectReference(): void {
   selectedRingIndex.value = null;
   selectedLogo.value = false;
   selectedLogoIndex.value = null;
+  selectedStraightLineId.value = null;
   tab.value = 'sample';
   void nextTick(() => {
     rightColumn.value
@@ -1901,6 +1952,8 @@ function onPickEnd(color: string | null): void {
             @zoom-change="zoomByFactor"
             @edit-line="onTextHit"
             @delete-line="deleteLine"
+            @center-edit="onCenterHit"
+            @center-delete="onCenterMenuDelete"
           />
         </div>
 
@@ -2021,7 +2074,7 @@ function onPickEnd(color: string | null): void {
                 <span
                   class="text-[11px] font-medium uppercase tracking-wide text-slate-500 dark:text-slate-400"
                 >
-                  {{ index === 0 ? 'Внешнее кольцо' : `Кольцо ${index}` }}
+                  {{ index === 0 ? 'Внешнее кольцо' : `Внутреннее кольцо ${index}` }}
                 </span>
                 <AppButton
                   size="xs"
@@ -2253,7 +2306,7 @@ function onPickEnd(color: string | null): void {
                 Линия
               </AppButton>
             </div>
-            <div v-for="(line, index) in straightLines" :key="line.id" class="space-y-2 rounded-lg border border-slate-200 px-2.5 py-2 dark:border-slate-700" :class="selectedStraightLineId === line.id ? 'border-brand-400' : ''" :data-testid="`seal-straight-line-${index}`" :data-active="selectedStraightLineId === line.id ? 'true' : 'false'" @click="selectStraightLine(line.id)">
+            <div v-for="(line, index) in straightLines" :key="line.id" class="space-y-2 rounded-lg border border-slate-200 px-2.5 py-2 dark:border-slate-700" :class="selectedStraightLineId === line.id ? 'border-brand-400 bg-brand-50/70 ring-1 ring-brand-400 dark:bg-brand-500/10' : ''" :data-testid="`seal-straight-line-${index}`" :data-active="selectedStraightLineId === line.id ? 'true' : 'false'" @click="selectStraightLine(line.id)">
               <div class="flex items-center justify-between gap-2">
                 <span class="text-[12px] font-medium">Линия {{ index + 1 }}</span>
                 <AppButton size="xs" variant="ghost" icon="trash" :data-testid="`seal-straight-line-remove-${index}`" @click.stop="removeStraightLine(line.id)" />
@@ -2277,6 +2330,105 @@ function onPickEnd(color: string | null): void {
             <p v-else class="text-[11px] text-slate-400">
               Добавьте линию, задайте толщину и тяните за концы. Линия входит в печать, PDF и
               библиотеку вместе с остальными объектами.
+            </p>
+          </AppSection>
+        </div>
+
+        <!-- Символы -->
+        <div v-show="tab === 'symbols'" class="space-y-3" data-testid="seal-symbols-tab">
+          <AppSection title="Символы на печати" icon="star">
+            <div class="flex flex-wrap items-center gap-1.5">
+              <AppButton
+                v-for="preset in ['★', '✦', '✚', '❖', '♦', '●']"
+                :key="preset"
+                size="xs"
+                variant="secondary"
+                :data-testid="`seal-symbol-add-${preset}`"
+                @click="addSealSymbol(preset)"
+              >
+                {{ preset }}
+              </AppButton>
+            </div>
+            <div
+              v-for="(symbol, index) in sealSymbols"
+              :key="symbol.id"
+              class="mt-2 space-y-2 rounded-lg border border-slate-200 px-2.5 py-2 dark:border-slate-700"
+              :data-testid="`seal-symbol-${index}`"
+            >
+              <div class="flex items-center justify-between gap-2">
+                <span class="text-[12px] font-medium">Символ {{ index + 1 }}</span>
+                <AppButton
+                  size="xs"
+                  variant="ghost"
+                  icon="trash"
+                  :data-testid="`seal-symbol-remove-${index}`"
+                  @click="removeSealSymbol(symbol.id)"
+                />
+              </div>
+              <div class="grid grid-cols-2 gap-2">
+                <AppInput
+                  :model-value="symbol.char"
+                  label="Символ"
+                  size="sm"
+                  :data-testid="`seal-symbol-${index}-char`"
+                  @update:model-value="updateSealSymbol(symbol.id, { char: String($event).slice(0, 4) })"
+                />
+                <AppInput
+                  :model-value="symbol.fontSize"
+                  label="Кегль, pt"
+                  type="number"
+                  size="sm"
+                  :min="2"
+                  :max="80"
+                  :step="0.5"
+                  :data-testid="`seal-symbol-${index}-size`"
+                  @update:model-value="updateSealSymbol(symbol.id, { fontSize: Number($event) || 10 })"
+                />
+              </div>
+              <AppSlider
+                :model-value="symbol.fontSize"
+                label="Размер"
+                unit="pt"
+                :min="2"
+                :max="80"
+                :step="0.5"
+                :precision="1"
+                @update:model-value="updateSealSymbol(symbol.id, { fontSize: Number($event) })"
+              />
+              <AppSlider
+                :model-value="symbol.rotation"
+                label="Поворот"
+                unit="°"
+                :min="0"
+                :max="359"
+                :step="1"
+                @update:model-value="updateSealSymbol(symbol.id, { rotation: Number($event) })"
+              />
+              <div class="grid grid-cols-2 gap-2">
+                <AppSlider
+                  :model-value="symbol.x"
+                  label="Смещение X"
+                  unit="pt"
+                  :min="-100"
+                  :max="100"
+                  :step="0.5"
+                  :precision="1"
+                  @update:model-value="updateSealSymbol(symbol.id, { x: Number($event) })"
+                />
+                <AppSlider
+                  :model-value="symbol.y"
+                  label="Смещение Y"
+                  unit="pt"
+                  :min="-100"
+                  :max="100"
+                  :step="0.5"
+                  :precision="1"
+                  @update:model-value="updateSealSymbol(symbol.id, { y: Number($event) })"
+                />
+              </div>
+            </div>
+            <p v-if="sealSymbols.length === 0" class="mt-2 text-[11px] text-slate-400">
+              Нажмите на символ выше — он появится в центре печати.
             </p>
           </AppSection>
         </div>

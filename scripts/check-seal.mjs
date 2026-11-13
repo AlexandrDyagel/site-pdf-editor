@@ -833,7 +833,7 @@ try {
     window.__sealLayout = () => stamp.computeStampLayout(window.__SEAL_DESIGNER__, (id) => window.__PDF_EDITOR__.fonts.familyOf(id));
     window.__ringPoint = (index = 0) => {
       const ring = window.__sealLayout().seal.ink.rings[index];
-      return window.__SEAL_PREVIEW__.client(ring.cx - ring.radius, ring.cy);
+      return window.__SEAL_PREVIEW__.client(ring.cx, ring.cy - ring.radius);
     };
     window.__centerPoint = (index = 0) => {
       const line = window.__sealLayout().lines[index];
@@ -2600,7 +2600,7 @@ try {
     };
   })()`);
   check('внешнее кольцо подписано, остальные нумеруются с 1',
-    ringsLabels.outer?.includes('Внешнее кольцо') && ringsLabels.first?.includes('Кольцо 1'),
+    ringsLabels.outer?.includes('Внешнее кольцо') && ringsLabels.first?.includes('Внутреннее кольцо 1'),
     JSON.stringify(ringsLabels));
 
   const lineCard = await cdp.evaluate(`(async () => {
@@ -2724,6 +2724,297 @@ try {
     lineSnap.axes.vertical === true && lineSnap.axes.horizontal === true &&
       Math.abs(lineSnap.x) < 0.01 && Math.abs(lineSnap.y) < 0.01,
     JSON.stringify(lineSnap));
+
+  console.log('\n25. Снятие выделения, центр текста, меню, символы и зум');
+
+  const selectionCleanup = await cdp.evaluate(`(async () => {
+    const t = window.__SEAL_DESIGNER__;
+    t.logos = [];
+    t.logo = null;
+    const sampleLine = t.seal.straightLines?.[0];
+    if (sampleLine) {
+      sampleLine.x = 80;
+      sampleLine.y = 40;
+      sampleLine.rotation = 0;
+    }
+    t.lines.forEach((line) => { line.rotation = 0; line.offsetX = 0; line.offsetY = 0; });
+    if (window.__SEAL_REFERENCE__.get()) {
+      window.__SEAL_REFERENCE__.set({ ...window.__SEAL_REFERENCE__.get(), visible: false });
+    }
+    const canvas = document.querySelector('[data-testid=seal-preview-canvas]');
+    const state = () => window.__SEAL_DESIGNER_STATE__.get();
+    Array.from(document.querySelectorAll('[data-testid=seal-designer] [role=tab]'))
+      .find((n) => n.textContent.trim() === 'Текст')?.click();
+    await new Promise((r) => setTimeout(r, 300));
+    const chooseArc = async (index) => {
+      const arcs = window.__sealLayout().seal.ringLines.filter((item) => item.chars.length > 0);
+      const arc = arcs[index] ?? arcs[0];
+      if (!arc) return null;
+      const char = arc.chars[Math.floor(arc.chars.length / 2)];
+      if (!char) return null;
+      const candidates = [
+        [char.x, char.y],
+        [char.x, char.y - char.fontSize * 0.25],
+        [char.x, char.y + char.fontSize * 0.25],
+        [char.x - char.fontSize * 0.2, char.y],
+        [char.x + char.fontSize * 0.2, char.y],
+      ];
+      for (const [x, y] of candidates) {
+        const p = window.__SEAL_PREVIEW__.client(x, y);
+        canvas.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, clientX: p.x, clientY: p.y, button: 0, pointerId: 1100 + index }));
+        canvas.dispatchEvent(new PointerEvent('pointerup', { bubbles: true, pointerId: 1100 + index }));
+        await new Promise((r) => setTimeout(r, 200));
+        if (state().selectedLineId) break;
+      }
+      return state().selectedLineId;
+    };
+    const first = t.seal.lines[0].id;
+    const second = t.seal.lines[1].id;
+    await chooseArc(0);
+    const empty = window.__SEAL_PREVIEW__.client(4, 4);
+    canvas.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, clientX: empty.x, clientY: empty.y, button: 0, pointerId: 1103 }));
+    canvas.dispatchEvent(new PointerEvent('pointerup', { bubbles: true, pointerId: 1103 }));
+    await new Promise((r) => setTimeout(r, 300));
+    const afterEmpty = state();
+    await chooseArc(0);
+    const centerLine = window.__sealLayout().lines[0];
+    const centerPoint = window.__SEAL_PREVIEW__.client(centerLine.x + centerLine.width / 2, centerLine.inkCenterY ?? centerLine.baseline);
+    canvas.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, clientX: centerPoint.x, clientY: centerPoint.y, button: 0, pointerId: 1104 }));
+    canvas.dispatchEvent(new PointerEvent('pointerup', { bubbles: true, pointerId: 1104 }));
+    await new Promise((r) => setTimeout(r, 300));
+    const afterCenter = state();
+    await chooseArc(0);
+    const secondArc = await chooseArc(1);
+    return {
+      first,
+      second,
+      afterEmpty: { line: afterEmpty.selectedLineId, center: afterEmpty.selectedCenterIndex },
+      afterCenter: { line: afterCenter.selectedLineId, center: afterCenter.selectedCenterIndex },
+      secondArc,
+    };
+  })()`);
+  check('выделение дугового текста снимается кликом по пустому месту',
+    selectionCleanup.afterEmpty.line === null && selectionCleanup.afterEmpty.center === null,
+    JSON.stringify(selectionCleanup));
+  check('клик по другому тексту/дуге выбирает именно его',
+    selectionCleanup.afterCenter.line === null &&
+      selectionCleanup.afterCenter.center !== null &&
+      selectionCleanup.secondArc === selectionCleanup.second,
+    JSON.stringify(selectionCleanup));
+
+  const centerExact = await cdp.evaluate(`(async () => {
+    const t = window.__SEAL_DESIGNER__;
+    const canvas = document.querySelector('[data-testid=seal-preview-canvas]');
+    const layout = window.__sealLayout();
+    const line = layout.lines[0];
+    const target = t.width / 2;
+    t.lines[0].offsetX = target - (line.x + line.width / 2) + 1;
+    t.lines[0].offsetY = target - (line.inkCenterY ?? line.baseline) + 1;
+    await new Promise((r) => setTimeout(r, 400));
+    const point = window.__SEAL_PREVIEW__.client(line.x + line.width / 2, line.inkCenterY ?? line.baseline);
+    canvas.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, clientX: point.x, clientY: point.y, button: 0, pointerId: 1105 }));
+    window.dispatchEvent(new PointerEvent('pointermove', { bubbles: true, clientX: point.x - 0.5, clientY: point.y - 0.5, pointerId: 1105 }));
+    await new Promise((r) => setTimeout(r, 300));
+    const axes = window.__SEAL_PREVIEW__.axes();
+    window.dispatchEvent(new PointerEvent('pointerup', { bubbles: true, pointerId: 1105 }));
+    await new Promise((r) => setTimeout(r, 300));
+    const moved = window.__sealLayout().lines[0];
+    return {
+      axes,
+      lines: t.lines.filter((item) => item.text.trim()).length,
+      dx: Math.abs(moved.x + moved.width / 2 - t.width / 2),
+      dy: Math.abs((moved.inkCenterY ?? moved.baseline) - t.height / 2),
+    };
+  })()`);
+  check('центр текста прилипает ровно серединой маркера к обеим осям',
+    centerExact.axes.horizontal === true && centerExact.dx < 0.15 && centerExact.dy < 0.15,
+    JSON.stringify(centerExact));
+
+  const centerMenu = await cdp.evaluate(`(async () => {
+    const canvas = document.querySelector('[data-testid=seal-preview-canvas]');
+    const layout = window.__sealLayout().lines[0];
+    const point = window.__SEAL_PREVIEW__.client(layout.x + layout.width / 2, layout.inkCenterY ?? layout.baseline);
+    canvas.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true, clientX: point.x, clientY: point.y }));
+    await new Promise((r) => setTimeout(r, 300));
+    const menu = document.querySelector('[data-testid=seal-text-menu]');
+    const edit = document.querySelector('[data-testid=seal-menu-center-edit]');
+    const del = document.querySelector('[data-testid=seal-menu-center-delete]');
+    edit?.click();
+    await new Promise((r) => setTimeout(r, 300));
+    const active = document.activeElement;
+    const focused = active?.tagName === 'TEXTAREA' || active?.tagName === 'INPUT';
+    return { menu: Boolean(menu), edit: Boolean(edit), del: Boolean(del), focused };
+  })()`);
+  check('у строки центра есть меню Редактировать/Удалить',
+    centerMenu.menu && centerMenu.edit && centerMenu.del && centerMenu.focused,
+    JSON.stringify(centerMenu));
+
+  const groupWithLine = await cdp.evaluate(`(async () => {
+    const t = window.__SEAL_DESIGNER__;
+    t.lines[0].offsetX = 0;
+    t.lines[0].offsetY = 0;
+    t.seal.straightLines[0].x = 70;
+    t.seal.straightLines[0].y = 25;
+    t.seal.straightLines[0].rotation = 0;
+    await new Promise((r) => setTimeout(r, 400));
+    const canvas = document.querySelector('[data-testid=seal-preview-canvas]');
+    const state = () => window.__SEAL_DESIGNER_STATE__.get();
+    const startCorner = window.__SEAL_PREVIEW__.client(3, 3);
+    const endCorner = window.__SEAL_PREVIEW__.client(t.width - 3, t.height - 3);
+    canvas.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, clientX: startCorner.x, clientY: startCorner.y, button: 0, pointerId: 1201 }));
+    window.dispatchEvent(new PointerEvent('pointermove', { bubbles: true, clientX: endCorner.x, clientY: endCorner.y, pointerId: 1201 }));
+    window.dispatchEvent(new PointerEvent('pointerup', { bubbles: true, pointerId: 1201 }));
+    await new Promise((r) => setTimeout(r, 400));
+    const selection = state().multi;
+    const line = window.__sealLayout().seal.straightLines[0];
+    const before = {
+      centerX: t.lines[0].offsetX ?? 0,
+      centerY: t.lines[0].offsetY,
+      lineX: t.seal.straightLines[0].x,
+      lineY: t.seal.straightLines[0].y,
+    };
+    const start = window.__SEAL_PREVIEW__.client(
+      line.x1 + (line.x2 - line.x1) * 0.75,
+      line.y1 + (line.y2 - line.y1) * 0.75,
+    );
+    canvas.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, clientX: start.x, clientY: start.y, button: 0, pointerId: 1203 }));
+    window.dispatchEvent(new PointerEvent('pointermove', { bubbles: true, clientX: start.x + 8, clientY: start.y + 4, pointerId: 1203 }));
+    await new Promise((r) => setTimeout(r, 300));
+    window.dispatchEvent(new PointerEvent('pointerup', { bubbles: true, pointerId: 1203 }));
+    await new Promise((r) => setTimeout(r, 300));
+    const after = {
+      centerX: t.lines[0].offsetX ?? 0,
+      centerY: t.lines[0].offsetY,
+      lineX: t.seal.straightLines[0].x,
+      lineY: t.seal.straightLines[0].y,
+    };
+    return {
+      centers: selection?.centers.length ?? 0,
+      strokes: selection?.strokes.length ?? 0,
+      before,
+      after,
+    };
+  })()`);
+  check('группа из строки центра и линии двигается целиком',
+    groupWithLine.centers > 0 && groupWithLine.strokes > 0 &&
+      Math.abs((groupWithLine.after.centerX - groupWithLine.before.centerX) -
+        (groupWithLine.after.lineX - groupWithLine.before.lineX)) < 0.2 &&
+      Math.abs((groupWithLine.after.centerY - groupWithLine.before.centerY) -
+        (groupWithLine.after.lineY - groupWithLine.before.lineY)) < 0.2,
+    JSON.stringify(groupWithLine));
+
+  const rotatedHit = await cdp.evaluate(`(async () => {
+    const t = window.__SEAL_DESIGNER__;
+    const canvas = document.querySelector('[data-testid=seal-preview-canvas]');
+    const state = () => window.__SEAL_DESIGNER_STATE__.get();
+    t.lines[0].rotation = 90;
+    t.lines[0].offsetX = 0;
+    t.lines[0].offsetY = 0;
+    await new Promise((r) => setTimeout(r, 400));
+    const line = window.__sealLayout().lines[0];
+    const centerX = t.width / 2;
+    const centerY = line.inkCenterY ?? line.baseline;
+    const empty = window.__SEAL_PREVIEW__.client(4, 4);
+    canvas.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, clientX: empty.x, clientY: empty.y, button: 0, pointerId: 1210 }));
+    canvas.dispatchEvent(new PointerEvent('pointerup', { bubbles: true, pointerId: 1210 }));
+    await new Promise((r) => setTimeout(r, 200));
+    const oldArea = window.__SEAL_PREVIEW__.client(centerX - line.width / 2 - 2, centerY);
+    canvas.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, clientX: oldArea.x, clientY: oldArea.y, button: 0, pointerId: 1211 }));
+    canvas.dispatchEvent(new PointerEvent('pointerup', { bubbles: true, pointerId: 1211 }));
+    await new Promise((r) => setTimeout(r, 200));
+    const afterOld = state().selectedCenterIndex;
+    const actual = window.__SEAL_PREVIEW__.client(centerX, centerY + line.width / 2 - 3);
+    canvas.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, clientX: actual.x, clientY: actual.y, button: 0, pointerId: 1212 }));
+    canvas.dispatchEvent(new PointerEvent('pointerup', { bubbles: true, pointerId: 1212 }));
+    await new Promise((r) => setTimeout(r, 200));
+    const afterActual = state().selectedCenterIndex;
+    t.lines[0].rotation = 0;
+    return { afterOld, afterActual };
+  })()`);
+  check('повёрнутый текст ловится по буквам, а не по старой горизонтальной области',
+    rotatedHit.afterActual === 0 && rotatedHit.afterOld !== 0,
+    JSON.stringify(rotatedHit));
+
+  const endpointSnap = await cdp.evaluate(`(async () => {
+    const t = window.__SEAL_DESIGNER__;
+    t.seal.straightLines[0].x = 0;
+    t.seal.straightLines[0].y = 0;
+    t.seal.straightLines[0].rotation = 0;
+    t.seal.straightLines[0].length = 60;
+    await new Promise((r) => setTimeout(r, 400));
+    document.querySelector('[data-testid=seal-straight-line-0]')?.click();
+    await new Promise((r) => setTimeout(r, 300));
+    const lengthBefore = t.seal.straightLines[0].length;
+    const handle = document.querySelector('[data-testid=seal-stroke-handle-end]');
+    if (!handle) return { error: 'нет маркера' };
+    const rect = handle.getBoundingClientRect();
+    const point = { x: rect.left + rect.width / 2, y: rect.top + rect.height / 2 };
+    handle.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, clientX: point.x, clientY: point.y, button: 0, pointerId: 1220 }));
+    window.dispatchEvent(new PointerEvent('pointermove', { bubbles: true, clientX: point.x + 20, clientY: point.y + 1, pointerId: 1220 }));
+    window.dispatchEvent(new PointerEvent('pointerup', { bubbles: true, pointerId: 1220 }));
+    await new Promise((r) => setTimeout(r, 300));
+    return {
+      lengthBefore,
+      lengthAfter: t.seal.straightLines[0].length,
+      rotation: t.seal.straightLines[0].rotation,
+    };
+  })()`);
+  check('конец линии прилипает к её направлению',
+    endpointSnap.lengthAfter > endpointSnap.lengthBefore &&
+      Math.abs(endpointSnap.rotation) < 0.1,
+    JSON.stringify(endpointSnap));
+
+  const symbols = await cdp.evaluate(`(async () => {
+    Array.from(document.querySelectorAll('[data-testid=seal-designer] [role=tab]'))
+      .find((n) => n.textContent.trim() === 'Символ')?.click();
+    await new Promise((r) => setTimeout(r, 300));
+    const add = document.querySelector('[data-testid=seal-symbol-add-★]');
+    add?.click();
+    await new Promise((r) => setTimeout(r, 400));
+    const layout = window.__sealLayout();
+    const svg = (await import('/src/services/stampRenderService.ts')).stampTemplateToSvg(window.__SEAL_DESIGNER__, (id) => window.__PDF_EDITOR__.fonts.familyOf(id));
+    const result = {
+      tab: Boolean(document.querySelector('[data-testid=seal-symbols-tab]')),
+      count: layout.seal?.symbols.length ?? 0,
+      char: layout.seal?.symbols[0]?.char,
+      svg: svg.includes('★'),
+    };
+    document.querySelector('[data-testid=seal-symbol-remove-0]')?.click();
+    return result;
+  })()`);
+  check('вкладка «Символ» добавляет и рисует символ на печати',
+    symbols.tab && symbols.count === 1 && symbols.char === '★' && symbols.svg,
+    JSON.stringify(symbols));
+
+  const zoomAlignment = await cdp.evaluate(`(async () => {
+    const t = window.__SEAL_DESIGNER__;
+    window.__SEAL_REFERENCE__.set({
+      src: 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAgAAAAIAQMAAAD+wSzIAAAABlBMVEX///+/v7+jQ3Y5AAAADklEQVQI12P4AIX8EAgALgAD/aNpbtEAAAAASUVORK5CYII=',
+      x: t.width / 2, y: t.height / 2, width: t.width, height: t.height,
+      rotation: 0, opacity: 0.5, visible: true, locked: true,
+    });
+    const zoomInput = document.querySelector('[data-testid=seal-zoom]');
+    zoomInput.value = '8';
+    zoomInput.dispatchEvent(new Event('input', { bubbles: true }));
+    await new Promise((r) => setTimeout(r, 600));
+    const ref = document.querySelector('[data-testid=seal-reference-image]').getBoundingClientRect();
+    const canvas = document.querySelector('[data-testid=seal-preview-canvas]').getBoundingClientRect();
+    const pan = window.__SEAL_PREVIEW__.pan();
+    const result = {
+      refW: ref.width,
+      expected: t.width * 8,
+      dx: Math.abs(ref.x + ref.width / 2 - (canvas.x + canvas.width / 2 + pan.x)),
+      dy: Math.abs(ref.y + ref.height / 2 - (canvas.y + canvas.height / 2 + pan.y)),
+    };
+    document.querySelector('[data-testid=seal-zoom]').value = '3';
+    document.querySelector('[data-testid=seal-zoom]').dispatchEvent(new Event('input', { bubbles: true }));
+    window.__SEAL_REFERENCE__.set({ ...window.__SEAL_REFERENCE__.get(), visible: false });
+    return result;
+  })()`);
+  check('при зуме 800% образец не обрезается и не смещается',
+    Math.abs(zoomAlignment.refW - zoomAlignment.expected) < 6 &&
+      zoomAlignment.dx < 1 && zoomAlignment.dy < 1,
+    JSON.stringify(zoomAlignment));
 
   const centerRotate = await cdp.evaluate(`(async () => {
     const t = window.__SEAL_DESIGNER__;

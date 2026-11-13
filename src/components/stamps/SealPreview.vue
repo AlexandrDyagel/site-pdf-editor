@@ -98,6 +98,8 @@ const emit = defineEmits<{
   'straight-line-rotate': [lineId: string, rotation: number];
   'edit-line': [lineId: string];
   'delete-line': [lineId: string];
+  'center-edit': [index: number];
+  'center-delete': [index: number];
 }>();
 
 const fonts = useFontsStore();
@@ -165,6 +167,7 @@ const cursorStyle = computed(() => {
 /** Контекстное меню: текст, кольцо или пустое место. */
 type MenuState =
   | { kind: 'text'; lineId: string; x: number; y: number }
+  | { kind: 'center'; index: number; x: number; y: number }
   | { kind: 'ring'; ringIndex: number; x: number; y: number }
   | { kind: 'empty'; x: number; y: number };
 const menu = ref<MenuState | null>(null);
@@ -753,12 +756,11 @@ function hitRing(point: { x: number; y: number }): number | null {
 
 function hitCenterLine(point: { x: number; y: number }): number | null {
   for (const [index, line] of layout.value.lines.entries()) {
-    if (
-      point.x >= line.x - 2 &&
-      point.x <= line.x + line.width + 2 &&
-      point.y >= line.baseline - line.fontSize * 1.05 &&
-      point.y <= line.baseline + line.fontSize * 0.3
-    ) {
+    const cx = line.x + line.width / 2;
+    const cy = inkCenter(line);
+    const width = line.width + 4;
+    const height = Math.max(1, inkBottom(line) - inkTop(line)) + 4;
+    if (pointInRotatedRect(point, cx, cy, width, height, line.rotation ?? 0)) {
       return index;
     }
   }
@@ -865,6 +867,8 @@ function referenceStyle(reference: SealReference): Record<string, string> {
     top: `${center.y - (reference.height * props.zoom) / 2}px`,
     width: `${reference.width * props.zoom}px`,
     height: `${reference.height * props.zoom}px`,
+    maxWidth: 'none',
+    maxHeight: 'none',
     transform: `rotate(${reference.rotation}deg)`,
     opacity: String(reference.opacity),
   };
@@ -1034,7 +1038,7 @@ function rotateHandlePoint(
 type DragState =
   | { kind: 'line'; lineId: string; pointerAngle: number; pointerRadius: number; startRadiusOffset: number; startAngleOffset: number; maxRadiusOffset: number; moved: boolean }
   | { kind: 'ring'; ringIndex: number }
-  | { kind: 'center-move'; index: number; startX: number; startY: number; startOffsetX: number; startOffsetY: number }
+  | { kind: 'center-move'; index: number; startX: number; startY: number; startOffsetX: number; startOffsetY: number; startCenterX: number; startCenterY: number }
   | { kind: 'center-stretch'; index: number; centerX: number }
   | { kind: 'logo-move'; logoIndex: number; startX: number; startY: number; startOffsetX: number; startOffsetY: number }
   | { kind: 'logo-resize'; logoIndex: number; centerX: number; centerY: number; startWidth: number; startHeight: number }
@@ -1057,6 +1061,7 @@ type DragState =
       endpoint: 'start' | 'end';
       otherX: number;
       otherY: number;
+      startRotation: number;
     }
   | {
       kind: 'stroke-rotate';
@@ -1177,10 +1182,38 @@ function onWindowMove(event: PointerEvent): void {
   if (state.kind === 'stroke-resize') {
     const dx = point.x - state.otherX;
     const dy = point.y - state.otherY;
-    const length = Math.max(2, Math.hypot(dx, dy));
-    const rotation = ((Math.atan2(dy, dx) * 180) / Math.PI + 360) % 360;
-    const centerX = state.otherX + dx / 2;
-    const centerY = state.otherY + dy / 2;
+    let length = Math.max(2, Math.hypot(dx, dy));
+    let rotation = ((Math.atan2(dy, dx) * 180) / Math.PI + 360) % 360;
+    // Лёгкое прилипание к направлению линии (горизонт + её поворот) и к
+    // ближайшей горизонтали/вертикали. Внутри допуска конец едет строго
+    // по этому направлению, второй конец остаётся на месте.
+    const candidates = [
+      state.startRotation,
+      state.startRotation + 180,
+      0,
+      90,
+      180,
+      270,
+    ];
+    let best: { angle: number; delta: number } | null = null;
+    for (const angle of candidates) {
+      const delta = Math.abs((((rotation - angle) % 360) + 540) % 360 - 180);
+      if (delta <= 3 && (!best || delta < best.delta)) best = { angle: angle % 360, delta };
+    }
+    let endX = point.x;
+    let endY = point.y;
+    if (best) {
+      const radians = (best.angle * Math.PI) / 180;
+      const unitX = Math.cos(radians);
+      const unitY = Math.sin(radians);
+      const projected = Math.max(2, dx * unitX + dy * unitY);
+      endX = state.otherX + unitX * projected;
+      endY = state.otherY + unitY * projected;
+      length = projected;
+      rotation = ((best.angle % 360) + 360) % 360;
+    }
+    const centerX = state.otherX + (endX - state.otherX) / 2;
+    const centerY = state.otherY + (endY - state.otherY) / 2;
     emit(
       'straight-line-resize',
       state.lineId,
@@ -1189,7 +1222,7 @@ function onWindowMove(event: PointerEvent): void {
       Math.round(length * 10) / 10,
       Math.round(rotation * 10) / 10,
     );
-    updateStrokeDimension(state.endpoint, point.x, point.y, state.otherX, state.otherY);
+    updateStrokeDimension(state.endpoint, endX, endY, state.otherX, state.otherY);
     return;
   }
 
@@ -1242,8 +1275,8 @@ function onWindowMove(event: PointerEvent): void {
         const groupX = (left + right) / 2 + dx;
         const groupY = (top + bottom) / 2 + dy;
         snapAxes.value = {
-          vertical: Math.abs(groupX - cx) < 2.5,
-          horizontal: Math.abs(groupY - cy) < 2.5,
+          vertical: Math.abs(groupX - cx) < 1.2,
+          horizontal: Math.abs(groupY - cy) < 1.2,
           circular: false,
         };
       }
@@ -1349,22 +1382,19 @@ function onWindowMove(event: PointerEvent): void {
   if (state.kind === 'center-move') {
     let offsetX = state.startOffsetX + point.x - state.startX;
     let offsetY = state.startOffsetY + point.y - state.startY;
-    // Лёгкое прилипание центра текста к осям печати.
+    // Лёгкое прилипание центра текста к осям печати. Считаем от положения
+    // на момент начала перетаскивания, иначе текущий layout уже содержит
+    // смещение и прилипание «уезжает» вместе с текстом.
     const snapped = { vertical: false, horizontal: false, circular: false };
-    const line = layout.value.lines[state.index];
-    if (line) {
-      const dx = offsetX - state.startOffsetX;
-      const dy = offsetY - state.startOffsetY;
-      const centerX = line.x + line.width / 2 + dx;
-      const centerY = inkCenter(line) + dy;
-      if (Math.abs(centerX - size.value / 2) < 2.5) {
-        offsetX = state.startOffsetX + (size.value / 2 - (line.x + line.width / 2));
-        snapped.vertical = true;
-      }
-      if (Math.abs(centerY - size.value / 2) < 2.5) {
-        offsetY = state.startOffsetY + (size.value / 2 - inkCenter(line));
-        snapped.horizontal = true;
-      }
+    const centerX = state.startCenterX + point.x - state.startX;
+    const centerY = state.startCenterY + point.y - state.startY;
+    if (Math.abs(centerX - size.value / 2) < 1.2) {
+      offsetX = state.startOffsetX + (size.value / 2 - state.startCenterX);
+      snapped.vertical = true;
+    }
+    if (Math.abs(centerY - size.value / 2) < 1.2) {
+      offsetY = state.startOffsetY + (size.value / 2 - state.startCenterY);
+      snapped.horizontal = true;
     }
     snapAxes.value = snapped;
     snapCircleRadius.value = null;
@@ -1895,6 +1925,7 @@ function onCanvasDown(event: PointerEvent): void {
   if (centerIndex !== null) {
     emit('center-select', centerIndex);
     const line = props.template.lines[centerIndex];
+    const geometry = layout.value.lines[centerIndex];
     startDrag(event, {
       kind: 'center-move',
       index: centerIndex,
@@ -1902,6 +1933,8 @@ function onCanvasDown(event: PointerEvent): void {
       startY: point.y,
       startOffsetX: line?.offsetX ?? 0,
       startOffsetY: line?.offsetY ?? 0,
+      startCenterX: geometry ? geometry.x + geometry.width / 2 : cx,
+      startCenterY: geometry ? inkCenter(geometry) : cy,
     });
     return;
   }
@@ -1976,6 +2009,7 @@ function onStrokeEndpointDown(event: PointerEvent, endpoint: 'start' | 'end'): v
     endpoint,
     otherX: endpoint === 'start' ? line.x2 : line.x1,
     otherY: endpoint === 'start' ? line.y2 : line.y1,
+    startRotation: line.rotation,
   });
   // Размер показываем сразу при нажатии на концевой маркер.
   updateStrokeDimension(
@@ -2169,6 +2203,13 @@ function onContextMenu(event: MouseEvent): void {
   if (!point || !element) return;
   const rect = element.getBoundingClientRect();
 
+  const centerIndex = hitCenterLine(point);
+  if (centerIndex !== null) {
+    emit('center-select', centerIndex);
+    menu.value = { kind: 'center', index: centerIndex, x: event.clientX, y: event.clientY };
+    return;
+  }
+
   const ink = pickInk(point);
   if (ink?.kind === 'line') {
     emit('select-line', ink.lineId);
@@ -2199,7 +2240,14 @@ function onEscape(event: KeyboardEvent): void {
 }
 
 function pickEdit(): void {
-  if (!menu.value || menu.value.kind !== 'text') return;
+  if (!menu.value) return;
+  if (menu.value.kind === 'center') {
+    const index = menu.value.index;
+    closeMenu();
+    emit('center-edit', index);
+    return;
+  }
+  if (menu.value.kind !== 'text') return;
   const lineId = menu.value.lineId;
   closeMenu();
   emit('edit-line', lineId);
@@ -2207,6 +2255,12 @@ function pickEdit(): void {
 
 function pickDelete(): void {
   if (!menu.value) return;
+  if (menu.value.kind === 'center') {
+    const index = menu.value.index;
+    closeMenu();
+    emit('center-delete', index);
+    return;
+  }
   if (menu.value.kind === 'text') {
     const lineId = menu.value.lineId;
     closeMenu();
@@ -2511,6 +2565,24 @@ onBeforeUnmount(() => {
           type="button"
           class="flex w-full items-center gap-2 px-3 py-1.5 text-left text-xs text-rose-600 hover:bg-rose-50 dark:text-rose-400 dark:hover:bg-rose-500/10"
           data-testid="seal-menu-delete"
+          @click="pickDelete"
+        >
+          Удалить
+        </button>
+      </template>
+      <template v-else-if="menu.kind === 'center'">
+        <button
+          type="button"
+          class="flex w-full items-center gap-2 px-3 py-1.5 text-left text-xs text-slate-700 hover:bg-slate-100 dark:text-slate-200 dark:hover:bg-slate-800"
+          data-testid="seal-menu-center-edit"
+          @click="pickEdit"
+        >
+          Редактировать
+        </button>
+        <button
+          type="button"
+          class="flex w-full items-center gap-2 px-3 py-1.5 text-left text-xs text-rose-600 hover:bg-rose-50 dark:text-rose-400 dark:hover:bg-rose-500/10"
+          data-testid="seal-menu-center-delete"
           @click="pickDelete"
         >
           Удалить

@@ -661,6 +661,22 @@ export interface SealStraightLine {
   color?: string | null;
 }
 
+/** Символ на печати (звезда, ромб и т. п.). */
+export interface SealSymbol {
+  id: string;
+  /** Сам символ или короткая строка. */
+  char: string;
+  /** Смещение центра от центра печати, pt. */
+  x: number;
+  y: number;
+  /** Кегль, pt. */
+  fontSize: number;
+  /** Поворот, градусы. */
+  rotation: number;
+  /** Свой цвет; null — цвет печати. */
+  color?: string | null;
+}
+
 /** Полная геометрия круглой печати — всё, что нужно рендерерам. */
 export interface SealSettings {
   /** Диаметр в миллиметрах (30–60). */
@@ -671,6 +687,8 @@ export interface SealSettings {
   lines: SealRingLine[];
   /** Прямые линии. */
   straightLines?: SealStraightLine[];
+  /** Символы на печати. */
+  symbols?: SealSymbol[];
   divider: SealDivider;
   ink: SealInk;
   /** @deprecated Старые шаблоны: верхняя дуга. Читается при импорте. */

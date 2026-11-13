@@ -48,6 +48,7 @@ import {
   createSealRingLine,
   createSealSettings,
   createSealStraightLine,
+  createSealSymbol,
   layoutSealArc,
   normalizeSealSettings,
   sealArcMinSpan,
@@ -880,6 +881,19 @@ check(
   'прямая линия экспортируется в SVG',
   stampTemplateToSvg(straightTemplate, () => 'PT Sans').includes('<line') &&
     stampTemplateToSvg(straightTemplate, () => 'PT Sans').includes('stroke-linecap="butt"'),
+);
+
+const symbolTemplate = createSealTemplate();
+if (symbolTemplate.seal) {
+  symbolTemplate.seal.symbols = [createSealSymbol({ char: '★', x: 0, y: 0, fontSize: 12, rotation: 15 })];
+}
+const symbolLayout = computeStampLayout(symbolTemplate, () => 'PT Sans');
+check(
+  'символ попадает в геометрию и SVG',
+  symbolLayout.seal?.symbols.length === 1 &&
+    symbolLayout.seal?.symbols[0]?.char === '★' &&
+    stampTemplateToSvg(symbolTemplate, () => 'PT Sans').includes('★'),
+  JSON.stringify(symbolLayout.seal?.symbols),
 );
 
 const normalizedLines = normalizeSealSettings({

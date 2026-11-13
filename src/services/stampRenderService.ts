@@ -28,6 +28,7 @@ import {
   type SealRingLineGeometry,
   type SealSlotGeometry,
   type SealStraightLineGeometry,
+  type SealSymbolGeometry,
 } from '@/services/sealRenderService';
 
 /** Шрифт для отрисовки штампа. */
@@ -112,6 +113,8 @@ export interface StampLayout {
     slots: SealSlotGeometry[];
     /** Прямые линии печати. */
     straightLines: SealStraightLineGeometry[];
+    /** Символы печати. */
+    symbols: SealSymbolGeometry[];
   } | null;
   logo: StampLogoLayout | null;
   /** Все логотипы (для печати их может быть несколько). */
@@ -579,6 +582,7 @@ function buildSealLayout(
       ink: parts.ink,
       ringLines: parts.ringLines,
       straightLines: parts.straightLines,
+      symbols: parts.symbols,
       slots: parts.slots,
     },
     logo: parts.logo,
@@ -686,6 +690,12 @@ function scaleStampLayout(layout: StampLayout, scale: number): StampLayout {
             y2: p(line.y2),
             length: p(line.length),
             width: p(line.width),
+          })),
+          symbols: layout.seal.symbols.map((symbol) => ({
+            ...symbol,
+            cx: p(symbol.cx),
+            cy: p(symbol.cy),
+            fontSize: p(symbol.fontSize),
           })),
         }
       : null,
@@ -799,6 +809,19 @@ export function paintStampLayout(
       ctx.moveTo(line.x1, line.y1);
       ctx.lineTo(line.x2, line.y2);
       ctx.stroke();
+      ctx.restore();
+    }
+    // Символы печати.
+    const symbolFamily = layout.lines[0]?.family ?? 'sans-serif';
+    for (const symbol of layout.seal.symbols) {
+      ctx.save();
+      ctx.fillStyle = symbol.color;
+      ctx.font = `${Math.max(1, symbol.fontSize)}px ${symbolFamily}`;
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.translate(symbol.cx, symbol.cy);
+      ctx.rotate((symbol.rotation * Math.PI) / 180);
+      ctx.fillText(symbol.char, 0, 0);
       ctx.restore();
     }
   }
@@ -997,6 +1020,15 @@ export function stampTemplateToSvg(
       .replace(/</g, '&lt;')
       .replace(/>/g, '&gt;')
       .replace(/"/g, '&quot;');
+
+  if (layout.seal) {
+    const symbolFamily = layout.lines[0]?.family ?? 'sans-serif';
+    for (const symbol of layout.seal.symbols) {
+      parts.push(
+        `<text x="${symbol.cx}" y="${symbol.cy}" font-family="${escape(symbolFamily)}" font-size="${symbol.fontSize}" fill="${symbol.color}" text-anchor="middle" dominant-baseline="central" transform="rotate(${symbol.rotation} ${symbol.cx} ${symbol.cy})" opacity="${layout.opacity}">${escape(symbol.char)}</text>`,
+      );
+    }
+  }
 
   for (const line of layout.lines) {
     parts.push(
