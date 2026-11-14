@@ -833,7 +833,7 @@ try {
     window.__sealLayout = () => stamp.computeStampLayout(window.__SEAL_DESIGNER__, (id) => window.__PDF_EDITOR__.fonts.familyOf(id));
     window.__ringPoint = (index = 0) => {
       const ring = window.__sealLayout().seal.ink.rings[index];
-      return window.__SEAL_PREVIEW__.client(ring.cx, ring.cy - ring.radius);
+      return window.__SEAL_PREVIEW__.client(ring.cx - ring.radius * 0.7071, ring.cy + ring.radius * 0.7071);
     };
     window.__centerPoint = (index = 0) => {
       const line = window.__sealLayout().lines[index];
@@ -1567,7 +1567,7 @@ try {
   })()`);
   check('у логотипа четыре угла и курсоры как у объекта',
     logoMarkers.corners === 4 && logoMarkers.nwCursor === 'cursor-nwse-resize' &&
-      logoMarkers.rotateCursor === 'cursor-grab',
+      logoMarkers.rotateCursor === 'cursor-crosshair',
     JSON.stringify(logoMarkers));
 
   console.log('\n16. Несколько логотипов');
@@ -2802,6 +2802,60 @@ try {
       selectionCleanup.secondArc === selectionCleanup.second,
     JSON.stringify(selectionCleanup));
 
+  const arcFrameEmpty = await cdp.evaluate(`(async () => {
+    const canvas = document.querySelector('[data-testid=seal-preview-canvas]');
+    const arcs = window.__sealLayout().seal.ringLines.filter((item) => item.chars.length > 0);
+    const arc = arcs[0];
+    const char = arc.chars[Math.floor(arc.chars.length / 2)];
+    const p = window.__SEAL_PREVIEW__.client(char.x, char.y);
+    canvas.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, clientX: p.x, clientY: p.y, button: 0, pointerId: 1110 }));
+    canvas.dispatchEvent(new PointerEvent('pointerup', { bubbles: true, pointerId: 1110 }));
+    await new Promise((r) => setTimeout(r, 300));
+    const selectedBefore = window.__SEAL_DESIGNER_STATE__.get().selectedLineId;
+    const angle = ((arc.startAngle + arc.endAngle) / 2) * Math.PI / 180;
+    const radius = arc.radius + arc.fontSize * 0.8;
+    const empty = window.__SEAL_PREVIEW__.client(
+      arc.cx + Math.cos(angle) * radius,
+      arc.cy + Math.sin(angle) * radius,
+    );
+    canvas.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, clientX: empty.x, clientY: empty.y, button: 0, pointerId: 1111 }));
+    canvas.dispatchEvent(new PointerEvent('pointerup', { bubbles: true, pointerId: 1111 }));
+    await new Promise((r) => setTimeout(r, 300));
+    return { selectedBefore, after: window.__SEAL_DESIGNER_STATE__.get().selectedLineId };
+  })()`);
+  check('клик по пустому месту внутри дуговой рамки снимает выделение',
+    arcFrameEmpty.selectedBefore !== null && arcFrameEmpty.after === null,
+    JSON.stringify(arcFrameEmpty));
+
+  const closeLines = await cdp.evaluate(`(async () => {
+    const t = window.__SEAL_DESIGNER__;
+    if (t.lines.length < 2) return { error: 'нужно две строки' };
+    t.lines[0].fontSize = 14;
+    t.lines[1].fontSize = 10;
+    t.lines[0].offsetX = 0;
+    t.lines[0].offsetY = 0;
+    t.lines[1].offsetX = 0;
+    t.lines[1].offsetY = 0;
+    await new Promise((r) => setTimeout(r, 300));
+    const before = window.__sealLayout().lines;
+    t.lines[1].offsetY = (before[0].inkCenterY ?? before[0].baseline) - (before[1].inkCenterY ?? before[1].baseline) + 7;
+    await new Promise((r) => setTimeout(r, 350));
+    const layout = window.__sealLayout();
+    const second = layout.lines[1];
+    const canvas = document.querySelector('[data-testid=seal-preview-canvas]');
+    const point = window.__SEAL_PREVIEW__.client(second.x + Math.min(3, second.width * 0.2), second.inkCenterY ?? second.baseline);
+    canvas.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, clientX: point.x, clientY: point.y, button: 0, pointerId: 1112 }));
+    canvas.dispatchEvent(new PointerEvent('pointerup', { bubbles: true, pointerId: 1112 }));
+    await new Promise((r) => setTimeout(r, 300));
+    const picked = window.__SEAL_DESIGNER_STATE__.get().selectedCenterIndex;
+    t.lines[0].fontSize = 9;
+    t.lines[1].fontSize = 9;
+    t.lines[1].offsetY = 0;
+    return { picked };
+  })()`);
+  check('близко стоящая вторая строка выбирается кликом по её букве',
+    closeLines.picked === 1, JSON.stringify(closeLines));
+
   const centerExact = await cdp.evaluate(`(async () => {
     const t = window.__SEAL_DESIGNER__;
     const canvas = document.querySelector('[data-testid=seal-preview-canvas]');
@@ -2811,7 +2865,8 @@ try {
     t.lines[0].offsetX = target - (line.x + line.width / 2) + 1;
     t.lines[0].offsetY = target - (line.inkCenterY ?? line.baseline) + 1;
     await new Promise((r) => setTimeout(r, 400));
-    const point = window.__SEAL_PREVIEW__.client(line.x + line.width / 2, line.inkCenterY ?? line.baseline);
+    const current = window.__sealLayout().lines[0];
+    const point = window.__SEAL_PREVIEW__.client(current.x + current.width / 2, current.inkCenterY ?? current.baseline);
     canvas.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, clientX: point.x, clientY: point.y, button: 0, pointerId: 1105 }));
     window.dispatchEvent(new PointerEvent('pointermove', { bubbles: true, clientX: point.x - 0.5, clientY: point.y - 0.5, pointerId: 1105 }));
     await new Promise((r) => setTimeout(r, 300));
@@ -2965,6 +3020,7 @@ try {
     JSON.stringify(endpointSnap));
 
   const symbols = await cdp.evaluate(`(async () => {
+    const t = window.__SEAL_DESIGNER__;
     Array.from(document.querySelectorAll('[data-testid=seal-designer] [role=tab]'))
       .find((n) => n.textContent.trim() === 'Символ')?.click();
     await new Promise((r) => setTimeout(r, 300));
@@ -2973,17 +3029,61 @@ try {
     await new Promise((r) => setTimeout(r, 400));
     const layout = window.__sealLayout();
     const svg = (await import('/src/services/stampRenderService.ts')).stampTemplateToSvg(window.__SEAL_DESIGNER__, (id) => window.__PDF_EDITOR__.fonts.familyOf(id));
+    const presetCount = document.querySelectorAll('[data-testid^=seal-symbol-add-]').length;
+    const symbol = layout.seal?.symbols[0];
+    const canvas = document.querySelector('[data-testid=seal-preview-canvas]');
+    const center = window.__SEAL_PREVIEW__.client(symbol.cx, symbol.cy);
+    canvas.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, clientX: center.x, clientY: center.y, button: 0, pointerId: 1301 }));
+    canvas.dispatchEvent(new PointerEvent('pointerup', { bubbles: true, pointerId: 1301 }));
+    await new Promise((r) => setTimeout(r, 350));
+    const selected = window.__SEAL_DESIGNER_STATE__.get().selectedSymbolId;
+    const card = document.querySelector('[data-testid=seal-symbol-0]');
+    const cardActive = card?.getAttribute('data-active');
+    const before = { x: t.seal.symbols[0].x, y: t.seal.symbols[0].y };
+    canvas.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, clientX: center.x, clientY: center.y, button: 0, pointerId: 1302 }));
+    window.dispatchEvent(new PointerEvent('pointermove', { bubbles: true, clientX: center.x + 6, clientY: center.y + 3, pointerId: 1302 }));
+    window.dispatchEvent(new PointerEvent('pointerup', { bubbles: true, pointerId: 1302 }));
+    await new Promise((r) => setTimeout(r, 350));
+    const moved = { x: t.seal.symbols[0].x, y: t.seal.symbols[0].y };
+    const rotateHandle = document.querySelector('[data-testid=seal-symbol-rotate]');
+    let rotated = t.seal.symbols[0].rotation;
+    if (rotateHandle) {
+      const rr = rotateHandle.getBoundingClientRect();
+      const start = { x: rr.left + rr.width / 2, y: rr.top + rr.height / 2 };
+      rotateHandle.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, clientX: start.x, clientY: start.y, button: 0, pointerId: 1303 }));
+      window.dispatchEvent(new PointerEvent('pointermove', { bubbles: true, clientX: start.x + 24, clientY: start.y + 12, pointerId: 1303 }));
+      window.dispatchEvent(new PointerEvent('pointerup', { bubbles: true, pointerId: 1303 }));
+      await new Promise((r) => setTimeout(r, 350));
+      rotated = t.seal.symbols[0].rotation;
+    }
+    const empty = window.__SEAL_PREVIEW__.client(4, 4);
+    canvas.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, clientX: empty.x, clientY: empty.y, button: 0, pointerId: 1304 }));
+    canvas.dispatchEvent(new PointerEvent('pointerup', { bubbles: true, pointerId: 1304 }));
+    await new Promise((r) => setTimeout(r, 300));
+    const cleared = window.__SEAL_DESIGNER_STATE__.get().selectedSymbolId;
     const result = {
       tab: Boolean(document.querySelector('[data-testid=seal-symbols-tab]')),
       count: layout.seal?.symbols.length ?? 0,
-      char: layout.seal?.symbols[0]?.char,
+      char: symbol?.char,
       svg: svg.includes('★'),
+      presets: presetCount,
+      selected,
+      cardActive,
+      moved: Math.hypot(moved.x - before.x, moved.y - before.y) > 0.1,
+      rotated: Math.abs(rotated) > 0.1,
+      cleared,
+      cursor: rotateHandle ? [...rotateHandle.classList].find((c) => c.startsWith('cursor-')) : null,
     };
     document.querySelector('[data-testid=seal-symbol-remove-0]')?.click();
     return result;
   })()`);
   check('вкладка «Символ» добавляет и рисует символ на печати',
     symbols.tab && symbols.count === 1 && symbols.char === '★' && symbols.svg,
+    JSON.stringify(symbols));
+  check('символ выбирается, двигается, вращается и показывает карточку',
+    symbols.selected !== null && symbols.cardActive === 'true' &&
+      symbols.moved === true && symbols.rotated === true && symbols.cleared === null &&
+      symbols.cursor === 'cursor-crosshair' && symbols.presets >= 12,
     JSON.stringify(symbols));
 
   const zoomAlignment = await cdp.evaluate(`(async () => {

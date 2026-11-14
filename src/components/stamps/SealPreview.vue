@@ -25,6 +25,7 @@ import AppIcon from '@/components/ui/AppIcon.vue';
 import type { SealMultiSelection, StampTemplate } from '@/types';
 import { computeStampLayout, paintStampLayout } from '@/services/stampRenderService';
 import type { StampLineLayout } from '@/services/stampRenderService';
+import { measureTextWidth } from '@/utils/textLayout';
 import { sealArcMinSpan } from '@/services/sealRenderService';
 import type { SealRingLineGeometry } from '@/services/sealRenderService';
 import type { SealReference } from '@/services/sealDraft';
@@ -42,6 +43,7 @@ const props = withDefaults(
     selectedCenterIndex?: number | null;
     selectedRingIndex?: number | null;
     selectedStraightLineId?: string | null;
+    selectedSymbolId?: string | null;
     selectedLogo?: boolean;
     selectedLogoIndex?: number | null;
     selectedReference?: boolean;
@@ -54,6 +56,7 @@ const props = withDefaults(
     selectedCenterIndex: null,
     selectedRingIndex: null,
     selectedStraightLineId: null,
+    selectedSymbolId: null,
     selectedLogo: false,
     selectedLogoIndex: null,
     selectedReference: false,
@@ -96,6 +99,9 @@ const emit = defineEmits<{
   'straight-line-move': [lineId: string, x: number, y: number];
   'straight-line-resize': [lineId: string, x: number, y: number, length: number, rotation: number];
   'straight-line-rotate': [lineId: string, rotation: number];
+  'symbol-select': [symbolId: string];
+  'symbol-move': [symbolId: string, x: number, y: number];
+  'symbol-rotate': [symbolId: string, rotation: number];
   'edit-line': [lineId: string];
   'delete-line': [lineId: string];
   'center-edit': [index: number];
@@ -359,6 +365,19 @@ function draw(): void {
   if (selectedGeometry.value) drawArcFrame(context, selectedGeometry.value, '#e11d48');
   if (props.selectedCenterIndex !== null && layout.value.lines[props.selectedCenterIndex]) {
     drawTextFrame(context, layout.value.lines[props.selectedCenterIndex], '#e11d48');
+  }
+  if (selectedSymbol.value) {
+    const symbol = selectedSymbol.value;
+    context.save();
+    context.translate(symbol.cx, symbol.cy);
+    context.rotate((symbol.rotation * Math.PI) / 180);
+    context.strokeStyle = 'rgba(255, 255, 255, 0.92)';
+    context.lineWidth = 3 / props.zoom;
+    context.strokeRect(-symbol.width / 2 - 2, -symbol.height / 2 - 2, symbol.width + 4, symbol.height + 4);
+    context.strokeStyle = '#2f6bff';
+    context.lineWidth = 1.2 / props.zoom;
+    context.strokeRect(-symbol.width / 2 - 2, -symbol.height / 2 - 2, symbol.width + 4, symbol.height + 4);
+    context.restore();
   }
   context.restore();
 
@@ -755,16 +774,55 @@ function hitRing(point: { x: number; y: number }): number | null {
 }
 
 function hitCenterLine(point: { x: number; y: number }): number | null {
+  let best: { index: number; score: number } | null = null;
   for (const [index, line] of layout.value.lines.entries()) {
+    if (!line.text.trim()) continue;
     const cx = line.x + line.width / 2;
     const cy = inkCenter(line);
-    const width = line.width + 4;
-    const height = Math.max(1, inkBottom(line) - inkTop(line)) + 4;
-    if (pointInRotatedRect(point, cx, cy, width, height, line.rotation ?? 0)) {
-      return index;
+    const rad = ((line.rotation ?? 0) * Math.PI) / 180;
+    const cos = Math.cos(rad);
+    const sin = Math.sin(rad);
+    const dx = point.x - cx;
+    const dy = point.y - cy;
+    const localX = cx + dx * cos + dy * sin;
+    const localY = cy - dx * sin + dy * cos;
+    if (localY < inkTop(line) - 1.5 || localY > inkBottom(line) + 1.5) continue;
+    let cursor = line.x;
+    for (const char of line.text) {
+      const charWidth = measureTextWidth(char, {
+        fontFamily: line.family,
+        fontSize: line.fontSize,
+        bold: line.bold,
+        italic: line.italic,
+        letterSpacing: 0,
+        wordSpacing: 0,
+        lineHeight: 1.35,
+      });
+      const advance = charWidth + line.letterSpacing + (char === ' ' ? (line.wordSpacing ?? 0) : 0);
+      if (
+        char !== ' ' &&
+        charWidth > 0.1 &&
+        localX >= cursor - 1.5 &&
+        localX <= cursor + charWidth + 1.5
+      ) {
+        const score = Math.abs(localY - cy) + Math.abs(localX - (cursor + charWidth / 2)) * 0.2;
+        if (!best || score < best.score) best = { index, score };
+      }
+      cursor += advance;
+    }
+    // Пробел внутри строки тоже считается её областью, но пустое место
+    // вокруг (в том числе старая горизонтальная область повёрнутой строки)
+    // строку не выбирает.
+    if (
+      localX >= line.x - 1.5 &&
+      localX <= line.x + line.width + 1.5 &&
+      (!best || Math.abs(localY - cy) < best.score)
+    ) {
+      const score = Math.abs(localY - cy) + 0.6;
+      if (!best || score < best.score) best = { index, score };
     }
   }
-  return null;
+  return best?.index ?? null;
 }
 
 function hitLogo(point: { x: number; y: number }): number | null {
@@ -886,6 +944,11 @@ const selectedStraightLine = computed(() => {
   );
 });
 
+const selectedSymbol = computed(() => {
+  if (!props.selectedSymbolId) return null;
+  return layout.value.seal?.symbols.find((item) => item.symbolId === props.selectedSymbolId) ?? null;
+});
+
 const strokeHandlePoints = computed(() => {
   const line = selectedStraightLine.value;
   if (!line) return [] as { endpoint: 'start' | 'end'; x: number; y: number }[];
@@ -982,6 +1045,12 @@ const logoRotatePoint = computed(() => {
   return rotateHandlePoint(logo.x + logo.width / 2, logo.y + logo.height / 2, logo.width, logo.height, logo.rotation ?? 0);
 });
 
+const symbolRotatePoint = computed(() => {
+  const symbol = selectedSymbol.value;
+  if (!symbol) return null;
+  return rotateHandlePoint(symbol.cx, symbol.cy, symbol.width, symbol.height, symbol.rotation);
+});
+
 const referenceHandlePoints = computed(() => {
   const reference = props.reference;
   if (!reference) return [] as { corner: 'nw' | 'ne' | 'se' | 'sw'; x: number; y: number }[];
@@ -1047,6 +1116,22 @@ type DragState =
   | { kind: 'reference-resize'; centerX: number; centerY: number; startWidth: number; startHeight: number }
   | { kind: 'reference-rotate'; centerX: number; centerY: number; startPointerAngle: number; startRotation: number }
   | { kind: 'group'; lastX: number; lastY: number }
+  | {
+      kind: 'symbol-move';
+      symbolId: string;
+      startX: number;
+      startY: number;
+      startOffsetX: number;
+      startOffsetY: number;
+    }
+  | {
+      kind: 'symbol-rotate';
+      symbolId: string;
+      centerX: number;
+      centerY: number;
+      startPointerAngle: number;
+      startRotation: number;
+    }
   | {
       kind: 'stroke-move';
       lineId: string;
@@ -1161,6 +1246,30 @@ function onWindowMove(event: PointerEvent): void {
   if (!point) return;
   const cx = size.value / 2;
   const cy = size.value / 2;
+
+  if (state.kind === 'symbol-move') {
+    let x = state.startOffsetX + point.x - state.startX;
+    let y = state.startOffsetY + point.y - state.startY;
+    const vertical = Math.abs(x) < 1.2;
+    const horizontal = Math.abs(y) < 1.2;
+    if (vertical) x = 0;
+    if (horizontal) y = 0;
+    snapAxes.value = { vertical, horizontal, circular: false };
+    emit('symbol-move', state.symbolId, Math.round(x * 10) / 10, Math.round(y * 10) / 10);
+    return;
+  }
+
+  if (state.kind === 'symbol-rotate') {
+    const angle = (Math.atan2(point.y - state.centerY, point.x - state.centerX) * 180) / Math.PI;
+    let delta = angle - state.startPointerAngle;
+    delta = ((delta % 360) + 540) % 360 - 180;
+    emit(
+      'symbol-rotate',
+      state.symbolId,
+      Math.round(((state.startRotation + delta + 360) % 360) * 10) / 10,
+    );
+    return;
+  }
 
   if (state.kind === 'stroke-move') {
     const x = state.startCx + point.x - state.startX;
@@ -1523,7 +1632,7 @@ function lineInkScore(point: { x: number; y: number }): { lineId: string; score:
       const glyphWidth = char.fontSize * 0.6;
       const centerX = char.x + cos * (glyphWidth / 2) + sin * (char.fontSize * 0.35);
       const centerY = char.y + sin * (glyphWidth / 2) - cos * (char.fontSize * 0.35);
-      const reach = Math.max(3, char.fontSize * 0.55);
+      const reach = Math.max(2, char.fontSize * 0.55);
       const score = Math.hypot(point.x - centerX, point.y - centerY) - reach;
       if (score <= 0 && (!best || score < best.score)) best = { lineId: ringLine.lineId, score };
     }
@@ -1616,6 +1725,26 @@ function distanceToSegment(
   let t = ((point.x - start.x) * dx + (point.y - start.y) * dy) / lengthSquared;
   t = Math.max(0, Math.min(1, t));
   return Math.hypot(point.x - (start.x + dx * t), point.y - (start.y + dy * t));
+}
+
+function hitSymbol(point: { x: number; y: number }): string | null {
+  const symbols = layout.value.seal?.symbols ?? [];
+  for (let index = symbols.length - 1; index >= 0; index -= 1) {
+    const symbol = symbols[index];
+    if (
+      pointInRotatedRect(
+        point,
+        symbol.cx,
+        symbol.cy,
+        symbol.width + 4,
+        symbol.height + 4,
+        symbol.rotation,
+      )
+    ) {
+      return symbol.symbolId;
+    }
+  }
+  return null;
 }
 
 function hitStraightLine(point: { x: number; y: number }): string | null {
@@ -1865,6 +1994,24 @@ function onCanvasDown(event: PointerEvent): void {
   if (!point) return;
   const cx = size.value / 2;
   const cy = size.value / 2;
+
+  // Символы лежат поверх объектов: клик по символу выбирает именно его.
+  const symbolId = hitSymbol(point);
+  if (symbolId) {
+    const symbol = props.template.seal?.symbols?.find((item) => item.id === symbolId);
+    if (symbol) {
+      emit('symbol-select', symbolId);
+      startDrag(event, {
+        kind: 'symbol-move',
+        symbolId,
+        startX: point.x,
+        startY: point.y,
+        startOffsetX: symbol.x,
+        startOffsetY: symbol.y,
+      });
+    }
+    return;
+  }
 
   // Shift+клик — добавить/убрать объект из группы.
   const target = hitTarget(point);
@@ -2165,6 +2312,22 @@ function onLogoRotateDown(event: PointerEvent): void {
   });
 }
 
+function onSymbolRotateDown(event: PointerEvent): void {
+  event.preventDefault();
+  event.stopPropagation();
+  const symbol = selectedSymbol.value;
+  const point = toSealPoint(event);
+  if (!symbol || !point) return;
+  startDrag(event, {
+    kind: 'symbol-rotate',
+    symbolId: symbol.symbolId,
+    centerX: symbol.cx,
+    centerY: symbol.cy,
+    startPointerAngle: (Math.atan2(point.y - symbol.cy, point.x - symbol.cx) * 180) / Math.PI,
+    startRotation: symbol.rotation,
+  });
+}
+
 function onReferenceCornerDown(event: PointerEvent): void {
   event.preventDefault();
   event.stopPropagation();
@@ -2443,7 +2606,7 @@ onBeforeUnmount(() => {
           type="button"
           data-testid="seal-center-rotate"
           :data-kind="centerRotation.kind"
-          class="absolute z-10 flex h-[22px] w-[22px] -translate-x-1/2 -translate-y-1/2 cursor-grab items-center justify-center rounded-full border-2 border-white bg-[#e11d48] text-white shadow-md"
+          class="absolute z-10 flex h-[22px] w-[22px] -translate-x-1/2 -translate-y-1/2 cursor-crosshair items-center justify-center rounded-full border-2 border-white bg-[#e11d48] text-white shadow-md"
           :style="{ left: `${centerRotation.marker.x}px`, top: `${centerRotation.marker.y}px` }"
           title="Повернуть текст"
           @pointerdown="onCenterRotateDown"
@@ -2468,10 +2631,24 @@ onBeforeUnmount(() => {
           v-if="strokeRotatePoint"
           type="button"
           data-testid="seal-stroke-rotate"
-          class="absolute z-10 flex h-[22px] w-[22px] -translate-x-1/2 -translate-y-1/2 cursor-grab items-center justify-center rounded-full border-2 border-white bg-[#2f6bff] text-white shadow-md"
+          class="absolute z-10 flex h-[22px] w-[22px] -translate-x-1/2 -translate-y-1/2 cursor-crosshair items-center justify-center rounded-full border-2 border-white bg-[#2f6bff] text-white shadow-md"
           :style="{ left: `${strokeRotatePoint.x}px`, top: `${strokeRotatePoint.y}px` }"
           title="Повернуть линию"
           @pointerdown="onStrokeRotateDown"
+        >
+          <AppIcon name="rotate" :size="12" />
+        </button>
+      </template>
+
+      <!-- Маркер поворота символа -->
+      <template v-if="handles && selectedSymbolId && symbolRotatePoint">
+        <button
+          type="button"
+          data-testid="seal-symbol-rotate"
+          class="absolute z-10 flex h-[22px] w-[22px] -translate-x-1/2 -translate-y-1/2 cursor-crosshair items-center justify-center rounded-full border-2 border-white bg-[#2f6bff] text-white shadow-md"
+          :style="{ left: `${symbolRotatePoint.x}px`, top: `${symbolRotatePoint.y}px` }"
+          title="Повернуть символ"
+          @pointerdown="onSymbolRotateDown"
         >
           <AppIcon name="rotate" :size="12" />
         </button>
@@ -2494,7 +2671,7 @@ onBeforeUnmount(() => {
           v-if="logoRotatePoint"
           type="button"
           data-testid="seal-logo-rotate"
-          class="absolute z-10 flex h-[22px] w-[22px] -translate-x-1/2 -translate-y-1/2 cursor-grab items-center justify-center rounded-full border-2 border-white shadow"
+          class="absolute z-10 flex h-[22px] w-[22px] -translate-x-1/2 -translate-y-1/2 cursor-crosshair items-center justify-center rounded-full border-2 border-white shadow"
           style="background-color: #355ef0"
           :style="{ left: `${logoRotatePoint.x}px`, top: `${logoRotatePoint.y}px` }"
           title="Повернуть логотип"
@@ -2524,7 +2701,7 @@ onBeforeUnmount(() => {
           v-if="referenceRotatePoint"
           type="button"
           data-testid="seal-ref-rotate"
-          class="absolute z-10 flex h-[22px] w-[22px] -translate-x-1/2 -translate-y-1/2 cursor-grab items-center justify-center rounded-full border-2 border-white shadow"
+          class="absolute z-10 flex h-[22px] w-[22px] -translate-x-1/2 -translate-y-1/2 cursor-crosshair items-center justify-center rounded-full border-2 border-white shadow"
           style="background-color: #355ef0"
           :style="{ left: `${referenceRotatePoint.x}px`, top: `${referenceRotatePoint.y}px` }"
           title="Повернуть образец"

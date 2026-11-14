@@ -763,6 +763,8 @@ export interface SealSymbolGeometry {
   char: string;
   cx: number;
   cy: number;
+  width: number;
+  height: number;
   fontSize: number;
   rotation: number;
   color: string;
@@ -1258,6 +1260,8 @@ export function computeSealParts(
     char: symbol.char,
     cx: cx + symbol.x * k,
     cy: cy + symbol.y * k,
+    width: Math.max(1, symbol.fontSize * k * 0.72 * Math.max(1, Array.from(symbol.char).length)),
+    height: Math.max(1, symbol.fontSize * k * 1.05),
     fontSize: Math.max(1, symbol.fontSize * k),
     rotation: symbol.rotation,
     color: symbol.color || color,

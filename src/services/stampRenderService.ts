@@ -695,6 +695,8 @@ function scaleStampLayout(layout: StampLayout, scale: number): StampLayout {
             ...symbol,
             cx: p(symbol.cx),
             cy: p(symbol.cy),
+            width: p(symbol.width),
+            height: p(symbol.height),
             fontSize: p(symbol.fontSize),
           })),
         }

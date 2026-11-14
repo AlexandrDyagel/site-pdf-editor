@@ -80,6 +80,8 @@ const isSaving = ref(false);
 /** Выбранная строка текста по кольцу (для маркеров и правки). */
 const selectedLineId = ref<string | null>(null);
 const selectedStraightLineId = ref<string | null>(null);
+/** Выбранный символ печати. */
+const selectedSymbolId = ref<string | null>(null);
 /** Выбранная строка в центре (клик по ней показывает свойства справа). */
 const selectedCenterIndex = ref<number | null>(null);
 /** Выбранное кольцо (клик по кольцу показывает его настройки справа). */
@@ -267,6 +269,7 @@ watch(
       selectedLogoIndex.value = null;
       selectedReference.value = false;
   selectedStraightLineId.value = null;
+  selectedSymbolId.value = null;
       reference.value = draft.reference ?? null;
       restoredDraft.value = true;
       resetHistory();
@@ -294,6 +297,7 @@ watch(
     selectedLogoIndex.value = null;
     selectedReference.value = false;
   selectedStraightLineId.value = null;
+  selectedSymbolId.value = null;
     reference.value = null;
     restoredDraft.value = false;
     resetHistory();
@@ -333,6 +337,7 @@ function resetDraft(): void {
   selectedLogoIndex.value = null;
   selectedReference.value = false;
   selectedStraightLineId.value = null;
+  selectedSymbolId.value = null;
   reference.value = null;
   zoom.value = fitZoomValue();
   resetHistory();
@@ -512,6 +517,15 @@ function nudgeSelection(dx: number, dy: number): boolean {
     });
     return true;
   }
+  if (selectedSymbolId.value) {
+    const symbol = sealSymbols.value.find((item) => item.id === selectedSymbolId.value);
+    if (!symbol) return false;
+    updateSealSymbol(symbol.id, {
+      x: round(symbol.x + dx),
+      y: round(symbol.y + dy),
+    });
+    return true;
+  }
   if (selectedLogoIndex.value !== null) {
     const logo = stampLogos.value[selectedLogoIndex.value];
     if (!logo) return false;
@@ -611,6 +625,13 @@ function onDesignerKeydown(event: KeyboardEvent): void {
       deleteLine(selectedLineId.value);
       return;
     }
+    if (selectedSymbolId.value) {
+      event.preventDefault();
+      event.stopPropagation();
+      event.stopImmediatePropagation();
+      removeSealSymbol(selectedSymbolId.value);
+      return;
+    }
     if (selectedStraightLineId.value) {
       event.preventDefault();
       event.stopPropagation();
@@ -669,7 +690,8 @@ function onGlobalPointerDown(event: PointerEvent): void {
     target.closest('[data-testid=seal-ref-rotate]') ||
     target.closest('[data-testid=seal-center-rotate]') ||
     target.closest('[data-testid^=seal-stroke-handle-]') ||
-    target.closest('[data-testid=seal-stroke-rotate]')
+    target.closest('[data-testid=seal-stroke-rotate]') ||
+    target.closest('[data-testid=seal-symbol-rotate]')
   ) {
     return;
   }
@@ -732,6 +754,7 @@ onMounted(() => {
         selectedRingIndex: selectedRingIndex.value,
         selectedLogoIndex: selectedLogoIndex.value,
         selectedStraightLineId: selectedStraightLineId.value,
+        selectedSymbolId: selectedSymbolId.value,
         multi: multiSelection.value,
       }),
     };
@@ -851,6 +874,7 @@ function selectLine(lineId: string | null, options: { reveal?: boolean } = {}): 
   selectedCenterIndex.value = null;
   selectedReference.value = false;
   selectedStraightLineId.value = null;
+  selectedSymbolId.value = null;
   if (!lineId || options.reveal === false) return;
   tab.value = 'text';
   void nextTick(() => {
@@ -872,6 +896,7 @@ function selectRing(index: number, options: { reveal?: boolean } = {}): void {
   selectedLogoIndex.value = null;
   selectedReference.value = false;
   selectedStraightLineId.value = null;
+  selectedSymbolId.value = null;
   tab.value = 'rings';
   if (options.reveal === false) return;
   void nextTick(() => {
@@ -891,6 +916,7 @@ function selectCenterLine(index: number, options: { reveal?: boolean } = {}): vo
   selectedLogoIndex.value = null;
   selectedReference.value = false;
   selectedStraightLineId.value = null;
+  selectedSymbolId.value = null;
   tab.value = 'center';
   if (options.reveal === false) return;
   void nextTick(() => {
@@ -905,12 +931,14 @@ function clearSelection(): void {
   multiSelection.value = null;
   selectedLineId.value = null;
   selectedStraightLineId.value = null;
+  selectedSymbolId.value = null;
   selectedCenterIndex.value = null;
   selectedRingIndex.value = null;
   selectedLogo.value = false;
   selectedLogoIndex.value = null;
   selectedReference.value = false;
   selectedStraightLineId.value = null;
+  selectedSymbolId.value = null;
 }
 
 /** Клик по логотипу: выделяем его, чтобы показать углы и поворот. */
@@ -923,6 +951,7 @@ function selectLogo(index = 0): void {
   selectedRingIndex.value = null;
   selectedReference.value = false;
   selectedStraightLineId.value = null;
+  selectedSymbolId.value = null;
   tab.value = 'logo';
   void nextTick(() => {
     rightColumn.value
@@ -945,6 +974,7 @@ function onSelectionChange(selection: SealMultiSelection | null): void {
   selectedLogoIndex.value = null;
   selectedReference.value = false;
   selectedStraightLineId.value = null;
+  selectedSymbolId.value = null;
 }
 
 /** Сдвиг группы: каждая строка пересчитывает свои смещения. */
@@ -1209,6 +1239,7 @@ function removeStraightLine(lineId: string): void {
   if (!settings) return;
   settings.straightLines = (settings.straightLines ?? []).filter((line) => line.id !== lineId);
   if (selectedStraightLineId.value === lineId) selectedStraightLineId.value = null;
+  selectedSymbolId.value = null;
 }
 
 function addSealSymbol(char = '★'): void {
@@ -1239,11 +1270,42 @@ function removeSealSymbol(symbolId: string): void {
   const settings = template.value.seal;
   if (!settings) return;
   settings.symbols = (settings.symbols ?? []).filter((symbol) => symbol.id !== symbolId);
+  if (selectedSymbolId.value === symbolId) selectedSymbolId.value = null;
+}
+
+/** Выбрать символ и открыть его карточку. */
+function selectSymbol(symbolId: string): void {
+  multiSelection.value = null;
+  selectedSymbolId.value = symbolId;
+  selectedLineId.value = null;
+  selectedCenterIndex.value = null;
+  selectedRingIndex.value = null;
+  selectedLogo.value = false;
+  selectedLogoIndex.value = null;
+  selectedReference.value = false;
+  selectedStraightLineId.value = null;
+  tab.value = 'symbols';
+  void nextTick(() => {
+    const index = sealSymbols.value.findIndex((item) => item.id === symbolId);
+    if (index < 0) return;
+    rightColumn.value
+      ?.querySelector(`[data-testid="seal-symbol-${index}"]`)
+      ?.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+  });
+}
+
+function onSymbolMove(symbolId: string, x: number, y: number): void {
+  updateSealSymbol(symbolId, { x, y });
+}
+
+function onSymbolRotate(symbolId: string, rotation: number): void {
+  updateSealSymbol(symbolId, { rotation });
 }
 
 function selectStraightLine(lineId: string): void {
   multiSelection.value = null;
   selectedStraightLineId.value = lineId;
+  selectedSymbolId.value = null;
   selectedLineId.value = null;
   selectedCenterIndex.value = null;
   selectedRingIndex.value = null;
@@ -1594,6 +1656,7 @@ function selectReference(): void {
   selectedLogo.value = false;
   selectedLogoIndex.value = null;
   selectedStraightLineId.value = null;
+  selectedSymbolId.value = null;
   tab.value = 'sample';
   void nextTick(() => {
     rightColumn.value
@@ -1661,6 +1724,7 @@ function toggleReferenceLock(): void {
   reference.value = { ...reference.value, locked };
   if (locked) selectedReference.value = false;
   selectedStraightLineId.value = null;
+  selectedSymbolId.value = null;
   ui.notify.info(
     locked ? 'Образец заблокирован' : 'Образец разблокирован',
     locked ? 'Клики по нему игнорируются — случайно не сдвинете' : 'Образец снова можно двигать и поворачивать',
@@ -1671,6 +1735,7 @@ function removeReference(): void {
   reference.value = null;
   selectedReference.value = false;
   selectedStraightLineId.value = null;
+  selectedSymbolId.value = null;
 }
 
 /* ======================== Пресеты ======================== */
@@ -1913,10 +1978,14 @@ function onPickEnd(color: string | null): void {
             :selected-center-index="selectedCenterIndex"
             :selected-ring-index="selectedRingIndex"
             :selected-straight-line-id="selectedStraightLineId"
+            :selected-symbol-id="selectedSymbolId"
             :selected-logo="selectedLogo"
             :selected-logo-index="selectedLogoIndex"
             :selection="multiSelection"
             :selected-reference="selectedReference"
+            @symbol-select="selectSymbol"
+            @symbol-move="onSymbolMove"
+            @symbol-rotate="onSymbolRotate"
             @select-line="selectLine($event)"
             @clear-selection="clearSelection"
             @span-change="onSpanChange"
@@ -2339,7 +2408,7 @@ function onPickEnd(color: string | null): void {
           <AppSection title="Символы на печати" icon="star">
             <div class="flex flex-wrap items-center gap-1.5">
               <AppButton
-                v-for="preset in ['★', '✦', '✚', '❖', '♦', '●']"
+                v-for="preset in ['★', '✦', '✧', '✚', '❖', '♦', '●', '✠', '❋', '❂', '♛', '♥']"
                 :key="preset"
                 size="xs"
                 variant="secondary"
@@ -2353,7 +2422,10 @@ function onPickEnd(color: string | null): void {
               v-for="(symbol, index) in sealSymbols"
               :key="symbol.id"
               class="mt-2 space-y-2 rounded-lg border border-slate-200 px-2.5 py-2 dark:border-slate-700"
+              :class="selectedSymbolId === symbol.id ? 'border-brand-400 bg-brand-50/70 ring-1 ring-brand-400 dark:bg-brand-500/10' : ''"
               :data-testid="`seal-symbol-${index}`"
+              :data-active="selectedSymbolId === symbol.id ? 'true' : 'false'"
+              @click="selectSymbol(symbol.id)"
             >
               <div class="flex items-center justify-between gap-2">
                 <span class="text-[12px] font-medium">Символ {{ index + 1 }}</span>
